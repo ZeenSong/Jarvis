@@ -1,0 +1,15 @@
+# Allowlist: local credentials, runtime data, Android builds and personal notes
+# cannot enter the server image build context.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!apps/
+!apps/server/
+!apps/server/Dockerfile
+!apps/server/src/
+!apps/server/src/**
+!packages/
+!packages/*/
+!packages/*/src/
+!packages/*/src/**

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jarvis-server
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: jarvis-server
+  template:
+    metadata:
+      labels:
+        app: jarvis-server
+    spec:
+      # Read host interfaces and bind only its Tailscale IP (supplied by Secret).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: server
+          image: jarvis-server:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: database-url }
+            - name: HOST
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: tailscale-ip }
+            - name: HOST_ROOT
+              value: /host
+            - name: PRICES_FILE
+              value: /config/prices.json
+          ports:
+            - containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          # exec connects to the configured Tailnet listener, not another host interface.
+          readinessProbe:
+            exec:
+              command: [node, -e, "fetch('http://'+process.env.HOST+':8080/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: [node, -e, "fetch('http://'+process.env.HOST+':8080/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          startupProbe:
+            exec:
+              command: [node, -e, "fetch('http://'+process.env.HOST+':8080/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            failureThreshold: 30
+            periodSeconds: 5
+          volumeMounts:
+            - name: host
+              mountPath: /host
+              readOnly: true
+            - name: prices
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+            type: Directory
+        - name: prices
+          configMap:
+            name: jarvis-prices

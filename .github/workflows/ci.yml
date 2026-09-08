@@ -1,0 +1,45 @@
+name: M1 checks
+on: [push, pull_request]
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: jarvis
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: jarvis_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U jarvis -d jarvis_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://jarvis:test-only@127.0.0.1:5432/jarvis_test
+      - run: npm run build
+      - run: docker build -f apps/server/Dockerfile -t jarvis-server:ci .
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew assembleDebug testDebugUnitTest lintDebug
+        working-directory: apps/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-debug-apk
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk

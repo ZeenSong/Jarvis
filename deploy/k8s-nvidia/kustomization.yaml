@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../k8s
+patches:
+  - target:
+      kind: Deployment
+      name: jarvis-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: jarvis-server
+      spec:
+        template:
+          spec:
+            runtimeClassName: nvidia
+            containers:
+              - name: server
+                env:
+                  - name: NVIDIA_VISIBLE_DEVICES
+                    value: all
+                  - name: NVIDIA_DRIVER_CAPABILITIES
+                    value: utility
