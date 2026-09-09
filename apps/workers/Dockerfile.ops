@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY apps/workers/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY apps/workers/ops.py ./
+COPY apps/workers/deepseek_model.py ./
+COPY apps/workers/host.mjs ./
+USER 1000:1000
+ENV WORKER_TYPE=pydantic
+CMD ["node","/app/host.mjs"]

@@ -1,0 +1,30 @@
+import { execFile,spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { copyFile,mkdir,writeFile,stat } from 'node:fs/promises';
+import { createReadStream,createWriteStream } from 'node:fs';
+import { createGzip } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
+const version='0.2.0-rc.1';
+await mkdir('artifacts',{recursive:true});
+const apk=`jarvis-${version}-android-debug.apk`,images=`jarvis-m2-${version}-images.tar.gz`,source=`jarvis-m2-${version}-source.tar.gz`;
+await copyFile('apps/android/app/build/outputs/apk/debug/app-debug.apk','artifacts/'+apk);
+const names=['jarvis-server','jarvis-codex-worker','jarvis-ops-worker','jarvis-egress-proxy'].map(n=>n+':'+version);
+const metadata=JSON.parse((await promisify(execFile)('docker',['image','inspect',...names])).stdout).map(i=>({tags:i.RepoTags,id:i.Id,created:i.Created}));
+await writeFile('artifacts/M2-images.json',JSON.stringify(metadata,null,2)+'\n');
+const save=spawn('docker',['save',...names],{stdio:['ignore','pipe','inherit']});
+const saved=new Promise((resolve,reject)=>{save.once('error',reject);save.once('exit',code=>code===0?resolve():reject(Error('docker save failed')));});
+await Promise.all([pipeline(save.stdout,createGzip(),createWriteStream('artifacts/'+images,{mode:0o600})),saved]);
+const top=new Set(['package.json','package-lock.json','tsconfig.json','README.md','.dockerignore','.gitignore','.env.example','playwright.config.ts','Jarvis_M2_真实Agent与动态体验.md','Jarvis_M1_常驻服务与移动监控.md']);
+const listing=(await promisify(execFile)('git',['ls-files','--cached','--others','--exclude-standard','-z'])).stdout;
+const files=[...new Set(listing.split('\0').filter(p=>top.has(p)||/^(apps|packages|tests|docs|deploy|examples)\//.test(p)))];
+const tar=spawn('tar',['--null','--verbatim-files-from','-T','-','-czf','artifacts/'+source],{stdio:['pipe','ignore','inherit']});
+const archived=new Promise((resolve,reject)=>{tar.once('error',reject);tar.once('exit',code=>code===0?resolve():reject(Error('source archive failed')));});
+tar.stdin.end(files.join('\0')+'\0');await archived;
+const checksums=[];
+for(const name of [apk,images,source,'M2-images.json']){
+  const hash=createHash('sha256');for await(const chunk of createReadStream('artifacts/'+name))hash.update(chunk);
+  checksums.push(hash.digest('hex')+'  '+name);
+  console.log(name+' '+(await stat('artifacts/'+name)).size+' bytes');
+}
+await writeFile('artifacts/M2-SHA256SUMS',checksums.join('\n')+'\n');

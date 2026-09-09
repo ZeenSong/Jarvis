@@ -26,5 +26,4 @@ jobs:
           file: apps/server/Dockerfile
           push: true
           tags: |
-            ghcr.io/zeensong/jarvis-server:0.1.0
-            ghcr.io/zeensong/jarvis-server:latest
+            ghcr.io/zeensong/jarvis-server:${{ github.ref_name }}

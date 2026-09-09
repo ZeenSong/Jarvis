@@ -1,0 +1,30 @@
+[
+  {
+    "tags": [
+      "jarvis-server:0.2.0-rc.1"
+    ],
+    "id": "sha256:5820f5193ebd1b73718dde554b127a5a3c59cd62677a20512f776176d93d9ac2",
+    "created": "2026-09-09T14:45:25.630349179+08:00"
+  },
+  {
+    "tags": [
+      "jarvis-codex-worker:0.2.0-rc.1"
+    ],
+    "id": "sha256:5db325cbfeac908a9b19d4f7813847e52ae8d165796fa91af0212af56226cf41",
+    "created": "2026-09-08T22:38:24.318321791+08:00"
+  },
+  {
+    "tags": [
+      "jarvis-ops-worker:0.2.0-rc.1"
+    ],
+    "id": "sha256:abc76bcb684d908ce0a67315c5a78b7dac494867c24fb57e013351e74724bc10",
+    "created": "2026-09-08T17:31:32.421700613+08:00"
+  },
+  {
+    "tags": [
+      "jarvis-egress-proxy:0.2.0-rc.1"
+    ],
+    "id": "sha256:df582de15ca7e250da8c01337ed98e433d5647dbaf81aca0f092453b450e975b",
+    "created": "2026-09-08T12:47:23.860789358+08:00"
+  }
+]

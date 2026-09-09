@@ -1,0 +1,410 @@
+:root {
+  font-family: Inter, "Noto Sans SC", system-ui, sans-serif;
+  color: #dfebe9;
+  background: #0d151a;
+  font-synthesis: none;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  background: #19352f;
+  color: #b9f3df;
+  border: 1px solid #2b5148;
+  border-radius: 10px;
+  padding: 11px 16px;
+}
+button:hover {
+  background: #254a41;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+input,
+textarea {
+  background: #101e24;
+  border: 1px solid #32474e;
+  border-radius: 10px;
+  padding: 14px;
+  color: #e4eeec;
+}
+h1 {
+  font-size: 32px;
+  letter-spacing: -1px;
+  margin: 8px 0 24px;
+}
+h2 {
+  font-size: 21px;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 500;
+  color: #a5bcb8;
+  margin: 0 0 18px;
+}
+small,
+.muted {
+  color: #91a8a6;
+}
+small {
+  font-size: 12px;
+}
+.eyebrow {
+  color: #658c83;
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+aside {
+  background: #0f1c21;
+  padding: 34px 24px;
+  border-right: 1px solid #223039;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  font-size: 24px;
+  letter-spacing: 3px;
+  font-weight: 700;
+  cursor: pointer;
+}
+nav {
+  display: grid;
+  gap: 10px;
+  margin-top: 44px;
+}
+nav button {
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  color: #849d9c;
+  padding: 14px 20px;
+}
+button.selected,
+nav .selected {
+  color: #b6f7e2;
+  background: #1d3a34;
+  border-color: #2a5147;
+}
+.connection {
+  margin-top: auto;
+  font-size: 12px;
+  color: #8daaa2;
+}
+.connection i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #74ddae;
+  margin-right: 10px;
+}
+main {
+  padding: 36px 46px;
+  min-width: 0;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.quiet {
+  background: transparent;
+  color: #a1b9b1;
+}
+.blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+}
+.block {
+  background: linear-gradient(135deg, #14242a, #122027);
+  border: 1px solid #263a3e;
+  border-radius: 16px;
+  padding: 23px;
+  min-width: 0;
+}
+.block-line_chart,
+.block-table,
+.block-timeline,
+.block-code_diff,
+.block-run_graph {
+  grid-column: 1/-1;
+}
+.chart {
+  height: 260px;
+}
+.big {
+  font-size: 38px;
+  font-weight: 500;
+}
+dl {
+  margin: 0;
+}
+dl div {
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 9px 0;
+  border-bottom: 1px solid #26363a;
+  font-size: 13px;
+}
+dt {
+  color: #8fa8a3;
+}
+dd {
+  margin: 0;
+  max-width: 65%;
+  overflow-wrap: anywhere;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+}
+table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+th,
+td {
+  text-align: left;
+  padding: 12px;
+  border-bottom: 1px solid #314044;
+  max-width: 300px;
+  overflow-wrap: anywhere;
+}
+.table-wrap {
+  overflow: auto;
+}
+.prose {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.alert {
+  background: #4a3022;
+  color: #ffd7b3;
+  padding: 16px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+.alert button {
+  float: right;
+}
+.conversation-layout {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 24px;
+}
+.conversation-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+.conversation-list button {
+  background: transparent;
+  text-align: left;
+}
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 70vh;
+  min-width: 0;
+}
+.messages {
+  flex: 1;
+}
+.message {
+  padding: 22px;
+  background: #14252b;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+.message.user {
+  margin-left: 15%;
+  background: #203932;
+}
+.message small {
+  display: block;
+  margin-bottom: 10px;
+}
+.message button {
+  margin-top: 12px;
+  margin-right: 10px;
+}
+.composer {
+  display: flex;
+  gap: 10px;
+  margin-top: 28px;
+  position: sticky;
+  bottom: 15px;
+  background: #0d151a;
+  padding: 8px;
+}
+.composer textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 70px;
+}
+.welcome {
+  text-align: center;
+  margin: 60px 0;
+  color: #829e99;
+}
+.orb {
+  background: radial-gradient(circle at 30% 20%, #c9fff0, #438d7b 65%, #203838);
+  color: #102823;
+  border-radius: 50%;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  margin: 0 auto 30px;
+  box-shadow: 0 0 70px #63b59d22;
+}
+.pair {
+  max-width: 460px;
+  margin: 12vh auto;
+  text-align: center;
+}
+.pair form {
+  display: grid;
+  gap: 16px;
+  margin-top: 30px;
+}
+.agent-tier {
+  border: 1px solid #3e6d5e;
+  background: #1c332d;
+  border-radius: 18px;
+  padding: 25px;
+}
+.run-row {
+  width: 100%;
+  margin: 8px 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  text-align: left;
+  background: #15252a;
+}
+.toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.timeline {
+  padding-left: 20px;
+}
+.timeline li {
+  border-left: 1px solid #497163;
+  padding: 0 0 20px 24px;
+}
+.timeline p {
+  margin: 8px 0;
+}
+.run-tree,
+.tree-children {
+  display: flex;
+  justify-content: center;
+  gap: 25px;
+}
+.tree-branch {
+  text-align: center;
+}
+.tree-branch button {
+  display: grid;
+  gap: 8px;
+}
+.tree-children {
+  border-top: 1px solid #48675d;
+  margin-top: 25px;
+  padding-top: 25px;
+}
+.worker {
+  font-size: 12px;
+  color: #8fb8a8;
+}
+.diff .add {
+  color: #93e2b3;
+}
+.diff .remove {
+  color: #f7a3a3;
+}
+progress {
+  width: 90%;
+  accent-color: #78dab4;
+}
+@media (max-width: 850px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  aside {
+    height: auto;
+    position: static;
+    padding: 18px;
+    border-right: 0;
+  }
+  .brand {
+    font-size: 20px;
+  }
+  aside > .eyebrow,
+  .connection {
+    display: none;
+  }
+  nav {
+    display: flex;
+    overflow: auto;
+    margin-top: 15px;
+    gap: 3px;
+  }
+  nav button {
+    white-space: nowrap;
+    padding: 10px 14px;
+  }
+  main {
+    padding: 24px 18px;
+  }
+  .conversation-layout {
+    grid-template-columns: 1fr;
+  }
+  .conversation-list {
+    display: flex;
+    overflow: auto;
+  }
+  .conversation-list button {
+    white-space: nowrap;
+  }
+  .composer {
+    padding: 0;
+  }
+  .blocks {
+    grid-template-columns: 1fr;
+  }
+  .run-tree {
+    overflow: auto;
+    justify-content: start;
+  }
+}

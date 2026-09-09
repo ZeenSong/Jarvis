@@ -26,6 +26,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonElement>>()
+    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated")
     private var topics = listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed")
 
     suspend fun pair(server: String, code: String): Credentials = withContext(Dispatchers.IO) {
@@ -40,7 +41,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     fun connect(value: Credentials) { credentials = value; retry = 0; open() }
     fun networkChanged() { if (credentials != null && mutableState.value != ConnectionState.unauthorized) open() }
     fun subscribe(highFrequency: Boolean) {
-        topics = listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed") + if (highFrequency) listOf("system.status.changed") else emptyList()
+        topics = m2Topics + listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed") + if (highFrequency) listOf("system.status.changed") else emptyList()
         if (state.value == ConnectionState.online) scope.launch { runCatching { request("gateway.subscribe", buildJsonObject { put("topics", JsonArray(topics.map(::JsonPrimitive))) }) } }
     }
     private fun open() {

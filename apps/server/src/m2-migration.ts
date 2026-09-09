@@ -1,0 +1,27 @@
+export const m2Migration = `
+CREATE TABLE IF NOT EXISTS conversations (id UUID PRIMARY KEY,title TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS agent_definitions (id TEXT PRIMARY KEY,name TEXT NOT NULL,tier TEXT NOT NULL CHECK(tier IN ('core','managed')),role TEXT NOT NULL,runtime_type TEXT NOT NULL,runtime_config JSONB NOT NULL DEFAULT '{}',lifecycle TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT true,description TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+INSERT INTO agent_definitions(id,name,tier,role,runtime_type,lifecycle) VALUES ('jarvis-core','Jarvis','core','coordinator','deepseek','long-lived'),('coding-agent','Coding Agent','managed','coding','codex','on-demand'),('ops-agent','Ops Agent','managed','ops','pydantic','on-demand') ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS agent_instances (id UUID PRIMARY KEY,agent_definition_id TEXT NOT NULL REFERENCES agent_definitions(id),runtime_type TEXT NOT NULL,runtime_instance_id TEXT,status TEXT NOT NULL,started_at TIMESTAMPTZ DEFAULT now(),last_seen_at TIMESTAMPTZ DEFAULT now(),stopped_at TIMESTAMPTZ,metadata JSONB NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS workspaces (id UUID PRIMARY KEY,repository TEXT NOT NULL,commit_sha TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL,metadata JSONB NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS agent_runs (id UUID PRIMARY KEY,agent_id TEXT NOT NULL REFERENCES agent_definitions(id),agent_instance_id UUID REFERENCES agent_instances(id),parent_run_id UUID REFERENCES agent_runs(id),conversation_id UUID REFERENCES conversations(id),requested_by TEXT NOT NULL REFERENCES devices(id),goal TEXT NOT NULL,runtime_type TEXT NOT NULL,runtime_run_id TEXT,status TEXT NOT NULL CHECK(status IN ('queued','starting','running','waiting_for_user','waiting_for_approval','completed','failed','cancelled')),depth INTEGER NOT NULL CHECK(depth BETWEEN 0 AND 2),workspace_id UUID REFERENCES workspaces(id),input_json JSONB NOT NULL DEFAULT '{}',result_json JSONB,error_json JSONB,started_at TIMESTAMPTZ,finished_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS run_parent ON agent_runs(parent_run_id);
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS last_event_sequence BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS conversation_messages (id UUID PRIMARY KEY,conversation_id UUID NOT NULL REFERENCES conversations(id),role TEXT NOT NULL CHECK(role IN ('user','jarvis','system')),content TEXT NOT NULL DEFAULT '',content_type TEXT NOT NULL DEFAULT 'text',status TEXT NOT NULL DEFAULT 'queued',run_id UUID REFERENCES agent_runs(id),view_id UUID,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS sequence BIGSERIAL;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS message_conversation ON conversation_messages(conversation_id,created_at);
+CREATE TABLE IF NOT EXISTS run_events (id BIGSERIAL PRIMARY KEY,run_id UUID NOT NULL REFERENCES agent_runs(id),agent_id TEXT NOT NULL REFERENCES agent_definitions(id),type TEXT NOT NULL,payload JSONB NOT NULL,timestamp TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS run_event_run ON run_events(run_id,id);
+CREATE TABLE IF NOT EXISTS artifacts (id UUID PRIMARY KEY,run_id UUID NOT NULL REFERENCES agent_runs(id),name TEXT NOT NULL,media_type TEXT NOT NULL,content TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS artifact_run_name ON artifacts(run_id,name);
+CREATE TABLE IF NOT EXISTS resources (resource TEXT PRIMARY KEY,revision BIGINT NOT NULL,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS views (id UUID PRIMARY KEY,spec JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS m2_idempotency (device_id TEXT NOT NULL REFERENCES devices(id),key TEXT NOT NULL,request JSONB NOT NULL,response JSONB NOT NULL,PRIMARY KEY(device_id,key));
+CREATE TABLE IF NOT EXISTS system_metrics (id BIGSERIAL PRIMARY KEY,sampled_at TIMESTAMPTZ NOT NULL DEFAULT now(),data JSONB NOT NULL);
+CREATE INDEX IF NOT EXISTS metrics_time ON system_metrics(sampled_at);
+CREATE TABLE IF NOT EXISTS web_sessions (token_hash TEXT PRIMARY KEY,device_id TEXT NOT NULL REFERENCES devices(id),expires_at TIMESTAMPTZ NOT NULL);
+ALTER TABLE llm_requests ADD COLUMN IF NOT EXISTS logical_agent_id TEXT REFERENCES agent_definitions(id);
+ALTER TABLE llm_requests ADD COLUMN IF NOT EXISTS run_id UUID REFERENCES agent_runs(id);
+ALTER TABLE llm_requests ADD COLUMN IF NOT EXISTS conversation_id UUID REFERENCES conversations(id);
+`;

@@ -13,3 +13,17 @@
 !packages/*/
 !packages/*/src/
 !packages/*/src/**
+!apps/web/
+!apps/web/index.html
+!apps/web/tsconfig.json
+!apps/web/vite.config.ts
+!apps/web/src/
+!apps/web/src/**
+!apps/worker-controller/
+!apps/worker-controller/src/
+!apps/worker-controller/src/**
+!apps/workers/
+!apps/workers/*.mjs
+!apps/workers/*.py
+!apps/workers/requirements.txt
+!apps/workers/Dockerfile.*

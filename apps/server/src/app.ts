@@ -1,3 +1,10 @@
+import { M2, m2Topics, m2Events } from "./m2.js";
+import { permitted } from "./permissions.js";
+import { hash } from "./auth.js";
+import { timingSafeEqual, randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { RuntimeRegistry } from "../../../packages/agent-runtime/src/index.js";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import type { WebSocket } from "ws";
@@ -16,6 +23,7 @@ import {
 } from "../../../packages/llm-usage/src/index.js";
 export async function buildApp(options: {
   databaseUrl: string;
+  runtimes?: RuntimeRegistry;
   logger?: boolean;
   prices?: Prices;
   hostRoot?: string;
@@ -31,6 +39,7 @@ export async function buildApp(options: {
       ? {
           redact: [
             "req.headers.authorization",
+            "req.headers.cookie",
             "req.body.code",
             "req.body.token",
           ],
@@ -60,6 +69,19 @@ export async function buildApp(options: {
       options.offlineSeconds,
     ),
     usage = new UsageCollector(db, options.prices ?? {}, push);
+  const m2 = new M2(
+    db,
+    push,
+    async (name, args) => {
+      if (name === "system.status.read") return systemStatus();
+      if (name === "llm.usage.read") return usage.summary(args ?? {});
+      throw Error("tool_not_allowed");
+    },
+    options.runtimes,
+    options.prices,
+  );
+  await m2.start();
+  let lastMetric = 0;
   let schedulerAt = Date.now(),
     busy = false,
     lastPrune = 0;
@@ -70,6 +92,10 @@ export async function buildApp(options: {
     try {
       const old = monitor.state?.network.public_ipv6;
       await monitor.sample();
+      if (Date.now() - lastMetric > 30000) {
+        await m2.sample(await systemStatus());
+        lastMetric = Date.now();
+      }
       push("system.status.changed", await systemStatus());
       if (old !== monitor.state.network.public_ipv6)
         push("network.public_ipv6.changed", {
@@ -83,6 +109,7 @@ export async function buildApp(options: {
           [options.retentionDays ?? 30],
         );
         await db.query("DELETE FROM pairing_codes WHERE expires_at<now()");
+        await m2.cleanup();
         lastPrune = Date.now();
       }
       schedulerAt = Date.now();
@@ -128,7 +155,7 @@ export async function buildApp(options: {
     return {
       ...monitor.state,
       jarvis: {
-        version: "0.1.0",
+        version: "0.2.0-rc.1",
         server_status: h.status,
         db_status: h.components.database,
       },
@@ -136,9 +163,12 @@ export async function buildApp(options: {
   }
   app.get("/health/live", async () => ({
     status: "healthy",
-    version: "0.1.0",
+    version: "0.2.0-rc.1",
   }));
-  app.get("/health", async () => ({ status: "healthy", version: "0.1.0" }));
+  app.get("/health", async () => ({
+    status: "healthy",
+    version: "0.2.0-rc.1",
+  }));
   app.get("/health/ready", async (_req, reply) => {
     const h = await ready();
     return reply.code(h.status === "healthy" ? 200 : 503).send(h);
@@ -147,7 +177,43 @@ export async function buildApp(options: {
     const h = await ready();
     return reply
       .code(h.status === "healthy" ? 200 : 503)
-      .send({ ...h, version: "0.1.0" });
+      .send({ ...h, version: "0.2.0-rc.1" });
+  });
+  function validOrigin(req: any) {
+    return (
+      req.headers.origin ===
+      (process.env.WEB_ORIGIN ?? `${req.protocol}://${req.headers.host}`)
+    );
+  }
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.headers.origin && !validOrigin(req))
+      return reply.code(403).send({ error: "origin_forbidden" });
+  });
+  app.get("/", async (_req, reply) => {
+    try {
+      return reply
+        .type("text/html")
+        .send(await readFile(resolve("apps/web/dist/index.html")));
+    } catch {
+      return reply.code(503).send({ error: "web_not_built" });
+    }
+  });
+  app.get<{ Params: { "*": string } }>("/assets/*", async (req, reply) => {
+    const name = req.params["*"];
+    if (!/^[a-zA-Z0-9_.-]+$/.test(name)) return reply.code(404).send();
+    try {
+      return reply
+        .type(
+          name.endsWith(".js")
+            ? "application/javascript"
+            : name.endsWith(".css")
+              ? "text/css"
+              : "application/octet-stream",
+        )
+        .send(await readFile(resolve("apps/web/dist/assets", name)));
+    } catch {
+      return reply.code(404).send();
+    }
   });
   const attempts = new Map<string, { count: number; until: number }>();
   app.post("/api/v1/pair", async (req, reply) => {
@@ -161,17 +227,102 @@ export async function buildApp(options: {
       .object({ device_id: z.uuid(), code: z.string().min(1).max(128) })
       .parse(req.body);
     try {
-      return await pair(db, p.device_id, p.code);
+      const result = await pair(db, p.device_id, p.code);
+      if (req.headers.origin) {
+        if (!validOrigin(req))
+          return reply.code(403).send({ error: "origin_forbidden" });
+        const identity = await authenticate(db, `Bearer ${result.token}`);
+        if (identity?.role !== "device")
+          return reply.code(403).send({ error: "device_required" });
+        const session = randomBytes(32).toString("base64url");
+        await db.query(
+          "INSERT INTO web_sessions(token_hash,device_id,expires_at) VALUES($1,$2,now()+interval '30 days')",
+          [hash(session), result.device_id],
+        );
+        reply.header(
+          "Set-Cookie",
+          `jarvis_session=${session}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`,
+        );
+        return { device_id: result.device_id };
+      }
+      return result;
     } catch {
       return reply.code(401).send({ error: "pairing_failed" });
     }
   });
+  app.post("/internal/ops/read", async (req, reply) => {
+    const expected = Buffer.from("Bearer " + (process.env.OPS_TOKEN ?? "")),
+      actual = Buffer.from(req.headers.authorization ?? "");
+    if (
+      !process.env.OPS_TOKEN ||
+      actual.length !== expected.length ||
+      !timingSafeEqual(actual, expected)
+    )
+      return reply.code(401).send({ error: "unauthorized" });
+    const p = z
+      .object({
+        tool: z.enum([
+          "system.status.read",
+          "system.metrics.read",
+          "agent.list",
+          "agent.run.read",
+          "llm.usage.read",
+        ]),
+        args: z.record(z.string(), z.unknown()).default({}),
+      })
+      .strict()
+      .parse(req.body);
+    return m2.readForAgent(p.tool, p.args);
+  });
   await app.register(websocket, { options: { maxPayload: 65536 } });
   await app.register(async (api) => {
     api.addHook("preValidation", async (req, reply) => {
-      const identity = await authenticate(db, req.headers.authorization);
+      let identity = await authenticate(db, req.headers.authorization);
+      if (!identity) {
+        const token = req.headers.cookie
+          ?.split(";")
+          .map((v) => v.trim())
+          .find((v) => v.startsWith("jarvis_session="))
+          ?.slice(15);
+        if (token)
+          identity = (
+            await db.query(
+              "SELECT d.id,d.role FROM web_sessions s JOIN devices d ON d.id=s.device_id WHERE s.token_hash=$1 AND s.expires_at>now()",
+              [hash(token)],
+            )
+          ).rows[0];
+        if (
+          identity &&
+          ((req.url === "/ws" && !validOrigin(req)) ||
+            (req.method !== "GET" && !validOrigin(req)))
+        )
+          return reply.code(403).send({ error: "origin_forbidden" });
+      }
       if (!identity) return reply.code(401).send({ error: "unauthorized" });
+      if (
+        identity.role === "agent" &&
+        req.method === "GET" &&
+        req.url !== "/ws"
+      )
+        return reply.code(403).send({ error: "device_required" });
       (req as any).identity = identity;
+    });
+    api.post<{ Params: { topic: string } }>(
+      "/api/v2/:topic",
+      async (req, reply) => {
+        const identity = (req as any).identity;
+        if (
+          identity.role !== "device" ||
+          !(m2Topics as readonly string[]).includes(req.params.topic)
+        )
+          return reply.code(403).send({ error: "forbidden" });
+        return m2.handle(req.params.topic, req.body ?? {}, identity.id);
+      },
+    );
+    api.get("/api/v2/session", async (req, reply) => {
+      if ((req as any).identity.role !== "device")
+        return reply.code(403).send({ error: "device_required" });
+      return { authenticated: true };
     });
     api.get("/api/v1/system/status", systemStatus);
     api.get("/api/v1/agents", () => agents.list());
@@ -196,11 +347,16 @@ export async function buildApp(options: {
     api.get("/ws", { websocket: true }, (ws, req) => {
       const identity = (req as any).identity;
       const state = {
-        topics: new Set([
-          "network.public_ipv6.changed",
-          "agent.status.changed",
-          "llm.usage.changed",
-        ]),
+        topics: new Set(
+          identity.role === "agent"
+            ? []
+            : [
+                "network.public_ipv6.changed",
+                "agent.status.changed",
+                "llm.usage.changed",
+                ...(identity.role === "device" ? m2Events : []),
+              ],
+        ),
         alive: true,
       };
       sockets.set(ws, state);
@@ -245,12 +401,8 @@ export async function buildApp(options: {
               }
               let result: unknown;
               const p = m.payload;
-              if (
-                topic.startsWith("agent.") &&
-                !["agent.list", "agent.get"].includes(topic) &&
-                identity.role !== "agent"
-              )
-                throw new Error("agent_required");
+              if (!permitted(identity.role, topic))
+                throw new Error("agent_operation_forbidden");
               switch (topic) {
                 case "gateway.ping":
                   result = { pong: true };
@@ -259,6 +411,7 @@ export async function buildApp(options: {
                   const topics = z
                     .array(
                       z.enum([
+                        ...m2Events,
                         "system.status.changed",
                         "network.public_ipv6.changed",
                         "agent.status.changed",
@@ -266,8 +419,10 @@ export async function buildApp(options: {
                         "llm.request.completed",
                       ]),
                     )
-                    .max(5)
+                    .max(32)
                     .parse(p.topics);
+                  if (identity.role === "agent" && topics.length)
+                    throw Error("agent_operation_forbidden");
                   state.topics = new Set(topics);
                   result = { topics };
                   break;
@@ -300,7 +455,7 @@ export async function buildApp(options: {
                   result = await usage.record(p, identity.id);
                   break;
                 default:
-                  throw new Error("unknown_topic");
+                  result = await m2.handle(topic, p, identity.id);
               }
               const response = JSON.stringify(
                 message(
@@ -346,6 +501,20 @@ export async function buildApp(options: {
     });
   });
   app.setErrorHandler((error, _req, reply) => {
+    if (
+      error instanceof Error &&
+      /^(id_reused|invalid_parent|delegation_depth|invalid_run_state)/.test(
+        error.message,
+      )
+    )
+      return reply.code(409).send({ error: error.message });
+    if (error instanceof Error && error.message === "not_found")
+      return reply.code(404).send({ error: error.message });
+    if (
+      error instanceof Error &&
+      error.message === "approval_cannot_elevate_permissions"
+    )
+      return reply.code(403).send({ error: error.message });
     if (error instanceof z.ZodError)
       return reply
         .code(400)
@@ -369,7 +538,8 @@ export async function buildApp(options: {
     clearInterval(heartbeat);
     for (const ws of sockets.keys()) ws.terminate();
     while (busy) await new Promise((r) => setTimeout(r, 10));
+    await m2.close();
     await db.end();
   });
-  return { app, db, monitor, agents, usage };
+  return { app, db, monitor, agents, usage, m2 };
 }

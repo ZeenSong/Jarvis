@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.1.0",
+  "version": "0.2.0-rc.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,24 +8,38 @@
     "start": "node dist/apps/server/src/main.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "pair": "tsx apps/server/src/pair.ts",
     "demo": "tsx examples/test-agent.ts",
-    "test:android-e2e": "tsx tests/run-android-e2e.ts"
+    "test:android-e2e": "tsx tests/run-android-e2e.ts",
+    "build:web": "vite build apps/web",
+    "typecheck:web": "tsc -p apps/web/tsconfig.json",
+    "dev:web": "vite apps/web",
+    "test:web": "playwright test",
+    "test:android-m2": "tsx tests/run-android-m2.ts"
   },
   "dependencies": {
-    "fastify": "^5.6.0",
     "@fastify/websocket": "^11.2.0",
+    "echarts": "^6.1.0",
+    "fastify": "^5.6.0",
     "pg": "^8.16.3",
-    "zod": "^4.1.0",
-    "ws": "^8.18.3"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "ws": "^8.18.3",
+    "zod": "^4.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.2",
-    "tsx": "^4.20.5",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.18.0",
     "@types/pg": "^8.15.5",
-    "@types/ws": "^8.18.1"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^8.2.2"
   },
   "engines": {
     "node": ">=22"

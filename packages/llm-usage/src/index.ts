@@ -99,16 +99,16 @@ export class UsageCollector {
     const group = {
       provider: "provider",
       model: "provider,model",
-      agent: "agent_id",
+      agent: "COALESCE(logical_agent_id,agent_id)",
     }[q.group_by];
     const fields = `COALESCE(sum(input_tokens),0)::float8 AS input_tokens,COALESCE(sum(output_tokens),0)::float8 AS output_tokens,COALESCE(sum(cached_input_tokens),0)::float8 AS cached_input_tokens,COALESCE(sum(reasoning_tokens),0)::float8 AS reasoning_tokens,count(*)::int AS requests,count(*) FILTER(WHERE status='error')::int AS errors,sum(estimated_cost_usd)::float8 AS estimated_cost_usd,count(*) FILTER(WHERE estimated_cost_usd IS NULL)::int AS unpriced_requests,percentile_cont(0.95) WITHIN GROUP(ORDER BY latency_ms) AS p95_latency_ms`;
     const where =
-      "FROM llm_requests WHERE started_at >= $1 AND started_at < $2 AND ($3::text IS NULL OR agent_id=$3)";
+      "FROM llm_requests WHERE started_at >= $1 AND started_at < $2 AND ($3::text IS NULL OR COALESCE(logical_agent_id,agent_id)=$3)";
     const params = [q.from, q.to, q.agent_id ?? null];
     const [total, groups] = await Promise.all([
       this.db.query(`SELECT ${fields} ${where}`, params),
       this.db.query(
-        `SELECT ${group},${fields} ${where} GROUP BY ${group} ORDER BY requests DESC`,
+        `SELECT ${group}${q.group_by === "agent" ? " AS agent_id" : ""},${fields} ${where} GROUP BY ${group} ORDER BY requests DESC`,
         params,
       ),
     ]);

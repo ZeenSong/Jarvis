@@ -1,0 +1,166 @@
+{
+  "view": {
+    "version": 1,
+    "type": "dashboard",
+    "title": "共享协议兼容性",
+    "blocks": [
+      {
+        "type": "metric",
+        "title": "metric",
+        "resource": "system/status",
+        "path": "value"
+      },
+      {
+        "type": "metric_group",
+        "title": "metric_group",
+        "resource": "system/status",
+        "path": "metrics"
+      },
+      {
+        "type": "sparkline",
+        "title": "sparkline",
+        "resource": "system/status",
+        "path": "series"
+      },
+      {
+        "type": "line_chart",
+        "title": "line_chart",
+        "resource": "system/status",
+        "path": "series"
+      },
+      {
+        "type": "bar_chart",
+        "title": "bar_chart",
+        "resource": "system/status",
+        "path": "series"
+      },
+      {
+        "type": "donut",
+        "title": "donut",
+        "resource": "system/status",
+        "path": "series"
+      },
+      {
+        "type": "gauge",
+        "title": "gauge",
+        "resource": "system/status",
+        "path": "value"
+      },
+      {
+        "type": "progress",
+        "title": "progress",
+        "resource": "system/status",
+        "path": "value"
+      },
+      {
+        "type": "status_grid",
+        "title": "status_grid",
+        "resource": "system/status",
+        "path": "metrics"
+      },
+      {
+        "type": "table",
+        "title": "table",
+        "resource": "system/status",
+        "path": "series"
+      },
+      {
+        "type": "timeline",
+        "title": "timeline",
+        "resource": "system/status",
+        "path": "events"
+      },
+      {
+        "type": "card",
+        "title": "card",
+        "resource": "system/status",
+        "path": "text"
+      },
+      {
+        "type": "alert",
+        "title": "alert",
+        "resource": "system/status",
+        "path": "text"
+      },
+      {
+        "type": "action",
+        "title": "action",
+        "resource": "system/status",
+        "path": "value",
+        "action": {
+          "type": "run.cancel",
+          "target": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      {
+        "type": "approval",
+        "title": "approval",
+        "resource": "system/status",
+        "path": "value",
+        "action": {
+          "type": "approval.response",
+          "target": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      {
+        "type": "markdown",
+        "title": "markdown",
+        "resource": "system/status",
+        "path": "text"
+      },
+      {
+        "type": "code_diff",
+        "title": "code_diff",
+        "resource": "system/status",
+        "path": "diff"
+      },
+      {
+        "type": "run_graph",
+        "title": "run_graph",
+        "resource": "system/status",
+        "path": "tree"
+      }
+    ]
+  },
+  "resources": [
+    {
+      "version": 1,
+      "resource": "system/status",
+      "revision": 2,
+      "data": {
+        "value": 42,
+        "metrics": {
+          "running": 1
+        },
+        "series": [
+          {
+            "label": "A",
+            "value": 3
+          },
+          {
+            "label": "B",
+            "value": 7
+          }
+        ],
+        "events": [
+          {
+            "timestamp": "2026-09-08T00:00:00Z",
+            "payload": {
+              "title": "开始执行"
+            }
+          }
+        ],
+        "text": "<script>不可执行</script>",
+        "diff": "+新增\n-删除",
+        "tree": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "agent_id": "jarvis-core",
+            "status": "running",
+            "parent_run_id": null
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+# This proxy is the only Internet route from workers. Validate DNS/IP-denial behavior
+# with the actual CNI before enabling any real worker in production.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: egress-proxy, namespace: jarvis-workers}
+data:
+  squid.conf: |
+    http_port 3128
+    pid_filename /tmp/squid.pid
+    pinger_enable off
+    coredump_dir /tmp
+    cache deny all
+    access_log none
+    cache_log /dev/stderr
+    cache_store_log none
+    acl SSL_ports port 443
+    acl CONNECT method CONNECT
+    acl private dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 ::1/128 fc00::/7 fe80::/10
+    acl allowed dstdomain .chatgpt.com .openai.com api.deepseek.com github.com .githubusercontent.com registry.npmjs.org pypi.org files.pythonhosted.org
+    http_access deny private
+    http_access deny !SSL_ports
+    http_access allow CONNECT allowed
+    http_access deny all
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: egress-proxy, namespace: jarvis-workers}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: egress-proxy}}
+  template:
+    metadata: {labels: {app: egress-proxy}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: proxy
+          image: jarvis-egress-proxy:0.2.0-rc.1
+          command: [squid, -N, -f, /etc/squid/squid.conf]
+          ports: [{containerPort: 3128}]
+          volumeMounts:
+            - {name: config, mountPath: /etc/squid/squid.conf, subPath: squid.conf, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: '1', memory: 256Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: config, configMap: {name: egress-proxy}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: egress-proxy, namespace: jarvis-workers}
+spec:
+  selector: {app: egress-proxy}
+  ports: [{port: 3128, targetPort: 3128}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: proxy-ingress, namespace: jarvis-workers}
+spec:
+  podSelector: {matchLabels: {app: egress-proxy}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: jarvis-worker}}}]
+      ports: [{protocol: TCP, port: 3128}]

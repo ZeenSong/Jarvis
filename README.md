@@ -1,6 +1,8 @@
-# Jarvis · M1
+# Jarvis
 
 个人私有云骨架：TypeScript 模块化单体 + PostgreSQL + Kotlin/Compose Android。实现目标以 [M1 方案](Jarvis_M1_常驻服务与移动监控.md) 为准；真实环境验收进度见 [验收记录](docs/m1-acceptance.md)。
+
+M2 预发布版本 `0.2.0-rc.1` 已增加真实对话、分层 Agent、隔离 Worker 与 Web/Android 动态界面。交付与启动见 [M2 操作指导](deploy/m2/README.md)，通过项和上线前剩余检查见 [M2 验收记录](docs/m2/acceptance.md)。下方 v0.1.0 Release 仍为已验收的正式版本。
 
 ## 下载与镜像
 

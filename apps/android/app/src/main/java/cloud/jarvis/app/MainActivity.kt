@@ -41,6 +41,8 @@ private fun bytes(value: Double?): String = value?.let { "%.1f GiB".format(it / 
 private fun percent(value: Double?): String = value?.let { "%.1f %%".format(it) } ?: "不可用"
 private fun cost(value: Double?): String = value?.let { "$%.6f".format(Locale.US, it) } ?: "未配置价格"
 private fun age(value: String): String = runCatching { "${(Instant.now().epochSecond - Instant.parse(value).epochSecond).coerceAtLeast(0)} 秒前" }.getOrDefault("—")
+private val uiLabels = mapOf("Overview" to "概览", "Server" to "服务器", "Agents Online" to "在线智能体", "LLM Today" to "今日 AI 用量", "Public IPv6" to "公网 IPv6", "Gateway Latency" to "网关延迟", "Server Uptime" to "运行时间", "OS" to "操作系统", "Kernel" to "内核", "Uptime" to "运行时间", "Network" to "网络", "Utilization" to "使用率", "Load 1 / 5 / 15m" to "负载 1 / 5 / 15 分钟", "Temperature" to "温度", "Memory" to "内存", "Used / Total" to "已用 / 总量", "Storage" to "存储", "VRAM" to "显存", "Jarvis Services" to "Jarvis 服务", "Jarvis Server" to "Jarvis 服务端", "Version" to "版本", "Agents" to "监控智能体", "Status" to "状态", "Task" to "任务", "Runtime" to "运行时", "Provider / Model" to "供应商 / 模型", "Last Seen" to "最近上报", "Identity & Session" to "身份与会话", "Today · UTC" to "今日 · UTC", "Recent Events" to "最近事件", "Input" to "输入 Token", "Output" to "输出 Token", "Cached Input" to "缓存输入", "Reasoning" to "推理 Token", "Requests / Errors" to "请求 / 错误", "Estimated Cost" to "预估费用", "LLM Usage" to "AI 用量", "Total · UTC" to "合计 · UTC", "healthy" to "正常", "idle" to "空闲", "running" to "运行中", "offline" to "离线", "degraded" to "降级", "error" to "错误")
+private fun localized(value: String) = uiLabels[value] ?: value
 
 @Composable private fun JarvisApp(repo: JarvisRepository) {
     val paired by repo.paired.collectAsStateWithLifecycle(); val connection by repo.gateway.state.collectAsStateWithLifecycle()
@@ -50,16 +52,20 @@ private fun age(value: String): String = runCatching { "${(Instant.now().epochSe
     val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"
     LaunchedEffect(route) { repo.selectPage(route) }
     Scaffold(topBar = { Column(Modifier.statusBarsPadding().padding(20.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); TextButton(onClick = { settings = true }) { Text(connection.name.uppercase()) } }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新配对" }) } }
         if (connection != ConnectionState.online) Text("显示最近缓存 · ${saved?.let { Instant.ofEpochMilli(it) } ?: "尚无数据"}", style = MaterialTheme.typography.bodySmall)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-    } }, bottomBar = { NavigationBar { listOf("home" to "Home", "server" to "Server", "agents" to "Agents", "ai" to "AI").forEach { (path, label) -> NavigationBarItem(selected = route == path, onClick = { nav.navigate(path) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Text(label.take(1)) }, label = { Text(label) }) } } }) { padding ->
+    } }, bottomBar = { NavigationBar { listOf("home" to "首页", "jarvis" to "Jarvis", "agents" to "智能体", "ai" to "AI", "server" to "服务器", "workspace" to "工作台").forEach { (path, label) -> NavigationBarItem(selected = route == path, onClick = { nav.navigate(path) { popUpTo("home"); launchSingleTop = true } }, icon = { Text(label.take(1)) }, label = { Text(label) }) } } }) { padding ->
         NavHost(nav, startDestination = "home", modifier = Modifier.padding(padding)) {
             composable("home") { HomeScreen(repo) }
-            composable("server") { ServerScreen(repo) }
-            composable("agents") { AgentsScreen(repo) { nav.navigate("agent/$it") } }
+            composable("server") { ServerScreen(repo) { repo.m2.show("system_overview"); nav.navigate("workspace") } }
+            composable("agents") { AgentCenter(repo.m2, { nav.navigate("run/$it") }, { nav.navigate("legacy-agents") }) }
+            composable("legacy-agents") { AgentsScreen(repo) { nav.navigate("agent/$it") } }
+            composable("jarvis") { ConversationScreen(repo.m2, { nav.navigate("run/$it") }, { repo.m2.loadView(it);nav.navigate("workspace") }) }
+            composable("workspace") { DynamicScreen(repo.m2) { nav.navigate("run/$it") } }
+            composable("run/{id}") { entry -> val id=entry.arguments?.getString("id")!!; LaunchedEffect(id){repo.m2.openRun(id)}; DynamicScreen(repo.m2) { nav.navigate("run/$it") } }
             composable("agent/{id}") { entry -> val id = entry.arguments?.getString("id")!!; DisposableEffect(id) { repo.selectAgent(id); onDispose { repo.selectAgent(null) } }; AgentScreen(repo) { nav.popBackStack() } }
-            composable("ai") { UsageScreen(repo) }
+            composable("ai") { UsageScreen(repo) { repo.m2.show("usage_analysis"); nav.navigate("workspace") } }
         }
     }
 }
@@ -75,12 +81,12 @@ private fun age(value: String): String = runCatching { "${(Instant.now().epochSe
     }
 }
 @Composable private fun Screen(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(title, style = MaterialTheme.typography.headlineMedium); content(); Spacer(Modifier.height(12.dp)) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(localized(title), style = MaterialTheme.typography.headlineMedium); content(); Spacer(Modifier.height(12.dp)) }
 }
 @Composable private fun MetricCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium); content() } }
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(localized(title), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium); content() } }
 }
-@Composable private fun Metric(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant); SelectionContainer(Modifier.weight(1.3f)) { Text(value) } } }
+@Composable private fun Metric(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { Text(localized(label), Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant); SelectionContainer(Modifier.weight(1.3f)) { Text(localized(value)) } } }
 @Composable private fun HomeScreen(repo: JarvisRepository) {
     val s by repo.system.collectAsStateWithLifecycle(); val a by repo.agents.collectAsStateWithLifecycle(); val u by repo.today.collectAsStateWithLifecycle(); val latency by repo.gateway.latency.collectAsStateWithLifecycle()
     val background by repo.backgroundEnabled.collectAsStateWithLifecycle()
@@ -92,9 +98,10 @@ private fun age(value: String): String = runCatching { "${(Instant.now().epochSe
         Metric("Server Uptime", s.obj("server").number("uptime_seconds")?.let { "%.1f 小时".format(it / 3600) } ?: "—")
     }; Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("保持后台连接（常驻通知）", Modifier.weight(1f)); Switch(checked = background, onCheckedChange = { enabled -> if (enabled && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else repo.setBackground(enabled) }) }; TextButton(onClick = repo::refresh) { Text("刷新状态") } }
 }
-@Composable private fun ServerScreen(repo: JarvisRepository) {
+@Composable private fun ServerScreen(repo: JarvisRepository, trends: () -> Unit) {
     val s by repo.system.collectAsStateWithLifecycle()
     Screen("Server") {
+        TextButton(onClick=trends) { Text("查看 CPU / GPU 历史趋势") }
         MetricCard(s.obj("server").value("hostname")) { Metric("OS", s.obj("server").value("os")); Metric("Kernel", s.obj("server").value("kernel")); Metric("Uptime", s.obj("server").value("uptime_seconds") + " s") }
         MetricCard("Network") { val n = s.obj("network"); listOf("public_ipv6", "public_ipv4", "tailscale_ipv4", "tailscale_ipv6", "lan_ipv4").forEach { Metric(it, n.value(it)) } }
         MetricCard("CPU") { val c = s.obj("cpu"); Text(c.value("model")); Metric("Utilization", percent(c.number("usage_percent"))); Metric("Load 1 / 5 / 15m", listOf("load_1m", "load_5m", "load_15m").joinToString(" / ") { c.value(it) }); Metric("Temperature", c.value("temperature_c") + " °C") }
@@ -124,10 +131,11 @@ private fun age(value: String): String = runCatching { "${(Instant.now().epochSe
 @Composable private fun UsageCard(title: String, total: JsonObject?) {
     MetricCard(title) { Metric("Input", amount(total.number("input_tokens"))); Metric("Output", amount(total.number("output_tokens"))); Metric("Cached Input", amount(total.number("cached_input_tokens"))); Metric("Reasoning", amount(total.number("reasoning_tokens"))); Metric("Requests / Errors", total.value("requests") + " / " + total.value("errors")); Metric("Estimated Cost", cost(total.number("estimated_cost_usd"))); if ((total.number("unpriced_requests") ?: 0.0) > 0) Text("${total.value("unpriced_requests")} 次请求没有价格，费用统计不完整", style = MaterialTheme.typography.bodySmall) }
 }
-@Composable private fun UsageScreen(repo: JarvisRepository) {
+@Composable private fun UsageScreen(repo: JarvisRepository, charts: () -> Unit) {
     val usage by repo.usage.collectAsStateWithLifecycle(); val range by repo.range.collectAsStateWithLifecycle()
     Screen("LLM Usage") {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("today" to "Today", "7d" to "7D", "30d" to "30D", "month" to "Month").forEach { (value, label) -> FilterChip(selected = range == value, onClick = { repo.selectRange(value) }, label = { Text(label) }) } }
+        TextButton(onClick=charts) { Text("查看用量图表") }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("today" to "今日", "7d" to "7 天", "30d" to "30 天", "month" to "本月").forEach { (value, label) -> FilterChip(selected = range == value, onClick = { repo.selectRange(value) }, label = { Text(label) }) } }
         UsageCard("Total · UTC", usage.obj("total"))
         (usage?.get("providers") as? JsonArray)?.forEach { UsageCard(it.jsonObject.value("provider"), it.jsonObject) }
     }

@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: codex-auth, namespace: jarvis-workers}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+# Run once before enabling Coding. Never overwrite an existing refreshed login.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: codex-auth-seed, namespace: jarvis-workers}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: seed
+          image: jarvis-codex-worker:0.2.0-rc.1
+          command: [node, --input-type=module, -e]
+          args:
+            - "import {access} from 'node:fs/promises'; import {persistLogin} from '/app/codex-auth.mjs'; try {await access('/credentials/auth.json')} catch(e) {if(e.code!=='ENOENT')throw e;await persistLogin('/seed/auth.json','/credentials/auth.json')}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: auth, mountPath: /credentials}
+            - {name: seed, mountPath: /seed, readOnly: true}
+      volumes:
+        - name: auth
+          persistentVolumeClaim: {claimName: codex-auth}
+        - name: seed
+          secret:
+            secretName: codex-login
+            defaultMode: 288
+            items: [{key: auth.json, path: auth.json}]

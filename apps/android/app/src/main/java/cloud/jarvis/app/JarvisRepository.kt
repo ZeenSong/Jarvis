@@ -35,6 +35,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     private var selectedAgent: String? = null
     private var refreshing = false
     val gateway = GatewayClient(scope, ::onEvent) { refresh() }
+    val m2 = M2Repository(gateway, scope, cache, error)
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         (app.getSystemService(ConnectivityManager::class.java)).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
@@ -43,6 +44,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         })
         scope.launch { runCatching {
             cache.all().forEach { s ->
+                if(s.key.startsWith("m2-")) m2.restore(s)
                 when (s.key) { "system" -> system.value = Json.parseToJsonElement(s.json).jsonObject; "agents" -> agents.value = Json.parseToJsonElement(s.json).jsonArray.map { it.jsonObject }; "today" -> today.value = Json.parseToJsonElement(s.json).jsonObject }
                 savedAt.value = maxOf(savedAt.value ?: 0, s.savedAt)
             }
@@ -62,6 +64,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     } }
     private suspend fun save(key: String, value: JsonElement) { val now = System.currentTimeMillis(); cache.put(Snapshot(key, value.toString(), now)); savedAt.value = now }
     private fun onEvent(topic: String, value: JsonElement) {
+        m2.event(topic, value)
         when (topic) {
             "system.status.changed" -> { system.value = value.jsonObject; scope.launch { runCatching { save("system", value) }.onFailure { error.value = it.message } } }
             "agent.status.changed" -> { val a = value.jsonObject; agents.value = (agents.value.filter { it["id"] != a["id"] } + a).sortedBy { it["name"].toString() }; scope.launch { runCatching { save("agents", JsonArray(agents.value)); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = it.message } } }
@@ -73,7 +76,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         refreshing = true
         try { system.value = gateway.request("system.status.get").jsonObject; save("system", system.value!!)
             agents.value = gateway.request("agent.list").jsonArray.map { it.jsonObject }; save("agents", JsonArray(agents.value))
-            loadUsage(); selectedAgent?.let { loadAgent(it) }; error.value = null
+            loadUsage(); selectedAgent?.let { loadAgent(it) }; m2.refresh(); error.value = null
         } catch (e: Exception) { error.value = e.message } finally { refreshing = false }
     } }
     fun selectRange(value: String) { range.value = value; scope.launch { runCatching { loadUsage() }.onFailure { error.value = it.message } } }

@@ -31,10 +31,11 @@ class M1EndToEndTest {
         compose.onNode(hasSetTextAction() and hasText("http://100.x.x.x:8080")).performTextInput(server)
         compose.onNode(hasSetTextAction() and hasText("配对码")).performTextInput(code)
         compose.onNodeWithText("配对并连接").performClick()
-        waitFor("ONLINE")
-        compose.onNode(hasText("Server") and hasClickAction()).performClick()
-        waitFor("Network")
-        compose.onNode(hasText("Agents") and hasClickAction()).performClick()
+        waitFor("已连接")
+        compose.onNode(hasText("服务器") and hasClickAction()).performClick()
+        waitFor("网络")
+        compose.onNode(hasText("智能体") and hasClickAction()).performClick()
+        compose.onNodeWithText("查看 M1 监控 Agent").performClick()
         val registered = CountDownLatch(1)
         socket = client.newWebSocket(Request.Builder().url(server.replaceFirst("http", "ws") + "/ws").header("Authorization", "Bearer $token").build(), object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) { ws.send(buildJsonObject { put("id", UUID.randomUUID().toString()); put("type", "request"); put("topic", "agent.register"); put("payload", buildJsonObject { put("agent_id", agentId); put("name", "Android E2E Agent"); put("runtime", "instrumentation") }) }.toString()) }
@@ -50,10 +51,11 @@ class M1EndToEndTest {
             client.newCall(Request.Builder().url("$server/api/v1/llm/requests").header("Authorization", "Bearer $token").post(record.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { check(it.isSuccessful) { "usage logging failed: ${it.code}" } }
             compose.onNode(hasText("AI") and hasClickAction()).performClick()
             waitFor("fixture")
-            compose.onNode(hasText("Agents") and hasClickAction()).performClick()
+            compose.onNode(hasText("智能体") and hasClickAction()).performClick()
+            compose.onNodeWithText("查看 M1 监控 Agent").performClick()
             compose.onNodeWithTag("agent-detail-$agentId").performScrollTo().performClick()
-            waitFor("Identity & Session")
-            compose.onNodeWithText("Today · UTC").performScrollTo().assertIsDisplayed()
+            waitFor("身份与会话")
+            compose.onNodeWithText("今日 · UTC").performScrollTo().assertIsDisplayed()
         } finally { socket?.close(1000, "test complete"); client.dispatcher.executorService.shutdown() }
     }
 }

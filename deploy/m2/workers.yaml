@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jarvis-workers
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker-controller
+  namespace: jarvis-workers
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: worker-controller
+  namespace: jarvis-workers
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, delete]
+  - apiGroups: ['']
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, list, delete]
+  - apiGroups: ['']
+    resources: [pods, pods/log]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: worker-controller
+  namespace: jarvis-workers
+subjects:
+  - kind: ServiceAccount
+    name: worker-controller
+    namespace: jarvis-workers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: worker-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-controller
+  namespace: jarvis-workers
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: worker-controller}
+  template:
+    metadata:
+      labels: {app: worker-controller}
+    spec:
+      serviceAccountName: worker-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: controller
+          image: jarvis-server:0.2.0-rc.1
+          command: [node, dist/apps/worker-controller/src/main.js]
+          ports: [{containerPort: 8090}]
+          env:
+            - name: CONTROLLER_TOKEN
+              valueFrom: {secretKeyRef: {name: controller-access, key: token}}
+            - {name: CODEX_WORKER_IMAGE, value: 'jarvis-codex-worker:0.2.0-rc.1'}
+            - {name: OPS_WORKER_IMAGE, value: 'jarvis-ops-worker:0.2.0-rc.1'}
+            - name: CODING_REPOSITORY
+              valueFrom: {configMapKeyRef: {name: worker-config, key: repository}}
+            - name: OPS_MODEL
+              valueFrom: {configMapKeyRef: {name: worker-config, key: ops-model}}
+            - {name: WORKER_EGRESS_PROXY, value: 'http://egress-proxy.jarvis-workers.svc.cluster.local:3128'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: worker-controller, namespace: jarvis-workers}
+spec:
+  selector: {app: worker-controller}
+  ports: [{port: 8090, targetPort: 8090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: worker-deny-all, namespace: jarvis-workers}
+spec:
+  podSelector: {matchLabels: {app: jarvis-worker}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: worker-controller}}}]
+      ports: [{protocol: TCP, port: 8091}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to:
+        - podSelector: {matchLabels: {app: egress-proxy}}
+      ports: [{protocol: TCP, port: 3128}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: ops-read-only-gateway, namespace: jarvis-workers}
+spec:
+  podSelector: {matchLabels: {app: jarvis-worker, role: pydantic}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app: ops-read-gateway}}
+      ports: [{protocol: TCP, port: 8092}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: controller-ingress, namespace: jarvis-workers}
+spec:
+  podSelector: {matchLabels: {app: worker-controller}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: jarvis}}
+          podSelector: {matchLabels: {app: jarvis-server}}
+        - ipBlock: {cidr: __GATEWAY_SOURCE_IP__/32}
+      ports: [{protocol: TCP, port: 8090}]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: worker-budget, namespace: jarvis-workers}
+spec:
+  hard:
+    count/jobs.batch: '4'
+    requests.storage: 100Gi
+    requests.cpu: '4'
+    requests.memory: 4Gi
+    limits.cpu: '8'
+    limits.memory: 8Gi

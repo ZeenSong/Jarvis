@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: jarvis-server, namespace: jarvis}
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: server
+          image: jarvis-server:0.2.0-rc.1
+          env:
+            - {name: WORKER_CONTROLLER_URL, value: 'http://worker-controller.jarvis-workers.svc.cluster.local:8090'}
+            - name: CONTROLLER_TOKEN
+              valueFrom: {secretKeyRef: {name: jarvis-m2, key: controller-token}}
+            - name: OPS_TOKEN
+              valueFrom: {secretKeyRef: {name: jarvis-m2, key: ops-token}}
+            - name: DEEPSEEK_API_KEY
+              valueFrom: {secretKeyRef: {name: jarvis-m2, key: core-api-key}}
+            - name: CORE_MODEL
+              valueFrom: {configMapKeyRef: {name: jarvis-m2, key: core-model}}
+            - name: CODING_MODEL
+              valueFrom: {configMapKeyRef: {name: jarvis-m2, key: coding-model}}
+            - name: CODING_REPOSITORY
+              valueFrom: {configMapKeyRef: {name: jarvis-m2, key: repository}}
+            - name: CODING_COMMIT
+              valueFrom: {configMapKeyRef: {name: jarvis-m2, key: commit}}

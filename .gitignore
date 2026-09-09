@@ -22,4 +22,7 @@ artifacts/SHA256SUMS
 *.pfx
 *.kubeconfig
 *.sql
+!tests/fixtures/*.sql
 *.dump
+test-results/
+playwright-report/

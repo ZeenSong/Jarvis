@@ -1,3 +1,5 @@
+import { RuntimeRegistry } from "../../../packages/agent-runtime/src/index.js";
+import { ControllerRuntime } from "../../../packages/agent-runtime-remote/src/index.js";
 import { readFile } from "node:fs/promises";
 import { buildApp } from "./app.js";
 import { configSchema, priceSchema } from "./config.js";
@@ -7,7 +9,18 @@ const prices = priceSchema.parse(
     ? JSON.parse(await readFile(process.env.PRICES_FILE, "utf8"))
     : {},
 );
+const runtimes = new RuntimeRegistry();
+for (const type of ["codex", "pydantic"] as const)
+  runtimes.register(
+    type,
+    new ControllerRuntime(
+      type,
+      process.env.WORKER_CONTROLLER_URL ?? "",
+      process.env.CONTROLLER_TOKEN ?? "",
+    ),
+  );
 const { app } = await buildApp({
+  runtimes,
   databaseUrl: config.DATABASE_URL,
   logger: true,
   prices,

@@ -1,3 +1,4 @@
+import { m2Migration } from "./m2-migration.js";
 import pg from "pg";
 export function database(url: string) {
   return new pg.Pool({
@@ -26,6 +27,7 @@ export async function migrate(db: Database) {
       CREATE INDEX IF NOT EXISTS idx_llm_requests_provider_model ON llm_requests(provider,model);
       CREATE INDEX IF NOT EXISTS idx_llm_requests_agent ON llm_requests(agent_id);
     `);
+    await client.query(m2Migration);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
