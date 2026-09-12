@@ -1,0 +1,32 @@
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdir, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { createGzip } from 'node:zlib';
+import { createHash } from 'node:crypto';
+const run = promisify(execFile);
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+const dir = `artifacts/${version}`;
+await mkdir(dir, { recursive: true });
+const apk = `jarvis-${version}-android-debug.apk`;
+const source = `jarvis-${version}-source.tar.gz`;
+const image = `jarvis-${version}-server-image.tar.gz`;
+await copyFile('apps/android/app/build/outputs/apk/debug/app-debug.apk', `${dir}/${apk}`);
+await copyFile('deploy/m3/release-notes.md', `${dir}/release-notes.md`);
+const childDone = p => new Promise((resolve, reject) => { p.once('error', reject); p.once('exit', c => c === 0 ? resolve() : reject(Error(`child exited ${c}`))); });
+const save = spawn('docker', ['save', `jarvis-server:${version}`], { stdio: ['ignore', 'pipe', 'inherit'] });
+await Promise.all([childDone(save), pipeline(save.stdout, createGzip(), createWriteStream(`${dir}/${image}`))]);
+const listing = (await run('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'])).stdout;
+const top = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'README.md', '.dockerignore', '.gitignore', '.env.example', 'playwright.config.ts']);
+const files = [...new Set(listing.split('\0').filter(p => top.has(p) || /^(apps|packages|tests|docs|deploy|examples)\//.test(p)))];
+if (files.some(p => /(^|\/)(node_modules|build|\.local|\.env)$|\.(apk|dump|key|keystore|jks|kubeconfig)$/.test(p))) throw Error('Unexpected private/build file');
+const tar = spawn('tar', ['--null', '--verbatim-files-from', '-T', '-', '-czf', `${dir}/${source}`], { stdio: ['pipe', 'ignore', 'inherit'] });
+const archived = childDone(tar); tar.stdin.end(files.join('\0') + '\0'); await archived;
+const checksums = [];
+for (const name of [apk, source, image, 'release-notes.md']) {
+  const hash = createHash('sha256'); for await (const chunk of createReadStream(`${dir}/${name}`)) hash.update(chunk);
+  checksums.push(`${hash.digest('hex')}  ${name}`);
+}
+await writeFile(`${dir}/SHA256SUMS`, checksums.join('\n') + '\n');
+console.log(`Packaged ${version} in ${dir}`);

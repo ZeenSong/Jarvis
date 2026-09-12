@@ -10,7 +10,7 @@ RUN npm run build && npm run build:web && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/ZeenSong/Jarvis" \
-      org.opencontainers.image.version="0.2.0-rc.1" \
+      org.opencontainers.image.version="0.3.0-preview.1" \
       org.opencontainers.image.description="Jarvis conversation and agent gateway"
 RUN apt-get update && apt-get install -y --no-install-recommends iproute2 ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

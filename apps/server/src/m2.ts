@@ -1,5 +1,6 @@
 import type { Prices } from "../../../packages/llm-usage/src/index.js";
 import { randomUUID } from "node:crypto";
+import { installedApplications } from "./applications.js";
 import { z } from "zod";
 import type { Database } from "./persistence.js";
 import {
@@ -14,12 +15,16 @@ import {
   actionSchema,
 } from "../../../packages/ui-protocol/src/index.js";
 import { preset } from "../../../packages/ui-presets/src/index.js";
+import { semanticView } from "../../../packages/ui-presets/src/v2.js";
+import { runEventLog } from "../../../packages/ui-presets/src/run-log.js";
+import { negotiateView } from "../../../packages/ui-protocol-v2/src/index.js";
 import {
   runContext,
   metricsContext,
   definitionsContext,
 } from "../../../packages/agent-manager/src/context.js";
 export const m2Topics = [
+  "application.list",
   "conversation.create",
   "conversation.list",
   "conversation.get",
@@ -34,6 +39,7 @@ export const m2Topics = [
   "approval.response",
   "resource.get",
   "view.get",
+  "view.v2.get",
   "view.show",
   "ui.action.invoke",
   "runtime.health",
@@ -197,8 +203,16 @@ export class M2 {
   }
   private async snapshot(name: string) {
     let data: unknown;
-    if (name.startsWith("agent-run/"))
-      data = await this.manager.get(z.uuid().parse(name.slice(10)));
+    if (name.startsWith("agent-run/")) {
+      const run = await this.manager.get(z.uuid().parse(name.slice(10)));
+      data = { ...run, event_log: runEventLog(run.events), presentation: {
+        artifacts: { items: run.artifacts.slice(0, 200).map((artifact) => ({
+          title: String(artifact.name).slice(0, 300), status: String(artifact.media_type).slice(0, 100),
+        })) },
+        summary: { "任务": run.run.goal, "状态": run.run.status, "执行者": run.run.agent_id,
+          "开始时间": run.run.started_at, "完成时间": run.run.finished_at },
+      } };
+    }
     else if (name.startsWith("conversation/"))
       data = await this.conversations.get(z.uuid().parse(name.slice(13)));
     else
@@ -244,6 +258,13 @@ export class M2 {
   }
   async handle(topic: string, p: any, device: string): Promise<unknown> {
     switch (topic) {
+      case "application.list": return installedApplications();
+      case "view.v2.get": {
+        const spec = preset(p.intent);
+        const names = [...new Set(spec.blocks.flatMap((b) => b.resource ? [b.resource] : []))];
+        const snapshots = await Promise.all(names.map((name) => this.resource(name)));
+        return negotiateView(semanticView(p.intent.intent, spec, new Map(snapshots.map((r) => [r.resource, { ...r, version: 1 as const }]))), p.renderer);
+      }
       case "conversation.create": {
         const title = z
           .string()

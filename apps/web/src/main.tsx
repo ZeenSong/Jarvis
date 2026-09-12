@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { Gateway } from "./gateway";
 import { randomUUID } from "./uuid";
@@ -9,17 +9,25 @@ import type {
 } from "../../../packages/ui-protocol/src/index";
 import { viewSchema } from "../../../packages/ui-protocol/src/index";
 import "./style.css";
+import "./product.css";
+import { ProductHome, SpaceCards, Empty, ApplicationList } from "./product";
+import { DynamicView, webRenderer } from "./dynamic-v2";
+import { NavigationIcon } from "./icons";
+import { ProductTasks } from "./tasks";
 const gateway = new Gateway();
 const nav = [
   ["home", "首页"],
+  ["spaces", "空间"],
+  ["apps", "应用"],
+  ["tasks", "任务"],
   ["jarvis", "Jarvis"],
-  ["agents", "智能体"],
-  ["ai", "AI 用量"],
-  ["server", "服务器"],
-  ["workspace", "工作台"],
+  ["system", "系统"],
 ];
 function restoredNavigation() {
   try {
+    const path = location.pathname.split("/").filter(Boolean);
+    if (path[0] === "tasks" && /^[a-f0-9-]{36}$/.test(path[1] ?? "")) return { page: "run", runId: path[1], selected: undefined };
+    if (nav.some(([key]) => key === path[0])) return { page: path[0], runId: undefined, selected: undefined };
     const value = JSON.parse(
       sessionStorage.getItem("jarvis-navigation") ?? "{}",
     );
@@ -37,6 +45,9 @@ function restoredNavigation() {
   }
 }
 function App() {
+  const viewRequest = useRef(0);
+  const [theme, setTheme] = useState(() => localStorage.getItem("jarvis-theme") === "light" ? "light" : "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("jarvis-theme", theme); }, [theme]);
   const [paired, setPaired] = useState(false),
     [code, setCode] = useState(""),
     [error, setError] = useState(""),
@@ -48,6 +59,8 @@ function App() {
       () => restoredNavigation().selected,
     ),
     [view, setView] = useState<ViewSpec>(),
+    [semantic, setSemantic] = useState<any>(),
+    [applications, setApplications] = useState<any>(),
     [resources, setResources] = useState(new Map<string, Resource>()),
     [agents, setAgents] = useState<any>(),
     [text, setText] = useState(""),
@@ -61,8 +74,20 @@ function App() {
       JSON.stringify({ page, selected, runId }),
     );
   }, [page, selected, runId]);
+  useEffect(() => {
+    if (!paired) return;
+    const path = page === "run" && runId ? `/tasks/${runId}` : `/${page}`;
+    if (location.pathname !== path) history.pushState(null, "", path);
+  }, [paired, page, runId]);
+  useEffect(() => {
+    const restore = () => { const next = restoredNavigation(); setPage(next.page); setRunId(next.runId); };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
   const fail = (e: any) => setError(e.message ?? String(e));
-  const loadView = useCallback(async (spec: ViewSpec) => {
+  const loadView = useCallback(async (spec: ViewSpec, request = ++viewRequest.current) => {
+    if (request !== viewRequest.current) return;
+    setSemantic(undefined);
     sessionStorage.setItem("jarvis-view", JSON.stringify(spec));
     setView(spec);
     await Promise.all(
@@ -76,16 +101,22 @@ function App() {
   }, []);
   const show = useCallback(
     async (intent: string, rs: string[] = []) => {
+      const request = ++viewRequest.current;
+      setSemantic(undefined);
+      const next = await gateway.request("view.v2.get", { intent: { type: "view.show", intent, resources: rs }, renderer: webRenderer }).catch(() => null);
       const v = await gateway.request("view.show", {
         type: "view.show",
         intent,
         resources: rs,
       });
-      await loadView(v.spec);
+      if (request !== viewRequest.current) return;
+      await loadView(v.spec, request);
+      if (request === viewRequest.current && next?.kind === "view") setSemantic(next.view);
     },
     [loadView],
   );
   const snapshot = useCallback(async () => {
+    if (page === "home" || page === "apps") setApplications(await gateway.request("application.list").catch(() => ({ status: "unavailable", apps: [] })));
     setConversations(await gateway.request("conversation.list"));
     setAgents(await gateway.request("agent.definition.list"));
     if (selected)
@@ -95,7 +126,7 @@ function App() {
         }),
       );
     if (runId) await show("agent_run_analysis", ["agent-run/" + runId]);
-    else if (page === "home" || page === "server")
+    else if (page === "home" || page === "server" || page === "system")
       await show("system_overview");
     else if (page === "ai") await show("usage_analysis");
     else if (page === "workspace") {
@@ -171,7 +202,7 @@ function App() {
       listen("agent.run.updated", () => {
         void (async () => {
           setAgents(await gateway.request("agent.definition.list"));
-          if (runId) await gateway.resource("agent-run/" + runId);
+          if (runId) await show("agent_run_analysis", ["agent-run/" + runId]);
         })().catch(fail);
       }),
     ];
@@ -265,23 +296,24 @@ function App() {
       </main>
     );
   return (
-    <div className="shell">
+    <div className={`shell page-${page}`}>
       <aside>
         <a className="brand" onClick={() => setPage("home")}>
           ◈ JARVIS
         </a>
-        <p className="eyebrow">私人云 · 持续在线</p>
+        <p className="eyebrow">Your Personal AI Cloud</p>
         <nav>
           {nav.map(([key, label]) => (
             <button
-              className={page === key ? "selected" : ""}
+              className={page === key || (page === "run" && key === "tasks") ? "selected" : ""}
+              aria-current={page === key || (page === "run" && key === "tasks") ? "page" : undefined}
               key={key}
               onClick={() => {
                 setPage(key);
                 setRunId(undefined);
               }}
             >
-              {label}
+              <NavigationIcon name={key} /><span>{label}</span>
             </button>
           ))}
         </nav>
@@ -289,13 +321,14 @@ function App() {
           <i />
           {connection}
         </div>
+        <button className="theme-toggle quiet" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "切换浅色主题" : "切换深色主题"}>{theme === "dark" ? "☀ 浅色外观" : "☾ 深色外观"}</button>
       </aside>
       <main>
         <header>
           <div>
             <p className="eyebrow">JARVIS / PERSONAL CLOUD</p>
             <h1>
-              {page === "run" ? "任务详情" : nav.find(([k]) => k === page)?.[1]}
+              {page === "run" ? "任务详情" : page === "workspace" ? "动态工作空间" : page === "home" ? "我的私人云" : nav.find(([k]) => k === page)?.[1]}
             </h1>
           </div>
           <button className="quiet" onClick={() => void snapshot().catch(fail)}>
@@ -308,7 +341,13 @@ function App() {
             <button onClick={() => setError("")}>关闭</button>
           </div>
         )}
-        {page === "jarvis" ? (
+        {page === "home" ? <ProductHome applications={applications} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
+          navigate={(next, id) => { setPage(next); setRunId(next === "run" ? id : undefined); if (next === "jarvis" && id) setSelected(id); }}
+          ask={(prompt) => { setText(prompt); setRunId(undefined); setPage("jarvis"); }} />
+        : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} /><Empty title="选择你想探索的空间" text="空间内容将在对应数据服务连接后显示。" /></>
+        : page === "apps" ? <ApplicationList value={applications} />
+        : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} />
+        : page === "jarvis" ? (
           <div className="conversation-layout">
             <div className="conversation-list">
               <button
@@ -446,7 +485,7 @@ function App() {
                 </button>
               </div>
             )}
-            {view && (
+            {semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view && (
               <Blocks view={view} resources={resources} action={action} />
             )}
           </>

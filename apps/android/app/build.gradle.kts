@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "cloud.jarvis.app"
     compileSdk = 35
-    defaultConfig { applicationId = "cloud.jarvis.app"; minSdk = 26; targetSdk = 35; versionCode = 2; versionName = "0.2.0-rc.1"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "cloud.jarvis.app"; minSdk = 26; targetSdk = 35; versionCode = 3; versionName = "0.3.0-preview.1"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     sourceSets.getByName("androidTest").assets.srcDir("../../../packages/ui-protocol/examples")
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

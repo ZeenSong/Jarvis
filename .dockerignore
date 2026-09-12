@@ -19,6 +19,8 @@
 !apps/web/vite.config.ts
 !apps/web/src/
 !apps/web/src/**
+!apps/web/public/
+!apps/web/public/**
 !apps/worker-controller/
 !apps/worker-controller/src/
 !apps/worker-controller/src/**

@@ -6,6 +6,8 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -25,11 +27,25 @@ import androidx.navigation.compose.*
 import kotlinx.serialization.json.*
 import java.time.Instant
 import java.util.Locale
+import cloud.jarvis.app.designsystem.JarvisTheme
+import cloud.jarvis.app.designsystem.JarvisOrb
+import cloud.jarvis.app.features.ProductHome
+import cloud.jarvis.app.features.ProductTasks
+import cloud.jarvis.app.features.ProductEmpty
+import cloud.jarvis.app.features.SpaceTiles
+import androidx.compose.ui.res.painterResource
+import cloud.jarvis.app.features.ProductApplications
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent {
-        MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF82D8CC), background = Color(0xFF101719), surface = Color(0xFF1A2428))) {
-            val vm: JarvisViewModel = viewModel(); JarvisApp(vm.repository)
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)); setContent {
+        val preferences=remember { getSharedPreferences("jarvis-appearance",MODE_PRIVATE) }
+        var light by remember { mutableStateOf(preferences.getBoolean("light",false)) }
+        SideEffect {
+            val style=if(light) SystemBarStyle.light(android.graphics.Color.TRANSPARENT,android.graphics.Color.TRANSPARENT) else SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            enableEdgeToEdge(statusBarStyle=style,navigationBarStyle=style)
+        }
+        JarvisTheme(light=light) {
+            val vm: JarvisViewModel = viewModel(); JarvisApp(vm.repository,light) { light=!light;preferences.edit().putBoolean("light",light).apply() }
         }
     } }
 }
@@ -44,7 +60,7 @@ private fun age(value: String): String = runCatching { "${(Instant.now().epochSe
 private val uiLabels = mapOf("Overview" to "概览", "Server" to "服务器", "Agents Online" to "在线智能体", "LLM Today" to "今日 AI 用量", "Public IPv6" to "公网 IPv6", "Gateway Latency" to "网关延迟", "Server Uptime" to "运行时间", "OS" to "操作系统", "Kernel" to "内核", "Uptime" to "运行时间", "Network" to "网络", "Utilization" to "使用率", "Load 1 / 5 / 15m" to "负载 1 / 5 / 15 分钟", "Temperature" to "温度", "Memory" to "内存", "Used / Total" to "已用 / 总量", "Storage" to "存储", "VRAM" to "显存", "Jarvis Services" to "Jarvis 服务", "Jarvis Server" to "Jarvis 服务端", "Version" to "版本", "Agents" to "监控智能体", "Status" to "状态", "Task" to "任务", "Runtime" to "运行时", "Provider / Model" to "供应商 / 模型", "Last Seen" to "最近上报", "Identity & Session" to "身份与会话", "Today · UTC" to "今日 · UTC", "Recent Events" to "最近事件", "Input" to "输入 Token", "Output" to "输出 Token", "Cached Input" to "缓存输入", "Reasoning" to "推理 Token", "Requests / Errors" to "请求 / 错误", "Estimated Cost" to "预估费用", "LLM Usage" to "AI 用量", "Total · UTC" to "合计 · UTC", "healthy" to "正常", "idle" to "空闲", "running" to "运行中", "offline" to "离线", "degraded" to "降级", "error" to "错误")
 private fun localized(value: String) = uiLabels[value] ?: value
 
-@Composable private fun JarvisApp(repo: JarvisRepository) {
+@Composable private fun JarvisApp(repo: JarvisRepository, light:Boolean, toggleTheme:()->Unit) {
     val paired by repo.paired.collectAsStateWithLifecycle(); val connection by repo.gateway.state.collectAsStateWithLifecycle()
     val error by repo.error.collectAsStateWithLifecycle(); val saved by repo.savedAt.collectAsStateWithLifecycle()
     var settings by remember { mutableStateOf(false) }
@@ -52,12 +68,16 @@ private fun localized(value: String) = uiLabels[value] ?: value
     val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"
     LaunchedEffect(route) { repo.selectPage(route) }
     Scaffold(topBar = { Column(Modifier.statusBarsPadding().padding(20.dp)) {
+        TextButton(onClick=toggleTheme) { Text(if(light) "切换深色主题" else "切换浅色主题") }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新配对" }) } }
         if (connection != ConnectionState.online) Text("显示最近缓存 · ${saved?.let { Instant.ofEpochMilli(it) } ?: "尚无数据"}", style = MaterialTheme.typography.bodySmall)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-    } }, bottomBar = { NavigationBar { listOf("home" to "首页", "jarvis" to "Jarvis", "agents" to "智能体", "ai" to "AI", "server" to "服务器", "workspace" to "工作台").forEach { (path, label) -> NavigationBarItem(selected = route == path, onClick = { nav.navigate(path) { popUpTo("home"); launchSingleTop = true } }, icon = { Text(label.take(1)) }, label = { Text(label) }) } } }) { padding ->
+    } }, bottomBar = { NavigationBar(containerColor=MaterialTheme.colorScheme.background) { listOf("home" to "首页", "spaces" to "空间", "jarvis" to "Jarvis", "tasks" to "任务", "apps" to "应用").forEach { (path, label) -> NavigationBarItem(selected = route == path || (path == "tasks" && route.startsWith("run/")), onClick = { nav.navigate(path) { popUpTo("home"); launchSingleTop = true } }, icon = { if(path=="jarvis") JarvisOrb(30.dp) else Icon(painterResource(when(path){"home"->R.drawable.nav_home;"spaces"->R.drawable.nav_spaces;"tasks"->R.drawable.nav_tasks;else->R.drawable.nav_apps}),contentDescription=null) }, label = { Text(label) }) } } }) { padding ->
         NavHost(nav, startDestination = "home", modifier = Modifier.padding(padding)) {
-            composable("home") { HomeScreen(repo) }
+            composable("home") { ProductHome(repo) { nav.navigate(it) } }
+            composable("tasks") { ProductTasks(repo) { nav.navigate("run/$it") } }
+            composable("spaces") { Screen("我的空间") { SpaceTiles { nav.navigate(it) { launchSingleTop = true } } } }
+            composable("apps") { val apps by repo.m2.applications.collectAsStateWithLifecycle(); LaunchedEffect(Unit) { repo.m2.refreshApplications() }; Screen("应用") { ProductApplications(apps) { repo.m2.refreshApplications() } } }
             composable("server") { ServerScreen(repo) { repo.m2.show("system_overview"); nav.navigate("workspace") } }
             composable("agents") { AgentCenter(repo.m2, { nav.navigate("run/$it") }, { nav.navigate("legacy-agents") }) }
             composable("legacy-agents") { AgentsScreen(repo) { nav.navigate("agent/$it") } }

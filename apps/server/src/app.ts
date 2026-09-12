@@ -11,6 +11,7 @@ import type { WebSocket } from "ws";
 import { z } from "zod";
 import { database, migrate } from "./persistence.js";
 import { authenticate, pair } from "./auth.js";
+import { MediaStore } from "./media.js";
 import {
   envelopeSchema,
   message,
@@ -48,6 +49,7 @@ export async function buildApp(options: {
     bodyLimit: 65536,
   });
   await migrate(db);
+  const media = new MediaStore();
   const monitor = new SystemMonitor(options.hostRoot, options.networkInterface);
   const sockets = new Map<WebSocket, { topics: Set<string>; alive: boolean }>();
   let sequence = 0;
@@ -189,7 +191,7 @@ export async function buildApp(options: {
     if (req.headers.origin && !validOrigin(req))
       return reply.code(403).send({ error: "origin_forbidden" });
   });
-  app.get("/", async (_req, reply) => {
+  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
     try {
       return reply
         .type("text/html")
@@ -214,6 +216,22 @@ export async function buildApp(options: {
     } catch {
       return reply.code(404).send();
     }
+  });
+  app.get<{ Params: { name: string } }>("/artwork/:name", async (req, reply) => {
+    const name = req.params.name;
+    if (!/^(alpine-dusk|files|knowledge|family|media|development)-v1\.png$/.test(name)) return reply.code(404).send();
+    try {
+      return reply.type("image/png").header("Cache-Control", "public, max-age=86400")
+        .send(await readFile(resolve("apps/web/dist/artwork", name)));
+    } catch { return reply.code(404).send(); }
+  });
+  app.get<{ Params: { name: string } }>("/app-icons/:name", async (req, reply) => {
+    if (!["homeassistant.svg", "immich.svg"].includes(req.params.name)) return reply.code(404).send();
+    try {
+      return reply.type("image/svg+xml").header("Content-Security-Policy", "default-src 'none'; sandbox")
+        .header("X-Content-Type-Options", "nosniff").header("Cache-Control", "public, max-age=86400")
+        .send(await readFile(resolve("apps/web/dist/app-icons", req.params.name)));
+    } catch { return reply.code(404).send(); }
   });
   const attempts = new Map<string, { count: number; until: number }>();
   app.post("/api/v1/pair", async (req, reply) => {
@@ -323,6 +341,14 @@ export async function buildApp(options: {
       if ((req as any).identity.role !== "device")
         return reply.code(403).send({ error: "device_required" });
       return { authenticated: true };
+    });
+    api.get<{ Params: { id: string } }>("/api/media/:id/thumbnail", async (req, reply) => {
+      reply.header("Cache-Control", "private, no-store").header("X-Content-Type-Options", "nosniff");
+      const identity = (req as any).identity;
+      if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      const item = /^[a-zA-Z0-9_-]{1,100}$/.test(req.params.id) ? media.read(req.params.id, identity.id) : undefined;
+      if (!item) return reply.code(404).send({ error: "media_not_found" });
+      return reply.type(item.contentType).send(item.data);
     });
     api.get("/api/v1/system/status", systemStatus);
     api.get("/api/v1/agents", () => agents.list());
@@ -534,6 +560,7 @@ export async function buildApp(options: {
     return reply.code(500).send({ error: "request_failed" });
   });
   app.addHook("onClose", async () => {
+    media.clear();
     clearInterval(timer);
     clearInterval(heartbeat);
     for (const ws of sockets.keys()) ws.terminate();
@@ -541,5 +568,5 @@ export async function buildApp(options: {
     await m2.close();
     await db.end();
   });
-  return { app, db, monitor, agents, usage, m2 };
+  return { app, db, monitor, agents, usage, m2, media };
 }

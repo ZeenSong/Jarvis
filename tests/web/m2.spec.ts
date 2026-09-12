@@ -78,7 +78,7 @@ test("Web pairing, deterministic conversation, shared history, refresh and recon
     fullPage: true,
   });
   await other.close();
-  await page.getByRole("button", { name: "服务器", exact: true }).click();
+  await page.locator("nav").getByRole("button", { name: "系统", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "CPU / GPU 历史" }),
   ).toBeVisible();
@@ -86,8 +86,21 @@ test("Web pairing, deterministic conversation, shared history, refresh and recon
     path: ".local/evidence/m2-web-home.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "智能体", exact: true }).click();
-  await page.getByTestId("run-" + runs.input).click();
+  await page.locator("nav").getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByLabel("搜索任务").fill("输入验收");
+  await expect(page.getByTestId("run-" + runs.input)).toBeVisible();
+  await expect(page.getByTestId("run-" + runs.cancel)).not.toBeVisible();
+  await page.getByLabel("搜索任务").fill("");
+  await page.screenshot({ path: ".local/evidence/m3-web-tasks.png", fullPage: true });
+  await page.getByRole("button").filter({ hasText: "输入验收任务" }).click();
+  const log = page.getByRole("region", { name: "任务事件日志", exact: true });
+  await expect(log).toBeVisible();
+  await expect(log.locator(".log-lines")).toContainText("agent.run.created");
+  await expect(log.locator(".log-lines")).toContainText(/\d{4}-\d{2}-\d{2}T/);
+  await expect(page.locator(".semantic-inspector")).not.toContainText("last_event_sequence");
+  await log.getByRole("searchbox").fill("no-such-event");
+  await expect(log).toContainText("没有匹配的日志");
+  await log.getByRole("searchbox").fill("");
   await expect(
     page.getByRole("heading", { name: "任务状态" }).locator(".."),
   ).toContainText("等待输入");
@@ -96,6 +109,52 @@ test("Web pairing, deterministic conversation, shared history, refresh and recon
   await expect(
     page.getByRole("heading", { name: "任务状态" }).locator(".."),
   ).toContainText("已完成");
+  await expect(log.locator(".log-lines")).toContainText("agent.run.completed");
+  await expect(page.getByRole("button", { name: "取消任务", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("补充任务输入")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "代码变更", exact: true })).toHaveCount(0);
+  const artifacts = page.getByRole("region", { name: "测试与产物", exact: true });
+  await expect(artifacts.getByRole("listitem").filter({ hasText: "result.json" })).toBeVisible();
+  await expect(artifacts).toContainText("application/json");
+  await expect(artifacts.locator("table")).toHaveCount(0);
+  const taskCard = page.locator('[data-component="task"]');
+  await page.getByRole("button", { name: "执行过程", exact: true }).click();
+  await expect(page.locator(".semantic-activity")).toBeHidden();
+  await page.getByRole("button", { name: "资源与操作", exact: true }).click();
+  await expect(page.locator(".semantic-inspector")).toBeHidden();
+  await page.getByRole("button", { name: "重置布局", exact: true }).click();
+  await expect(page.locator(".semantic-activity")).toBeVisible();
+  await expect(artifacts).toBeVisible();
+  await expect(taskCard).toContainText("输入验收任务");
+  const slider = page.getByRole("slider", { name: "工作区侧栏宽度" });
+  const previousWidth = (await page.locator(".semantic-inspector").boundingBox())!.width;
+  await slider.focus();
+  await slider.press("ArrowRight");
+  await expect(slider).toHaveValue("26");
+  expect((await page.locator(".semantic-inspector").boundingBox())!.width).toBeGreaterThan(previousWidth);
+  await page.reload();
+  await expect(slider).toHaveValue("26");
+  await page.getByRole("button", { name: "重置布局", exact: true }).click();
+  await expect(slider).toHaveValue("25");
+  const divider = page.getByRole("separator", { name: "调整执行过程分栏" });
+  await divider.focus();
+  await divider.press("Home");
+  await expect(slider).toHaveValue("18");
+  const dividerBox = (await divider.boundingBox())!;
+  await page.mouse.move(dividerBox.x + dividerBox.width / 2, dividerBox.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(dividerBox.x + 65, dividerBox.y + 40, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await slider.inputValue())).toBeGreaterThan(18);
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect(divider).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole("button", { name: "重置布局", exact: true }).click();
+  const cardWidth = (await taskCard.boundingBox())!.width;
+  const summaryWidth = (await page.locator(".semantic-summary").boundingBox())!.width;
+  expect(Math.abs(cardWidth - summaryWidth)).toBeLessThan(2);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: ".local/evidence/m3-web-task-workspace.png", fullPage: true });
   await expect(
     page.getByText("输入已收到：跨端控制验证", { exact: true }),
   ).toBeVisible();
@@ -103,8 +162,8 @@ test("Web pairing, deterministic conversation, shared history, refresh and recon
   await expect(
     page.getByText("输入已收到：跨端控制验证", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "智能体", exact: true }).click();
-  await page.getByTestId("run-" + runs.cancel).click();
+  await page.locator("nav").getByRole("button", { name: "任务", exact: true }).click();
+  await page.getByRole("button").filter({ hasText: "取消验收任务" }).click();
   await expect(
     page.getByRole("heading", { name: "任务状态" }).locator(".."),
   ).toContainText("等待输入");

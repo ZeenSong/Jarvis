@@ -44,7 +44,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         })
         scope.launch { runCatching {
             cache.all().forEach { s ->
-                if(s.key.startsWith("m2-")) m2.restore(s)
+                if(s.key.startsWith("m2-") || s.key == "m3-semantic-view") m2.restore(s)
                 when (s.key) { "system" -> system.value = Json.parseToJsonElement(s.json).jsonObject; "agents" -> agents.value = Json.parseToJsonElement(s.json).jsonArray.map { it.jsonObject }; "today" -> today.value = Json.parseToJsonElement(s.json).jsonObject }
                 savedAt.value = maxOf(savedAt.value ?: 0, s.savedAt)
             }

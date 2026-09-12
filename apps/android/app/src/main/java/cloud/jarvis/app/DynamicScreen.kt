@@ -21,21 +21,29 @@ internal fun display(value: JsonElement?): String = if(value == null || value is
 private fun path(data: JsonElement?, path: String?): JsonElement? = if(path.isNullOrBlank()) data else path.split('.').fold(data) { v,k -> (v as? JsonObject)?.get(k) }
 
 @Composable fun DynamicScreen(repo: M2Repository, openRun: (String) -> Unit) {
+    val semantic by repo.semanticView.collectAsStateWithLifecycle()
     val view by repo.view.collectAsStateWithLifecycle(); val resources by repo.resources.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("usage_analysis" to "用量分析", "system_overview" to "系统趋势", "network_overview" to "服务器网络").forEach { (i,t) -> TextButton(onClick = { repo.show(i) }) { Text(t) } }
         }
-        view?.let { DynamicBlocks(it, resources, { a -> if(a.text("type") == "run.open") openRun(a.text("target")) else repo.action(a) }) } ?: Text("选择一个视图查看实时数据")
+        if(semantic != null) cloud.jarvis.app.dynamicui.SemanticView(semantic!!,resources,imageLoader=repo::thumbnail) { a -> if(a.text("type") == "run.open") openRun(a.text("target")) else repo.action(a) }
+        else view?.let { DynamicBlocks(it, resources, { a -> if(a.text("type") == "run.open") openRun(a.text("target")) else repo.action(a) }) } ?: Text("选择一个视图查看实时数据")
     }
 }
 @Composable fun DynamicBlocks(view: JsonObject, resources: Map<String,JsonObject>, action: (JsonObject) -> Unit) {
-    if(view["version"]?.jsonPrimitive?.intOrNull != 1) { Text("请更新客户端以显示此视图"); return }
+    if((view["version"] as? JsonPrimitive)?.intOrNull != 1) { Text("请更新客户端以显示此视图"); return }
     Text(view.text("title"), style = MaterialTheme.typography.headlineSmall)
-    view["blocks"]?.jsonArray?.forEach { item ->
-        val b = item.jsonObject; val data = path(resources[b.text("resource")]?.get("data"),b.text("path")) ?: b["text"]
+    (view["blocks"] as? JsonArray)?.forEach { item ->
+        val b = item as? JsonObject
+        if (b == null) { Text("此面板数据格式不兼容"); return@forEach }
+        val data = path(resources[b.text("resource")]?.get("data"),b.text("path")) ?: b["text"]
         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(b.text("title"),color=MaterialTheme.colorScheme.primary)
+            if (b.text("type") in listOf("timeline","run_graph") && data != null && data !is JsonNull &&
+                (data !is JsonArray || data.any { it !is JsonObject })) {
+                Text("此面板数据格式不兼容"); return@Column
+            }
             when(b.text("type")) {
                 "metric" -> Text(display(data),style=MaterialTheme.typography.headlineLarge)
                 "metric_group", "status_grid" -> (data as? JsonObject)?.forEach { (k,v) -> Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.SpaceBetween) { Text(chinese[k] ?: k,Modifier.weight(1f)); Text(display(v),Modifier.weight(1f)) } } ?: Text("暂无数据")
@@ -69,10 +77,10 @@ private fun path(data: JsonElement?, path: String?): JsonElement? = if(path.isNu
 }
 @Composable private fun DataChart(type: String, data: JsonElement?) {
     val rows=(data as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
-    val samples=rows.map { r -> (r["value"] as? JsonPrimitive)?.floatOrNull ?: (r["data"] as? JsonObject)?.get("cpu")?.jsonObject?.get("usage_percent")?.jsonPrimitive?.floatOrNull ?: ((r["input_tokens"] as? JsonPrimitive)?.floatOrNull?.plus((r["output_tokens"] as? JsonPrimitive)?.floatOrNull ?: 0f)) }
-    val gpuSamples=rows.map { r -> ((r["data"] as? JsonObject)?.get("gpu") as? JsonObject)?.get("utilization_percent")?.jsonPrimitive?.floatOrNull }
+    val samples=rows.map { r -> ((r["value"] as? JsonPrimitive)?.floatOrNull ?: (((r["data"] as? JsonObject)?.get("cpu") as? JsonObject)?.get("usage_percent") as? JsonPrimitive)?.floatOrNull ?: ((r["input_tokens"] as? JsonPrimitive)?.floatOrNull?.plus((r["output_tokens"] as? JsonPrimitive)?.floatOrNull ?: 0f)))?.takeIf { it.isFinite() } }
+    val gpuSamples=rows.map { r -> ((((r["data"] as? JsonObject)?.get("gpu") as? JsonObject)?.get("utilization_percent") as? JsonPrimitive)?.floatOrNull)?.takeIf { it.isFinite() } }
     val history=rows.any { it["data"] is JsonObject }
-    val gauge=(data as? JsonPrimitive)?.floatOrNull
+    val gauge=(data as? JsonPrimitive)?.floatOrNull?.takeIf { it.isFinite() }
     if((type=="gauge" && gauge==null) || (type!="gauge" && samples.none { it!=null } && gpuSamples.none { it!=null })) {Text("暂无数据 · 未采集时段保留缺口");return}
     val accent=MaterialTheme.colorScheme.primary
     Canvas(Modifier.fillMaxWidth().height(180.dp)) {

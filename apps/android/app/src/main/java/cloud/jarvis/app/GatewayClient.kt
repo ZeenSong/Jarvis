@@ -96,6 +96,21 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
             return withTimeout(10_000) { result.await() }
         } finally { pending.remove(id) }
     }
+    suspend fun thumbnail(path:String):ByteArray = withContext(Dispatchers.IO) {
+        require(cloud.jarvis.app.dynamicui.mediaPath.matches(path))
+        val auth=credentials ?: error("尚未配对")
+        val client=http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+        client.newCall(Request.Builder().url(auth.server+path).header("Authorization","Bearer ${auth.token}").build()).execute().use { response ->
+            check(response.isSuccessful) { "图片暂不可用" }
+            check(response.header("Content-Type")?.substringBefore(';') in listOf("image/jpeg","image/png","image/webp")) { "图片格式不支持" }
+            val body=response.body ?: error("图片暂不可用")
+            body.byteStream().use { stream ->
+                val output=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192)
+                while(true) { val count=stream.read(buffer);if(count<0)break;check(output.size()+count<=2*1024*1024) { "图片过大" };output.write(buffer,0,count) }
+                output.toByteArray()
+            }
+        }
+    }
     suspend fun get(path: String): JsonElement = withContext(Dispatchers.IO) {
         val auth = credentials ?: error("尚未配对")
         http.newCall(Request.Builder().url(auth.server + path).header("Authorization", "Bearer ${auth.token}").build()).execute().use {

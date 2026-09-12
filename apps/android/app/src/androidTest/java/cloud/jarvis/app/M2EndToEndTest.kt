@@ -19,15 +19,19 @@ class M2EndToEndTest {
         compose.activityRule.scenario.recreate();waitFor("已连接")
         compose.onNode(hasText("Jarvis") and hasClickAction()).performClick();waitFor("当前 CPU 使用率")
         compose.onNodeWithText("查看动态图表").performClick();waitFor("CPU %")
-        compose.onNode(hasText("智能体") and hasClickAction()).performClick();waitFor("Jarvis Core");waitFor("领域智能体")
+        compose.onNode(hasText("任务",substring=false) and hasClickAction()).performClick();waitFor("输入验收任务")
         val inputRun=args.getString("inputRun")!!
-        compose.onNodeWithTag("run-open-$inputRun").performScrollTo().performClick();waitFor("补充任务输入")
+        compose.onNodeWithText("输入验收任务").performScrollTo().performClick();waitFor("查看操作与详情")
+        compose.onNodeWithText("查看操作与详情").performScrollTo().performClick();waitFor("补充任务输入")
         compose.onNode(hasSetTextAction() and hasText("补充任务输入")).performScrollTo().performTextInput("Android 控制验证")
         compose.onNodeWithText("发送输入").performScrollTo().performClick();waitFor("输入已收到：Android 控制验证")
+        compose.waitUntil(25000) { compose.onAllNodesWithText("发送输入").fetchSemanticsNodes().isEmpty() }
+        compose.onNode(hasText("取消任务") and hasClickAction()).assertDoesNotExist()
         compose.activityRule.scenario.recreate();waitFor("输入已收到：Android 控制验证")
-        compose.onNode(hasText("智能体") and hasClickAction()).performClick()
+        compose.onNode(hasText("任务",substring=false) and hasClickAction()).performClick()
         val cancelRun=args.getString("cancelRun")!!
-        compose.onNodeWithTag("run-open-$cancelRun").performScrollTo().performClick();waitFor("补充任务输入")
+        compose.onNodeWithText("取消验收任务").performScrollTo().performClick();waitFor("查看操作与详情")
+        compose.onNodeWithText("查看操作与详情").performScrollTo().performClick();waitFor("补充任务输入")
         compose.onNode(hasText("取消任务") and hasClickAction()).performScrollTo().performClick();waitFor("取消后归档完成")
     }
 }

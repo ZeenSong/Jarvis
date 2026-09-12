@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts/core";
 import { LineChart, BarChart, PieChart, GaugeChart } from "echarts/charts";
 import {
@@ -53,9 +53,15 @@ const format = (v: unknown): string =>
       : (labels[String(v)] ?? String(v));
 function Chart({ type, data }: { type: string; data: any }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [light, setLight] = useState(() => document.documentElement.dataset.theme === "light");
+  useEffect(() => {
+    const observer = new MutationObserver(() => setLight(document.documentElement.dataset.theme === "light"));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!ref.current) return;
-    const chart = echarts.init(ref.current, "dark");
+    const chart = echarts.init(ref.current, light ? undefined : "dark");
     const rows = Array.isArray(data) ? data : [];
     const series = rows.map((r: any) => ({
       name: format(r.label ?? r.provider ?? r.agent_id ?? r.sampled_at),
@@ -90,9 +96,16 @@ function Chart({ type, data }: { type: string; data: any }) {
         series: [
           {
             type: "gauge",
-            progress: { show: true },
-            axisLine: { lineStyle: { width: 12 } },
-            detail: { formatter: "{value}%", fontSize: 26 },
+            startAngle: 210,
+            endAngle: -30,
+            radius: "86%",
+            progress: { show: true, roundCap: true, itemStyle: { color: "#62c8ff" } },
+            axisLine: { roundCap: true, lineStyle: { width: 8, color: [[1, "#20364f"]] } },
+            axisLabel: { show: false },
+            axisTick: { show: false },
+            splitLine: { show: false },
+            pointer: { show: false },
+            detail: { formatter: "{value}%", fontSize: 26, color: light ? "#172b42" : "#eef5ff", offsetCenter: [0, "10%"] },
             data: [{ value: Number(data ?? 0).toFixed(1) }],
           },
         ],
@@ -120,7 +133,7 @@ function Chart({ type, data }: { type: string; data: any }) {
       resize.disconnect();
       chart.dispose();
     };
-  }, [type, data]);
+  }, [type, data, light]);
   return <div className="chart" ref={ref} role="img" aria-label="数据图表" />;
 }
 function RunGraph({
@@ -261,7 +274,7 @@ export function Blocks({
               <ol className="timeline">
                 {(Array.isArray(data) ? data : []).map((r: any, j) => (
                   <li key={r.id ?? j}>
-                    <small>{format(r.timestamp)}</small>
+                    <small title={typeof r.timestamp === "string" ? r.timestamp : undefined}>{typeof r.timestamp === "string" && Number.isFinite(Date.parse(r.timestamp)) ? new Date(r.timestamp).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : format(r.timestamp)}</small>
                     <p>
                       {r.payload?.title ??
                         labels[r.payload?.status] ??
