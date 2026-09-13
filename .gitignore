@@ -13,6 +13,8 @@ artifacts/*.apk
 artifacts/*.tar
 artifacts/*.tar.gz
 artifacts/SHA256SUMS
+# Versioned release bundles are uploaded to GitHub Releases, not committed to git.
+artifacts/*/
 .env.*
 !.env.example
 *.keystore
