@@ -1,0 +1,544 @@
+{
+  "time": "2026-09-16T14:57:10.668Z",
+  "host": {
+    "uptime": 778112.61,
+    "cpus": 16,
+    "load": [
+      1.06,
+      1.38,
+      1.33
+    ],
+    "totalMemory": 15818915840,
+    "freeMemory": 3146993664,
+    "disk": "文件系统        容量  已用  可用 已用% 挂载点\n/dev/nvme1n1p2  1.9T  1.5T  312G   83% /\n/dev/nvme1n1p2  1.9T  1.5T  312G   83% /\n"
+  },
+  "/health": {
+    "status": 200,
+    "body": {
+      "status": "healthy",
+      "version": "0.3.0-preview.1"
+    }
+  },
+  "/health/ready": {
+    "status": 200,
+    "body": {
+      "status": "healthy",
+      "components": {
+        "database": "healthy",
+        "system_monitor": "healthy",
+        "internal_scheduler": "healthy"
+      }
+    }
+  },
+  "/": {
+    "status": 200,
+    "body": "HTML"
+  },
+  "nodes": [
+    {
+      "name": "root2023-super-server",
+      "version": "v1.36.4+k3s1",
+      "conditions": [
+        {
+          "lastHeartbeatTime": "2026-09-16T14:54:43Z",
+          "lastTransitionTime": "2026-09-16T09:10:12Z",
+          "message": "kubelet has sufficient memory available",
+          "reason": "KubeletHasSufficientMemory",
+          "status": "False",
+          "type": "MemoryPressure"
+        },
+        {
+          "lastHeartbeatTime": "2026-09-16T14:54:43Z",
+          "lastTransitionTime": "2026-09-16T09:10:12Z",
+          "message": "kubelet has no disk pressure",
+          "reason": "KubeletHasNoDiskPressure",
+          "status": "False",
+          "type": "DiskPressure"
+        },
+        {
+          "lastHeartbeatTime": "2026-09-16T14:54:43Z",
+          "lastTransitionTime": "2026-09-16T09:10:12Z",
+          "message": "kubelet has sufficient PID available",
+          "reason": "KubeletHasSufficientPID",
+          "status": "False",
+          "type": "PIDPressure"
+        },
+        {
+          "lastHeartbeatTime": "2026-09-16T14:54:43Z",
+          "lastTransitionTime": "2026-09-16T10:06:10Z",
+          "message": "kubelet is posting ready status",
+          "reason": "KubeletReady",
+          "status": "True",
+          "type": "Ready"
+        }
+      ],
+      "allocatable": {
+        "cpu": "16",
+        "ephemeral-storage": "1913845798640",
+        "hugepages-1Gi": "0",
+        "hugepages-2Mi": "0",
+        "memory": "15448160Ki",
+        "pods": "110"
+      }
+    }
+  ],
+  "pods": [
+    {
+      "name": "hermes-core-bb9b5457-rxlcb",
+      "created": "2026-09-16T10:22:14Z",
+      "phase": "Running",
+      "containers": [
+        {
+          "containerID": "containerd://ddec14f5b3ea549555441dc556c92c37398c2ae62009da548f0f27b27d92ad94",
+          "image": "docker.io/nousresearch/hermes-agent:latest",
+          "imageID": "docker.io/nousresearch/hermes-agent@sha256:f8815973dc5351686f435d03c2480b8690a24d2be62f9e21c90e0705097b042f",
+          "lastState": {},
+          "name": "hermes",
+          "ready": true,
+          "resources": {},
+          "restartCount": 0,
+          "started": true,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:22:20Z"
+            }
+          },
+          "user": {
+            "linux": {
+              "gid": 0,
+              "supplementalGroups": [
+                0
+              ],
+              "uid": 0
+            }
+          },
+          "volumeMounts": [
+            {
+              "mountPath": "/opt/data",
+              "name": "data"
+            },
+            {
+              "mountPath": "/opt/jarvis-mcp",
+              "name": "mcp",
+              "readOnly": true,
+              "recursiveReadOnly": "Disabled"
+            }
+          ]
+        }
+      ],
+      "resources": [
+        {
+          "name": "hermes",
+          "resources": {},
+          "securityContext": {
+            "runAsGroup": 0,
+            "runAsUser": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "jarvis-server-9548d766c-fcl44",
+      "created": "2026-09-16T10:22:14Z",
+      "phase": "Running",
+      "containers": [
+        {
+          "allocatedResources": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          },
+          "containerID": "containerd://d0ecb1217dcb0214c4af6f02f1f809ad948954eff00760f77e7f8993813c89c9",
+          "image": "docker.io/library/jarvis-server:0.3.0-m31-hermes-mcp17",
+          "imageID": "sha256:31bacc8d286fc23925e9fc5fe4765f27f2a8810a376de62fe2ac038c06cb7077",
+          "lastState": {},
+          "name": "server",
+          "ready": true,
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "restartCount": 0,
+          "started": true,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T10:22:14Z"
+            }
+          },
+          "user": {
+            "linux": {
+              "gid": 1000,
+              "supplementalGroups": [
+                1000
+              ],
+              "uid": 1000
+            }
+          },
+          "volumeMounts": [
+            {
+              "mountPath": "/var/lib/jarvis-casaos",
+              "name": "casaos-session"
+            },
+            {
+              "mountPath": "/host",
+              "name": "host",
+              "readOnly": true,
+              "recursiveReadOnly": "Disabled"
+            },
+            {
+              "mountPath": "/config",
+              "name": "prices",
+              "readOnly": true,
+              "recursiveReadOnly": "Disabled"
+            }
+          ]
+        }
+      ],
+      "resources": [
+        {
+          "name": "server",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "256Mi"
+            }
+          },
+          "securityContext": {
+            "allowPrivilegeEscalation": false,
+            "capabilities": {
+              "drop": [
+                "ALL"
+              ]
+            },
+            "readOnlyRootFilesystem": true
+          }
+        }
+      ],
+      "hostNetwork": true
+    },
+    {
+      "name": "postgres-0",
+      "created": "2026-09-16T04:39:25Z",
+      "phase": "Running",
+      "containers": [
+        {
+          "allocatedResources": {
+            "cpu": "100m",
+            "memory": "128Mi"
+          },
+          "containerID": "containerd://fd3731880dcd73d288df095c9e00f8961dc1bb98443ec8bf46f402a3012c5329",
+          "image": "docker.io/library/postgres:17-alpine",
+          "imageID": "sha256:1bea307dfb3ee30541a7acf7de14b58bcd6948da98e5d31a04c627c4d35ec64b",
+          "lastState": {},
+          "name": "postgres",
+          "ready": true,
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "restartCount": 0,
+          "started": true,
+          "state": {
+            "running": {
+              "startedAt": "2026-09-16T04:39:26Z"
+            }
+          },
+          "user": {
+            "linux": {
+              "gid": 0,
+              "supplementalGroups": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                6,
+                10,
+                11,
+                20,
+                26,
+                27
+              ],
+              "uid": 0
+            }
+          },
+          "volumeMounts": [
+            {
+              "mountPath": "/var/lib/postgresql/data",
+              "name": "data"
+            }
+          ]
+        }
+      ],
+      "resources": [
+        {
+          "name": "postgres",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "services": [
+    {
+      "name": "hermes-core",
+      "spec": {
+        "clusterIP": "10.43.99.133",
+        "clusterIPs": [
+          "10.43.99.133"
+        ],
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "name": "http",
+            "port": 8642,
+            "protocol": "TCP",
+            "targetPort": "http"
+          }
+        ],
+        "selector": {
+          "app": "hermes-core"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+      }
+    },
+    {
+      "name": "postgres",
+      "spec": {
+        "clusterIP": "10.43.159.41",
+        "clusterIPs": [
+          "10.43.159.41"
+        ],
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 5432,
+            "protocol": "TCP",
+            "targetPort": 5432
+          }
+        ],
+        "selector": {
+          "app": "postgres"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+      }
+    }
+  ],
+  "pvcs": [
+    {
+      "name": "data-postgres-0",
+      "phase": "Bound",
+      "capacity": {
+        "storage": "5Gi"
+      },
+      "storageClass": "local-path"
+    },
+    {
+      "name": "hermes-data",
+      "phase": "Bound",
+      "capacity": {
+        "storage": "2Gi"
+      },
+      "storageClass": "local-path"
+    }
+  ],
+  "networkPolicies": [
+    {
+      "name": "hermes-private",
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app": "jarvis-server"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 8642,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "app": "hermes-core"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    {
+      "name": "postgres-private",
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "podSelector": {
+                  "matchLabels": {
+                    "app": "jarvis-server"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 5432,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "app": "postgres"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    }
+  ],
+  "cronjobs": [],
+  "metrics": "NAME                            CPU(cores)   MEMORY(bytes)   \nhermes-core-bb9b5457-rxlcb      2m           374Mi           \njarvis-server-9548d766c-fcl44   16m          247Mi           \npostgres-0                      7m           155Mi           \n",
+  "docker": "jarvis-m311-review-20260916\tUp 10 minutes\t127.0.0.1:55449->5432/tcp\njarvis-node-bridge-m31\tUp 8 hours\t\njarvis-m31-acceptance-20260916\tUp 5 hours\t127.0.0.1:55439->5432/tcp\njarvis-android-postgres-final\tUp 28 hours\t0.0.0.0:5436->5432/tcp, :::5436->5432/tcp\nimmich-server\tUp 7 days (healthy)\t0.0.0.0:2283->2283/tcp, :::2283->2283/tcp\nimmich-postgres\tUp 7 days (healthy)\t5432/tcp\nimmich-machine-learning\tUp 7 days (healthy)\t\nimmich-redis\tUp 7 days (healthy)\t6379/tcp\nhomeassistant\tUp 2 days\t\n",
+  "nodeContainer": {
+    "image": "jarvis-node-bridge:0.1.0-m31-codex9",
+    "user": "",
+    "network": "host",
+    "privileged": false,
+    "readOnlyRoot": false,
+    "capDrop": null,
+    "mounts": [
+      {
+        "source": "/home/root2023/Codes/Projects/Jarvis",
+        "destination": "/workspace",
+        "rw": false
+      },
+      {
+        "source": "/home/root2023/.codex",
+        "destination": "/seed-codex",
+        "rw": false
+      }
+    ]
+  },
+  "nodeRuntime": {
+    "health": {
+      "healthy": true,
+      "node_id": "ubuntu-m31",
+      "connected": true
+    },
+    "capabilities": {
+      "node_id": "ubuntu-m31",
+      "platform": "linux",
+      "capabilities": [
+        {
+          "name": "node.system.read",
+          "version": "1.0",
+          "risk": "read",
+          "available": true
+        },
+        {
+          "name": "node.file.read",
+          "version": "1.0",
+          "risk": "read",
+          "available": true
+        },
+        {
+          "name": "node.git.read",
+          "version": "1.0",
+          "risk": "read",
+          "available": true
+        },
+        {
+          "name": "node.codex.execute",
+          "version": "1.0",
+          "risk": "execute",
+          "available": true
+        }
+      ]
+    }
+  },
+  "backups": [
+    {
+      "path": ".local/m3.1-backup-20260915-171853/postgres.dump.verified.json",
+      "modified": "2026-09-15T09:20:12.138Z",
+      "content": {
+        "status": "passed",
+        "backup": "/home/root2023/Codes/Projects/Jarvis/.local/m3.1-backup-20260915-171853/postgres.dump",
+        "migration": "M2 additive",
+        "tables": {
+          "devices": {
+            "count": 5,
+            "checksum": "993ef27a7e68221741693ee9bf6e7967"
+          },
+          "agents": {
+            "count": 0,
+            "checksum": null
+          },
+          "agent_sessions": {
+            "count": 0,
+            "checksum": null
+          },
+          "agent_events": {
+            "count": 0,
+            "checksum": null
+          },
+          "llm_requests": {
+            "count": 31,
+            "checksum": "3cf9fddcd100650835b568a269c91825"
+          }
+        }
+      }
+    },
+    {
+      "path": ".local/m2-last-backup",
+      "modified": "2026-09-12T15:31:46.479Z",
+      "content": "/home/root2023/Codes/Projects/Jarvis/.local/m2-backup-20260912-233139"
+    }
+  ],
+  "timers": [],
+  "hermesDirect": "ECONNREFUSED"
+}

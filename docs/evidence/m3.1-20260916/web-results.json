@@ -1,0 +1,30 @@
+{
+  "time": "2026-09-16T10:36:52.805Z",
+  "mode": "current source, isolated PostgreSQL, seeded Markdown fixture",
+  "checks": {
+    "password_login": true,
+    "markdown": {
+      "text": "Jarvis · 已完成\nM3.1 Markdown\n\n粗体 与 斜体\n\n第一项\n第二项\n\n引用文字\n\nconsole.log(\"M3.1\");\n项目\t状态\nWorkspace\t待验收\n\n测试链接\n\n查看图表",
+      "headings": 1,
+      "code": 1,
+      "tables": 1,
+      "links": 1,
+      "strong": 1,
+      "em": 1,
+      "lists": 1,
+      "quotes": 1
+    },
+    "canvas": {
+      "visibleChat": 1,
+      "workspace": 1
+    },
+    "create_blank_page": false,
+    "create_save_enabled": true,
+    "after_create_save": {
+      "iframes": 1,
+      "picker": "Jarvis 工作区 · r1\nM31 Sandbox Probe · r1\nM31 Sandbox Probe · r1\nJarvis 工作区 · r3\nJarvis 工作区 · r1\nM31 Sandbox Probe · r1\nJarvis 工作区 · r2"
+    }
+  },
+  "errors": [],
+  "fatal": "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('iframe').contentFrame().getByText('M31 Artifact Version 1') to be visible\u001b[22m\n"
+}

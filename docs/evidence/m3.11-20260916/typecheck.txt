@@ -1,0 +1,8 @@
+
+> jarvis@0.3.0-preview.1 typecheck
+> tsc --noEmit
+
+
+> jarvis@0.3.0-preview.1 typecheck:web
+> tsc -p apps/web/tsconfig.json
+

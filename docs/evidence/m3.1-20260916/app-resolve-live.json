@@ -1,0 +1,19 @@
+{
+  "base": "http://100.77.157.73:8080",
+  "checks": [
+    {
+      "app_id": "immich",
+      "kind": "album",
+      "id": "m31-audit",
+      "status": 200,
+      "link": "http://100.77.157.73:2283/albums/m31-audit"
+    },
+    {
+      "app_id": "home-assistant",
+      "kind": "entity",
+      "id": "sensor.cpu",
+      "status": 200,
+      "link": "http://100.77.157.73:8123/config/entities?entity_id=sensor.cpu"
+    }
+  ]
+}

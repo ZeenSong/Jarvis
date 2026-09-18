@@ -1,0 +1,68 @@
+{
+  "time": "2026-09-16T01:31:32.634Z",
+  "scope": "isolated source server + emulator; same APK overlay, not different version",
+  "steps": [
+    {
+      "step": "server process restart",
+      "webSessionStatus": 200,
+      "sameWorkspaceIds": true,
+      "revisions": [
+        {
+          "id": "f6ce97b0-b9f5-4357-a0c3-307951cc0be6",
+          "revision": "1",
+          "artifacts": 1
+        },
+        {
+          "id": "04674301-eabd-4612-ac32-b1c87814e5d9",
+          "revision": "1",
+          "artifacts": 1
+        },
+        {
+          "id": "579ffeba-63e0-4785-b2c6-6d19a853c0ca",
+          "revision": "3",
+          "artifacts": 3
+        },
+        {
+          "id": "ac956f6e-b0aa-4131-8698-3875383d1bc7",
+          "revision": "1",
+          "artifacts": 1
+        },
+        {
+          "id": "3997b802-f12a-4f17-a15b-ce81d9d4ee38",
+          "revision": "1",
+          "artifacts": 1
+        },
+        {
+          "id": "5082e44b-8ad0-44b0-a717-b90c39ae3bc1",
+          "revision": "2",
+          "artifacts": 2
+        }
+      ]
+    },
+    {
+      "step": "32-android-server-restart",
+      "online": true
+    },
+    {
+      "step": "33-android-app-restart",
+      "online": true
+    },
+    {
+      "step": "34-android-device-reboot",
+      "online": true
+    },
+    {
+      "step": "35-android-apk-overlay",
+      "online": true
+    },
+    {
+      "step": "36-android-access-refresh",
+      "online": true
+    },
+    {
+      "step": "Android expired access refresh database evidence",
+      "lastSeenAdvanced": true
+    }
+  ],
+  "install": "Performing Streamed Install\nSuccess\n"
+}

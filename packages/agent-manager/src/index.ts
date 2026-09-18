@@ -11,6 +11,11 @@ import {
   type AgentEvent,
 } from "../../agent-runtime/src/index.js";
 export type Push = (topic: string, payload: unknown) => void;
+async function ownerUserId(db: Database, owner: string) {
+  if (owner.startsWith("user-")) return owner.slice(5) || null;
+  const row = (await db.query("SELECT user_id::text FROM devices WHERE id=$1", [owner])).rows[0];
+  return row?.user_id ?? null;
+}
 export async function transaction<T>(
   db: Database,
   fn: (c: PoolClient) => Promise<T>,
@@ -37,6 +42,7 @@ export class AgentManager {
     readonly registry: RuntimeRegistry,
     readonly push: Push,
     readonly prices: Prices = {},
+    readonly onApproval?: (run: { id: string; requested_by: string }, event: AgentEvent) => Promise<void>,
   ) {}
   async recordUsage(
     p: {
@@ -77,18 +83,24 @@ export class AgentManager {
     p: {
       agent_id: string;
       conversation_id?: string;
+      workspace_id?: string;
       parent_run_id?: string;
       goal: string;
       input?: unknown;
     },
     device: string,
   ) {
+    const userId = await ownerUserId(this.db, device);
     const definition = (
       await c.query("SELECT * FROM agent_definitions WHERE id=$1 AND enabled", [
         p.agent_id,
       ])
     ).rows[0];
     if (!definition) throw Error("agent_not_found");
+    if (p.conversation_id && !(await c.query("SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [p.conversation_id, device, userId])).rowCount)
+      throw Error("not_found");
+    if (p.workspace_id && !(await c.query("SELECT 1 FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [p.workspace_id, device, userId])).rowCount)
+      throw Error("not_found");
     let depth = definition.tier === "core" ? 0 : 1;
     if (p.parent_run_id) {
       const parent = (
@@ -98,6 +110,7 @@ export class AgentManager {
       ).rows[0];
       if (
         !parent ||
+        (parent.requested_by !== device && parent.requested_by_user_id !== userId && !(userId == null && parent.requested_by_user_id == null)) ||
         terminal(parent.status) ||
         parent.conversation_id !== (p.conversation_id ?? null)
       )
@@ -106,17 +119,22 @@ export class AgentManager {
     }
     if (definition.tier === "core" && p.parent_run_id)
       throw Error("invalid_core_parent");
+    const runtimeType = definition.id === "ops-agent" && this.registry.has("hermes")
+      ? "hermes"
+      : definition.runtime_type;
     const run = (
       await c.query(
-        `INSERT INTO agent_runs(id,agent_id,parent_run_id,conversation_id,requested_by,goal,runtime_type,status,depth,input_json) VALUES($1,$2,$3,$4,$5,$6,$7,'queued',$8,$9) RETURNING *`,
+        `INSERT INTO agent_runs(id,agent_id,parent_run_id,conversation_id,requested_by,requested_by_user_id,durable_workspace_id,goal,runtime_type,status,depth,input_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11) RETURNING *`,
         [
           randomUUID(),
           p.agent_id,
           p.parent_run_id ?? null,
           p.conversation_id ?? null,
           device,
+          userId,
+          p.workspace_id ?? null,
           p.goal,
-          definition.runtime_type,
+          runtimeType,
           depth,
           p.input ?? {},
         ],
@@ -128,9 +146,10 @@ export class AgentManager {
     );
     return run;
   }
-  async get(id: string) {
+  async get(id: string, owner?: string) {
+    const userId = owner ? await ownerUserId(this.db, owner) : null;
     const run = (
-      await this.db.query("SELECT * FROM agent_runs WHERE id=$1", [id])
+      await this.db.query(owner ? "SELECT * FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3 OR ($3 IS NULL AND requested_by_user_id IS NULL))" : "SELECT * FROM agent_runs WHERE id=$1", owner ? [id, owner, userId] : [id])
     ).rows[0];
     if (!run) throw Error("not_found");
     return {
@@ -235,6 +254,9 @@ export class AgentManager {
         run_id: id,
         status: event.payload.status,
       });
+      const status = String(event.payload.status ?? "");
+      const taskTopic = status === "running" ? "task.started" : ["waiting_for_user", "waiting_for_approval"].includes(status) ? "task.waiting" : ["completed", "failed", "cancelled"].includes(status) ? `task.${status}` : undefined;
+      if (taskTopic) this.push(taskTopic, { task_id: id, run_id: id, status, payload: event.payload });
     }
     return !!event;
   }
@@ -243,6 +265,7 @@ export class AgentManager {
     id: string,
     payload: Record<string, unknown>,
   ) {
+    const run = (await c.query("SELECT requested_by,requested_by_user_id FROM agent_runs WHERE id=$1", [id])).rows[0];
     for (const [name, media, content] of [
       ["result.json", "application/json", JSON.stringify(payload)],
       ...(typeof payload.diff === "string"
@@ -250,10 +273,12 @@ export class AgentManager {
         : []),
     ] as string[][]) {
       await c.query(
-        "INSERT INTO artifacts(id,run_id,name,media_type,content,expires_at) VALUES($1,$2,$3,$4,$5,now()+$6*interval '1 day') ON CONFLICT(run_id,name) DO UPDATE SET content=excluded.content,expires_at=excluded.expires_at",
+        "INSERT INTO artifacts(id,run_id,owner_device_id,owner_user_id,name,media_type,content,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8*interval '1 day') ON CONFLICT(run_id,name) DO UPDATE SET owner_device_id=excluded.owner_device_id,owner_user_id=excluded.owner_user_id,content=excluded.content,expires_at=excluded.expires_at",
         [
           randomUUID(),
           id,
+          run?.requested_by ?? null,
+          run?.requested_by_user_id ?? null,
           name,
           media,
           content,
@@ -284,6 +309,10 @@ export class AgentManager {
       await this.transition(id, "waiting_for_user");
     if (event.type === "agent.approval.required" && !event.payload.denied)
       await this.transition(id, "waiting_for_approval");
+    if (event.type === "agent.approval.required" && !event.payload.denied && this.onApproval) {
+      const run = (await this.db.query("SELECT id,requested_by FROM agent_runs WHERE id=$1", [id])).rows[0];
+      if (run) await this.onApproval(run, event);
+    }
     const saved = await transaction(this.db, async (c) => {
       const r = (
         await c.query("SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE", [id])
@@ -346,10 +375,11 @@ export class AgentManager {
       this.push("agent.run.updated", { run_id: id });
     }
   }
-  async cancel(id: string) {
+  async cancel(id: string, owner?: string) {
+    const userId = owner ? await ownerUserId(this.db, owner) : null;
     const cancelled = await transaction(this.db, async (c) => {
       const root = (
-        await c.query("SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE", [id])
+        await c.query(owner ? "SELECT * FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3 OR ($3 IS NULL AND requested_by_user_id IS NULL)) FOR UPDATE" : "SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE", owner ? [id, owner, userId] : [id])
       ).rows[0];
       if (!root) throw Error("not_found");
       const rows = (
@@ -386,8 +416,8 @@ export class AgentManager {
         }
     }
   }
-  async input(id: string, text: string, resume = false) {
-    const { run } = await this.get(id);
+  async input(id: string, text: string, resume = false, owner?: string) {
+    const { run } = await this.get(id, owner);
     if (!["waiting_for_user", "waiting_for_approval"].includes(run.status))
       throw Error("invalid_run_state");
     if (run.status === "waiting_for_approval")
@@ -396,6 +426,14 @@ export class AgentManager {
     if (resume) await runtime.resume(run.runtime_run_id, { text });
     else await runtime.send(run.runtime_run_id, { text });
     await this.transition(id, "running");
+  }
+  async approve(id: string, owner?: string) {
+    const { run } = await this.get(id, owner);
+    if (run.status !== "waiting_for_approval") throw Error("invalid_run_state");
+    const runtime = this.registry.get(run.runtime_type);
+    await runtime.resume(run.runtime_run_id);
+    await this.transition(id, "running");
+    return { resumed: true };
   }
   async recover(terminalOnly = false) {
     // Runtime reconnection is explicit; never silently rerun side effects.
@@ -456,7 +494,9 @@ export class AgentManager {
       this.lastCleanup = Date.now();
       await this.recover(true);
     }
-    for (const type of ["codex", "pydantic"]) {
+    // Hermes is a first-class durable runtime when enabled; keep the legacy
+    // controller runtimes in the same scheduler for migration compatibility.
+    for (const type of ["codex", "pydantic", "hermes"]) {
       if (this.active.has(type)) continue;
       const row = (
         await this.db.query(
@@ -474,6 +514,7 @@ export class AgentManager {
   }
   private async execute(run: any) {
     let runtime;
+    let runtimeRunId: string | undefined;
     try {
       runtime = this.registry.get(run.runtime_type);
       if (!(await this.transition(run.id, "starting"))) return;
@@ -505,7 +546,9 @@ export class AgentManager {
         id: run.id,
         goal: run.goal,
         ...run.input_json,
+        owner_device_id: run.requested_by,
       });
+      runtimeRunId = started.id;
       await this.db.query(
         "UPDATE agent_runs SET runtime_run_id=$2 WHERE id=$1",
         [run.id, started.id],
@@ -543,17 +586,13 @@ export class AgentManager {
         code: e instanceof Error ? e.message : "runtime_failed",
       });
     } finally {
-      let cleanupConfirmed = !runtime;
-      if (runtime) {
+      let cleanupConfirmed = !runtime || !runtimeRunId;
+      if (runtime && runtimeRunId) {
         try {
-          const persisted = await this.db.query(
-            "SELECT count(*)::int n FROM artifacts WHERE run_id=$1",
-            [run.id],
-          );
-          if (persisted.rows[0].n > 0) {
-            await runtime.dispose(run.id);
-            cleanupConfirmed = true;
-          }
+          // Disposal is required even when a runtime produced no artifact;
+          // passing the runtime id avoids leaking Hermes in-memory sessions.
+          await runtime.dispose(runtimeRunId);
+          cleanupConfirmed = true;
         } catch {
           /* Keep the Worker until its deadline when archival cannot be confirmed. */
         }
@@ -575,3 +614,8 @@ export class AgentManager {
     await Promise.allSettled(this.active.values());
   }
 }
+
+// M3.1 terminology: AgentManager is now the durable Task/Execution boundary.
+// Keep the legacy class name for wire/database compatibility while exposing
+// migration-safe aliases to new integrations.
+export { AgentManager as TaskManager, AgentManager as ExecutionManager };

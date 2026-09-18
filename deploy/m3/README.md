@@ -37,6 +37,51 @@ Node 通过 nvm 安装时不在 sudo 的默认 PATH 中，因此安装命令使�
 
 ## 安装之后的阶段关口
 
+### M3.1 内部 Hermes（可选）
+
+`deploy/k8s/hermes.yaml` 提供官方 Hermes Agent 容器、内部 Service、PVC 和健康检查。
+先生成并替换 `hermes-api` Secret，再将 `HERMES_ENABLED` 改为 `true`；Gateway 只通过
+Kubernetes Service 访问 Hermes，客户端不会直接接触 Hermes API。启用前应锁定镜像
+版本和 digest，并完成工具权限与会话隔离验收。
+
+当前单节点通过 Tailscale 访问 Jarvis：
+
+```text
+http://100.77.157.73:8080/home
+```
+
+客户端和网页只访问 Jarvis 的 8080 端口。Hermes 使用 `hermes-core.jarvis.svc.cluster.local:8642`
+这个 ClusterIP Service，仅允许 `jarvis-server` Pod 访问；8642 不对 Tailnet 客户端开放。
+Jarvis Core 通过签名短期 context token 调用 Hermes 的 `mcp__jarvis__*` 工具，工具结果再回写
+`conversation.*` 事件和 `view_id`。要从集群内检查 Hermes，用 `kubectl --kubeconfig .local/m2.kubeconfig
+-n jarvis` 查看 `hermes-core` Pod、Service 和日志；不要把 API key 或桥接密钥放进 URL。
+
+DeepSeek V4.1-Flash 的公开 API 标识是 `deepseek-flash`，Hermes 和 Jarvis 都使用该标识。
+
+Provider 凭据不复用 Jarvis 登录密码：为 `jarvis-secrets` 配置随机 32-byte
+base64url `integration-credential-key` 后，Gateway 才会接受 `integration.credential.put`；
+数据库仅保存 AES-GCM 密文，客户端只能读取非敏感元数据。
+
+### Node Bridge（Ubuntu）
+
+Node Bridge 作为目标 Ubuntu 节点上的独立进程运行，不暴露公网监听：
+
+```bash
+docker build -f apps/node-bridge/Dockerfile -t jarvis-node-bridge:0.1.0 .
+docker run --network host --restart unless-stopped \
+  -e JARVIS_GATEWAY_URL=https://jarvis.example \
+  -e NODE_TOKEN='由 agent 配对生成的 token' \
+  -e NODE_EXECUTION_KEY='随机生成的本地执行密钥' \
+  -e NODE_ALLOWED_ROOT=/workspace -v "$PWD:/workspace:ro" \
+  jarvis-node-bridge:0.1.0
+```
+
+运行时广播受限的系统/文件读取与 `git status` capability；设置 `NODE_CODEX_BIN` 后才会广播
+Codex execute。Gateway 通过认证 WebSocket 转发 `node.invoke`，并按节点归属、注册
+capability 与 Approval 状态校验请求。
+
+Node Bridge 首次注册后，管理员或设备用户应在已登录会话中调用 `agent.claim` 将该节点归属到当前用户；归属完成后，同一用户的其他设备才可调用其 capability。
+
 ### 本机绕过 APT 安装流程
 
 ```bash

@@ -1,0 +1,7 @@
+{
+  "time": "2026-09-16T01:29:36.691Z",
+  "base": "http://100.77.157.73:8080",
+  "events": [],
+  "errors": [],
+  "fatal": "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('heading', { name: '让科技，回归生活。' }) to be visible\u001b[22m\n"
+}

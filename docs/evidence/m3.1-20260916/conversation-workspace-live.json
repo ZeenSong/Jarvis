@@ -1,0 +1,9 @@
+{
+  "entrypoint": "http://100.77.157.73:8080",
+  "test": "real user conversation -> Hermes status/view tools -> persisted message",
+  "reply_status": "completed",
+  "content_has_marker": true,
+  "workspace_id": "0947efe1-464d-4b76-8cb7-d92e643ae6eb",
+  "view_id": "d9e53f3d-3f56-4ce8-9921-96fab91be21b",
+  "observed": "reply message carried workspace_id and view_id; Workspace record was created for the conversation"
+}

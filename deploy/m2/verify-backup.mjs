@@ -11,6 +11,15 @@ import { m2Migration } from "../../dist/apps/server/src/m2-migration.js";
 const backup = process.env.M2_BACKUP_FILE;
 if (!backup) throw Error("M2_BACKUP_FILE required; run npm run build first");
 await access(backup);
+// M1 dumps predate the Identity/Control Plane tables that persistence.migrate
+// creates before running m2Migration. Recreate only that additive base here so
+// the restore verifier exercises the same migration order without mutating the
+// production cluster or requiring a full application start.
+const migrationPrelude = `
+CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, username TEXT UNIQUE NOT NULL, role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('admin','member')), created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+CREATE TABLE IF NOT EXISTS approvals (id UUID PRIMARY KEY, owner_device_id TEXT NOT NULL REFERENCES devices(id), owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL, run_id UUID, capability TEXT NOT NULL, input JSONB NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','expired')), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), resolved_at TIMESTAMPTZ);
+`;
 const name = "jarvis-m2-restore-" + randomUUID().slice(0, 12),
   temp = await mkdtemp(join(tmpdir(), name));
 const docker = async (args) =>
@@ -101,7 +110,9 @@ try {
   async function checksums() {
     const rows = {};
     for (const table of tables) {
-      const sql = `SELECT json_build_object('count',count(*),'checksum',md5(string_agg(md5((to_jsonb(t)-'logical_agent_id'-'run_id'-'conversation_id')::text),'' ORDER BY id))) FROM ${table} t`;
+      // The migration adds owner/user linkage columns; omit those schema-only
+      // fields while hashing the pre-existing M1 data payload.
+      const sql = `SELECT json_build_object('count',count(*),'checksum',md5(string_agg(md5((to_jsonb(t)-'user_id'-'owner_user_id'-'logical_agent_id'-'run_id'-'conversation_id')::text),'' ORDER BY id))) FROM ${table} t`;
       rows[table] = JSON.parse(
         await docker([
           "exec",
@@ -133,7 +144,7 @@ try {
       "-v",
       "ON_ERROR_STOP=1",
     ],
-    `BEGIN;\n${m2Migration}\nCOMMIT;`,
+    `BEGIN;\n${migrationPrelude}\n${m2Migration}\nCOMMIT;`,
   );
   const after = await checksums();
   if (JSON.stringify(before) !== JSON.stringify(after))

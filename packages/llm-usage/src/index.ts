@@ -94,7 +94,7 @@ export class UsageCollector {
     }
     return { id: u.id, inserted: !!r.rowCount };
   }
-  async summary(query: unknown) {
+  async summary(query: unknown, owner?: string) {
     const q = bounds(query);
     const group = {
       provider: "provider",
@@ -103,8 +103,9 @@ export class UsageCollector {
     }[q.group_by];
     const fields = `COALESCE(sum(input_tokens),0)::float8 AS input_tokens,COALESCE(sum(output_tokens),0)::float8 AS output_tokens,COALESCE(sum(cached_input_tokens),0)::float8 AS cached_input_tokens,COALESCE(sum(reasoning_tokens),0)::float8 AS reasoning_tokens,count(*)::int AS requests,count(*) FILTER(WHERE status='error')::int AS errors,sum(estimated_cost_usd)::float8 AS estimated_cost_usd,count(*) FILTER(WHERE estimated_cost_usd IS NULL)::int AS unpriced_requests,percentile_cont(0.95) WITHIN GROUP(ORDER BY latency_ms) AS p95_latency_ms`;
     const where =
-      "FROM llm_requests WHERE started_at >= $1 AND started_at < $2 AND ($3::text IS NULL OR COALESCE(logical_agent_id,agent_id)=$3)";
-    const params = [q.from, q.to, q.agent_id ?? null];
+      "FROM llm_requests WHERE started_at >= $1 AND started_at < $2 AND ($3::text IS NULL OR COALESCE(logical_agent_id,agent_id)=$3)" +
+      (owner ? " AND (EXISTS (SELECT 1 FROM conversations c JOIN devices d ON d.id=c.owner_device_id WHERE c.id=llm_requests.conversation_id AND (d.id=$4 OR d.user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END OR ($4 NOT LIKE 'user-%' AND d.user_id IS NULL))) OR EXISTS (SELECT 1 FROM agent_runs ar JOIN devices d ON d.id=ar.requested_by WHERE ar.id=llm_requests.run_id AND (d.id=$4 OR d.user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END OR ($4 NOT LIKE 'user-%' AND d.user_id IS NULL))) OR EXISTS (SELECT 1 FROM agents a JOIN devices d ON d.id=a.owner_device_id WHERE a.id=COALESCE(llm_requests.logical_agent_id,llm_requests.agent_id) AND (d.id=$4 OR d.user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END OR ($4 NOT LIKE 'user-%' AND d.user_id IS NULL))))" : "");
+    const params = owner ? [q.from, q.to, q.agent_id ?? null, owner] : [q.from, q.to, q.agent_id ?? null];
     const [total, groups] = await Promise.all([
       this.db.query(`SELECT ${fields} ${where}`, params),
       this.db.query(

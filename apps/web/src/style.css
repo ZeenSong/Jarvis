@@ -218,6 +218,11 @@ td {
   grid-template-columns: 190px 1fr;
   gap: 24px;
 }
+.conversation-layout.with-workspace {
+  grid-template-columns: 190px minmax(320px, 0.85fr) minmax(420px, 1.15fr);
+}
+.workspace-side { min-width: 0; display: grid; align-content: start; gap: 12px; }
+.workspace-side .workspace-panel { min-height: 70vh; }
 .conversation-list {
   display: grid;
   align-content: start;
@@ -390,6 +395,10 @@ progress {
   .conversation-layout {
     grid-template-columns: 1fr;
   }
+  .conversation-layout.with-workspace {
+    grid-template-columns: 1fr;
+  }
+  .workspace-side .workspace-panel { min-height: 0; }
   .conversation-list {
     display: flex;
     overflow: auto;
@@ -408,3 +417,5 @@ progress {
     justify-content: start;
   }
 }
+.prose{line-height:1.65;overflow-wrap:anywhere}.prose p{margin:.35em 0}.prose pre{margin:12px 0;padding:12px;overflow:auto;border-radius:10px;background:#08121c;color:#d8f2ff}.prose code{font-family:ui-monospace,SFMono-Regular,monospace}.prose p code{padding:2px 5px;border-radius:5px;background:var(--line)}.prose table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}.prose th,.prose td{border:1px solid var(--line);padding:7px;text-align:left}.prose th{color:var(--text);background:var(--line)}.markdown-break{height:4px}
+.rich-card{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12px}.tool-status-card strong{flex-basis:100%;color:var(--text)}.tool-status-card span{padding:3px 7px;border-radius:999px;background:var(--panel)}.tool-status-card .running{color:var(--accent)}.tool-status-card .completed{color:var(--muted)}

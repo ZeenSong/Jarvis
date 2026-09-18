@@ -4,6 +4,10 @@ import {
   registrationSchema,
   heartbeatSchema,
 } from "../../protocol/src/index.js";
+async function ownerUserId(db: Database, owner: string) {
+  if (owner.startsWith("user-")) return owner.slice(5) || null;
+  return (await db.query("SELECT user_id::text FROM devices WHERE id=$1", [owner])).rows[0]?.user_id ?? null;
+}
 export function effectiveStatus(
   status: string,
   lastSeen: Date,
@@ -21,22 +25,25 @@ export class AgentRegistry {
     private degraded = 30,
     private offline = 90,
   ) {}
-  async list() {
-    return (await this.db.query("SELECT * FROM agents ORDER BY name")).rows;
+  async list(owner?: string) {
+    const user = owner ? await ownerUserId(this.db, owner) : null;
+    return (await this.db.query(owner ? "SELECT * FROM agents WHERE owner_device_id=$1 OR owner_user_id=$2 OR ($2 IS NULL AND owner_user_id IS NULL) ORDER BY name" : "SELECT * FROM agents ORDER BY name", owner ? [owner, user] : [])).rows;
   }
-  async get(id: string) {
+  async get(id: string, owner?: string) {
+    const user = owner ? await ownerUserId(this.db, owner) : null;
     return (
       await this.db.query(
-        "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1",
-        [id],
+        owner ? "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1 AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL))" : "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1",
+        owner ? [id, owner, user] : [id],
       )
     ).rows[0];
   }
-  async events(id: string) {
+  async events(id: string, owner?: string) {
+    const user = owner ? await ownerUserId(this.db, owner) : null;
     return (
       await this.db.query(
-        "SELECT * FROM agent_events WHERE agent_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100",
-        [id],
+        owner ? "SELECT e.* FROM agent_events e JOIN agents a ON a.id=e.agent_id WHERE e.agent_id=$1 AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL)) ORDER BY e.created_at DESC,e.id DESC LIMIT 100" : "SELECT * FROM agent_events WHERE agent_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100",
+        owner ? [id, owner, user] : [id],
       )
     ).rows;
   }
@@ -46,7 +53,7 @@ export class AgentRegistry {
     try {
       await c.query("BEGIN");
       const r = await c.query(
-        `INSERT INTO agents(id,owner_device_id,name,runtime,version,capabilities,status,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,'online',now()) ON CONFLICT(id) DO UPDATE SET name=$3,runtime=$4,version=$5,capabilities=$6,status='online',last_seen_at=now(),updated_at=now() WHERE agents.owner_device_id=$2 RETURNING *`,
+      `INSERT INTO agents(id,owner_device_id,owner_user_id,name,runtime,version,capabilities,status,last_seen_at) VALUES($1,$2,(SELECT user_id FROM devices WHERE id=$2),$3,$4,$5,$6,'online',now()) ON CONFLICT(id) DO UPDATE SET owner_user_id=COALESCE(agents.owner_user_id,excluded.owner_user_id),name=$3,runtime=$4,version=$5,capabilities=$6,status='online',last_seen_at=now(),updated_at=now() WHERE agents.owner_device_id=$2 RETURNING *`,
         [
           p.agent_id,
           owner,

@@ -44,13 +44,20 @@ private val states = mapOf("queued" to "排队中", "starting" to "启动中", "
                 Card(onClick={navigate("server")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) { Text(name);Text(value?.let { "%.0f%%".format(it) } ?: "—",style=MaterialTheme.typography.headlineMedium);LinearProgressIndicator(progress={((value?:0.0)/100).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth()) } }
             }
         }
+        // Keep the legacy M1 entry points discoverable while the product home
+        // remains the primary M3.1 navigation surface.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { navigate("server") }, modifier = Modifier.weight(1f)) { Text("服务器") }
+            TextButton(onClick = { navigate("agents") }, modifier = Modifier.weight(1f)) { Text("智能体") }
+            TextButton(onClick = { navigate("ai") }, modifier = Modifier.weight(1f)) { Text("AI") }
+        }
         Card(onClick={navigate("tasks")},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp)) { Text("Jarvis 正在工作",style=MaterialTheme.typography.titleMedium);Text("${active.size} 个任务进行中",color=MaterialTheme.colorScheme.onSurfaceVariant);active.firstOrNull()?.let { Spacer(Modifier.height(10.dp));Text(it.str("goal")) } } }
         Text("我的空间",style=MaterialTheme.typography.titleLarge); SpaceTiles(navigate)
         Text("最近活动",style=MaterialTheme.typography.titleLarge)
         if(conversations.isEmpty()) ProductEmpty("从一次对话开始","你的对话与任务进展会汇集在这里。")
         conversations.take(3).forEach { c -> TextButton(onClick={repo.m2.selectConversation(c.str("id"));navigate("jarvis")}) { Text(c.str("title")) } }
         Text("我的应用",style=MaterialTheme.typography.titleLarge)
-        ProductApplications(applications) { repo.m2.refreshApplications() }
+        ProductApplications(applications, { repo.m2.refreshApplications() }, askApp = { repo.m2.askAboutApp(it); navigate("jarvis") })
         OutlinedButton(onClick={navigate("apps")},modifier=Modifier.fillMaxWidth()) { Text("打开应用中心 →") }
         TextButton(onClick={navigate("server")}) { Text("系统状态与设置") }
         Spacer(Modifier.height(16.dp))

@@ -14,7 +14,7 @@ import kotlin.math.min
 import kotlin.random.Random
 
 enum class ConnectionState { connecting, online, reconnecting, offline, unauthorized }
-class GatewayClient(private val scope: CoroutineScope, private val onEvent: (String, JsonElement) -> Unit, private val onConnected: () -> Unit) {
+class GatewayClient(private val scope: CoroutineScope, private val onEvent: (String, JsonElement) -> Unit, private val onConnected: () -> Unit, private val onCredentialsUpdated: (Credentials) -> Unit = {}) {
     private val http = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).pingInterval(15, TimeUnit.SECONDS).build()
     private val mutableState = MutableStateFlow(ConnectionState.offline)
     val state: StateFlow<ConnectionState> = mutableState
@@ -26,7 +26,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonElement>>()
-    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated")
+    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "conversation.tool.started", "conversation.tool.completed", "conversation.status", "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated", "workspace.created", "workspace.updated", "workspace.opened", "workspace.artifact.updated", "approval.created", "approval.resolved", "notification.created", "schedule.created")
     private var topics = listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed")
 
     suspend fun pair(server: String, code: String): Credentials = withContext(Dispatchers.IO) {
@@ -36,6 +36,16 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
         http.newCall(Request.Builder().url("$base/api/v1/pair").post(body.toRequestBody("application/json".toMediaType())).build()).execute().use {
             check(it.isSuccessful) { "配对失败 (${it.code})，请检查一次性配对码" }
             Credentials(base, id, Json.parseToJsonElement(it.body!!.string()).jsonObject.getValue("token").jsonPrimitive.content)
+        }
+    }
+    suspend fun login(server: String, username: String, password: String): Credentials = withContext(Dispatchers.IO) {
+        val base = normalizeServer(server)
+        val deviceId = UUID.randomUUID().toString()
+        val body = buildJsonObject { put("username", username); put("password", password); put("device_id", deviceId) }.toString()
+        http.newCall(Request.Builder().url("$base/api/v2/auth/login").post(body.toRequestBody("application/json".toMediaType())).build()).execute().use {
+            check(it.isSuccessful) { "登录失败 (${it.code})" }
+            val value = Json.parseToJsonElement(it.body!!.string()).jsonObject
+            Credentials(base, deviceId, value.getValue("access_token").jsonPrimitive.content, value["refresh_token"]?.jsonPrimitive?.content)
         }
     }
     fun connect(value: Credentials) { credentials = value; retry = 0; open() }
@@ -83,10 +93,25 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
         if (gen != generation) return
         generation++; socket?.cancel(); heartbeatJob?.cancel(); latency.value = null
         pending.values.forEach { it.completeExceptionally(IllegalStateException("连接中断")) }; pending.clear()
-        if (unauthorized) { mutableState.value = ConnectionState.unauthorized; return }
+        if (unauthorized) {
+            val refresh = credentials?.refreshToken
+            if (refresh != null) { scope.launch { runCatching { refreshAccess(refresh) }.onFailure { mutableState.value = ConnectionState.unauthorized } } }
+            else mutableState.value = ConnectionState.unauthorized
+            return
+        }
         mutableState.value = ConnectionState.reconnecting
         val wait = min(30_000L, 1000L shl min(retry++, 5)) + Random.nextLong(500)
         reconnectJob = scope.launch { delay(wait); open() }
+    }
+    private suspend fun refreshAccess(refresh: String) = withContext(Dispatchers.IO) {
+        val auth = credentials ?: error("尚未连接")
+        val body = buildJsonObject { put("refresh_token", refresh) }.toString()
+        http.newCall(Request.Builder().url("${auth.server}/api/v2/auth/refresh").post(body.toRequestBody("application/json".toMediaType())).build()).execute().use {
+            check(it.isSuccessful) { "会话已失效" }
+            val value = Json.parseToJsonElement(it.body!!.string()).jsonObject
+            val updated = auth.copy(token = value.getValue("access_token").jsonPrimitive.content, refreshToken = value.getValue("refresh_token").jsonPrimitive.content)
+            credentials = updated; onCredentialsUpdated(updated); retry = 0; open()
+        }
     }
     suspend fun request(topic: String, payload: JsonObject = buildJsonObject {}): JsonElement {
         check(state.value == ConnectionState.online) { "尚未连接" }

@@ -1,0 +1,25 @@
+
+> jarvis@0.3.0-preview.1 test:web
+> playwright test
+
+
+Running 6 tests using 1 worker
+
+(node:299990) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 tests/web/dynamic-actions.spec.ts:24:1 › all grouped actions preserve identity and unsupported versions are inert (705ms)
+  ✓  2 tests/web/dynamic-actions.spec.ts:52:1 › malformed component is isolated and recovers with a new revision (240ms)
+  ✓  3 tests/web/dynamic-actions.spec.ts:69:1 › long timeline bounds history and keeps the latest event accessible (352ms)
+  ✓  4 tests/web/dynamic-actions.spec.ts:86:1 › gallery opens native detail and handles failed thumbnails (248ms)
+(node:300294) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:300294) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  5 tests/web/m2.spec.ts:27:1 › Web pairing, deterministic conversation, shared history, refresh and reconnect (3.3s)
+(node:300465) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:300465) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  6 tests/web/m3-shell.spec.ts:15:1 › personal cloud home, navigation, command handoff and semantic workspace (1.6s)
+
+  6 passed (7.5s)

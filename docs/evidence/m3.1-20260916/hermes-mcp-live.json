@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-16",
+  "entrypoint": "http://100.77.157.73:8080",
+  "jarvis_image": "jarvis-server:0.3.0-m31-hermes-mcp10",
+  "hermes_service": "hermes-core:8642",
+  "hermes_service_external_ips": [],
+  "model_api_identifier": "deepseek-flash",
+  "model_release": "DeepSeek-V4.1-Flash",
+  "core_path": "ConversationService -> HermesClient -> Hermes MCP -> /internal/hermes/capability",
+  "status_capability": {"conversation_status": "completed", "reply_marker": "STATUS_OK", "llm_requests": 1},
+  "view_capability": {"conversation_status": "completed", "reply_marker": "VIEW_OK", "view_created": true, "reply_view_id_written": true},
+  "security": {"direct_hermes_tailnet_http": "unavailable", "unauthenticated_bridge": 401},
+  "unit_tests": {"passed": 47, "failed": 0, "skipped": 4},
+  "typecheck": "passed"
+}

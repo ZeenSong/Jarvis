@@ -17,6 +17,8 @@ export interface AgentRunInput {
   goal: string;
   model?: string;
   workspace?: { repository: string; commit: string };
+  /** Stable owner propagated to capability bridges; never exposed to the model. */
+  owner_device_id?: string;
 }
 export interface RuntimeRun {
   id: string;
@@ -53,6 +55,9 @@ export class RuntimeRegistry {
   register(type: string, runtime: AgentRuntime) {
     if (this.runtimes.has(type)) throw Error("runtime_already_registered");
     this.runtimes.set(type, runtime);
+  }
+  has(type: string) {
+    return this.runtimes.has(type);
   }
   get(type: string) {
     const r = this.runtimes.get(type);

@@ -19,6 +19,7 @@ import {
   readPath,
 } from "../packages/ui-protocol/src/index.js";
 import { permitted } from "../apps/server/src/permissions.js";
+import { createServer } from "node:http";
 
 test("M2 terminal states, depth, permissions and safe shared UI", () => {
   for (const state of ["completed", "failed", "cancelled"] as const)
@@ -104,6 +105,31 @@ test(
     };
     registry.register("codex", runtime);
     registry.register("pydantic", runtime);
+    registry.register("hermes", runtime);
+    const hermesStub = createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: "healthy" }));
+        return;
+      }
+      if (req.url !== "/v1/chat/completions") { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { "content-type": "text/event-stream", connection: "keep-alive" });
+      const answer = "当前 CPU 使用率为 0%，这是测试环境的 Hermes 回复。";
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: answer } }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+    await new Promise<void>((resolve) => hermesStub.listen(0, "127.0.0.1", resolve));
+    const oldHermes = {
+      enabled: process.env.HERMES_ENABLED,
+      url: process.env.HERMES_URL,
+      apiKey: process.env.HERMES_API_KEY,
+      bridgeKey: process.env.HERMES_BRIDGE_KEY,
+    };
+    process.env.HERMES_ENABLED = "1";
+    process.env.HERMES_URL = `http://127.0.0.1:${(hermesStub.address() as any).port}`;
+    process.env.HERMES_API_KEY = "m2-test-hermes";
+    process.env.HERMES_BRIDGE_KEY = "m2-test-hermes-bridge-key";
     let ctx = await buildApp({ databaseUrl: url!, runtimes: registry });
     let device = "",
       token = "";
@@ -411,6 +437,11 @@ test(
       );
     } finally {
       await ctx.app.close();
+      await new Promise<void>((resolve) => hermesStub.close(() => resolve()));
+      if (oldHermes.enabled === undefined) delete process.env.HERMES_ENABLED; else process.env.HERMES_ENABLED = oldHermes.enabled;
+      if (oldHermes.url === undefined) delete process.env.HERMES_URL; else process.env.HERMES_URL = oldHermes.url;
+      if (oldHermes.apiKey === undefined) delete process.env.HERMES_API_KEY; else process.env.HERMES_API_KEY = oldHermes.apiKey;
+      if (oldHermes.bridgeKey === undefined) delete process.env.HERMES_BRIDGE_KEY; else process.env.HERMES_BRIDGE_KEY = oldHermes.bridgeKey;
     }
   },
 );

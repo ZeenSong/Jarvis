@@ -1,0 +1,26 @@
+{
+  "time": "2026-09-16T07:21:33.280Z",
+  "test": "HTTP auth -> approval -> node.invoke -> Codex",
+  "steps": [
+    {
+      "topic": "auth/login",
+      "status": 200
+    },
+    {
+      "topic": "approval.create",
+      "status": 200
+    },
+    {
+      "topic": "approval.resolve",
+      "status": 200
+    },
+    {
+      "topic": "node.invoke",
+      "status": 200,
+      "result": {
+        "exit_code": 0,
+        "stdout": "OK\\n"
+      }
+    }
+  ]
+}\n

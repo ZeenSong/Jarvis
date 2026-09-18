@@ -1,0 +1,51 @@
+{
+  "time": "2026-09-16T01:22:06.480Z",
+  "rejectNetwork": {
+    "status": 400,
+    "body": {
+      "error": "artifact_network_forbidden"
+    }
+  },
+  "indirectSourceAccepted": {
+    "status": 200,
+    "body": {
+      "id": "510c8e54-bff5-4def-a78a-0f846d236b00",
+      "workspace_id": "f6ce97b0-b9f5-4357-a0c3-307951cc0be6",
+      "owner_device_id": "user-74ad230e-6237-49cc-988c-5cc5a3184579",
+      "owner_user_id": "74ad230e-6237-49cc-988c-5cc5a3184579",
+      "type": "html",
+      "media_type": "text/html",
+      "source": "<h1>M31 Sandbox Probe</h1><p id=\"result\">pending</p><script>globalThis[\"fet\"+\"ch\"](\"/api/v2/session\").then(r=>document.getElementById(\"result\").textContent=\"ALLOWED \"+r.status).catch(e=>document.getElementById(\"result\").textContent=\"BLOCKED: \"+e.name);try {document.body.dataset.parentAccess=String(parent.document.body);}catch(e){document.body.dataset.parentAccess=\"BLOCKED: \"+e.name;}</script>",
+      "compiled": "<h1>M31 Sandbox Probe</h1><p id=\"result\">pending</p><script>globalThis[\"fet\"+\"ch\"](\"/api/v2/session\").then(r=>document.getElementById(\"result\").textContent=\"ALLOWED \"+r.status).catch(e=>document.getElementById(\"result\").textContent=\"BLOCKED: \"+e.name);try {document.body.dataset.parentAccess=String(parent.document.body);}catch(e){document.body.dataset.parentAccess=\"BLOCKED: \"+e.name;}</script>",
+      "revision": "0",
+      "status": "ready",
+      "error": null,
+      "metadata": {},
+      "created_at": "2026-09-16T01:22:06.521Z",
+      "updated_at": "2026-09-16T01:22:06.521Z"
+    }
+  },
+  "browser": {
+    "text": "M31 Sandbox Probe\n\nBLOCKED: TypeError",
+    "parentAccess": "BLOCKED: SecurityError"
+  },
+  "missingCredentialKey": {
+    "status": 503,
+    "body": {
+      "error": "integration_credentials_key_missing"
+    }
+  },
+  "otherUserWorkspace": {
+    "status": 404,
+    "body": {
+      "error": "not_found"
+    }
+  },
+  "otherUserConversations": [],
+  "noSuchNode": {
+    "status": 500,
+    "body": {
+      "error": "request_failed"
+    }
+  }
+}

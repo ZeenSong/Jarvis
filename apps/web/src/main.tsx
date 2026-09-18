@@ -11,9 +11,11 @@ import { viewSchema } from "../../../packages/ui-protocol/src/index";
 import "./style.css";
 import "./product.css";
 import { ProductHome, SpaceCards, Empty, ApplicationList } from "./product";
+import { WorkspacePanel } from "./workspace-panel";
 import { DynamicView, webRenderer } from "./dynamic-v2";
 import { NavigationIcon } from "./icons";
 import { ProductTasks } from "./tasks";
+import { ControlPlanePanel } from "./control-plane-panel";
 const gateway = new Gateway();
 const nav = [
   ["home", "首页"],
@@ -23,6 +25,64 @@ const nav = [
   ["jarvis", "Jarvis"],
   ["system", "系统"],
 ];
+function MarkdownContent({ value }: { value: string }) {
+  const lines = value.split("\n");
+  const nodes: React.ReactNode[] = [];
+  const inline = (line: string): React.ReactNode[] => {
+    const result: React.ReactNode[] = [];
+    const token = /(`[^`\n]+`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_))/g;
+    let last = 0; let match: RegExpExecArray | null; let key = 0;
+    while ((match = token.exec(line))) {
+      if (match.index > last) result.push(line.slice(last, match.index));
+      if (match[0].startsWith("`")) result.push(<code key={key++}>{match[0].slice(1, -1)}</code>);
+      else if (match[3]) result.push(<a key={key++} href={match[3]} target="_blank" rel="noreferrer">{match[2]}</a>);
+      else if (match[4] || match[5]) result.push(<strong key={key++}>{match[4] ?? match[5]}</strong>);
+      else result.push(<em key={key++}>{match[6] ?? match[7]}</em>);
+      last = match.index + match[0].length;
+    }
+    if (last < line.length) result.push(line.slice(last));
+    return result;
+  };
+  const tableCells = (line: string) => line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().startsWith("```")) {
+      const start = i++; const code: string[] = [];
+      while (i < lines.length && !lines[i].trim().startsWith("```")) code.push(lines[i++]);
+      if (i < lines.length) i++;
+      nodes.push(<pre key={`code-${start}`}><code>{code.join("\n")}</code></pre>);
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      const rows: string[][] = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        const row = tableCells(lines[i++]);
+        if (!row.every((cell) => /^:?-{3,}:?$/.test(cell))) rows.push(row);
+      }
+      if (rows.length) nodes.push(<table key={`table-${i}`}><thead><tr>{rows[0].map((cell, j) => <th key={j}>{inline(cell)}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, r) => <tr key={r}>{row.map((cell, j) => <td key={j}>{inline(cell)}</td>)}</tr>)}</tbody></table>);
+      continue;
+    }
+    if (!line.trim()) { nodes.push(<div className="markdown-break" key={`break-${i++}`} />); continue; }
+    const heading = line.match(/^(#{1,3})\s+(.+)/);
+    if (heading) { const Tag = (`h${heading[1].length}`) as "h1" | "h2" | "h3"; nodes.push(<Tag key={`heading-${i}`}>{inline(heading[2])}</Tag>); i++; continue; }
+    if (/^\s*>\s?/.test(line)) {
+      const quote: string[] = []; const start = i;
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+      nodes.push(<blockquote key={`quote-${start}`}>{quote.map((part, j) => <p key={j}>{inline(part)}</p>)}</blockquote>); continue;
+    }
+    const list = line.match(/^\s*([-+*]|\d+[.)])\s+(.+)/);
+    if (list) {
+      const ordered = /^\d/.test(list[1]); const items: string[] = []; const start = i;
+      while (i < lines.length) { const item = lines[i].match(/^\s*([-+*]|\d+[.)])\s+(.+)/); if (!item || /^\d/.test(item[1]) !== ordered) break; items.push(item[2]); i++; }
+      const Tag = ordered ? "ol" : "ul"; nodes.push(<Tag key={`list-${start}`}>{items.map((item, j) => <li key={j}>{inline(item)}</li>)}</Tag>); continue;
+    }
+    const paragraph: string[] = []; const start = i;
+    while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^#{1,3}\s+/.test(lines[i]) && !/^\s*>\s?/.test(lines[i]) && !/^\s*([-+*]|\d+[.)])\s+/.test(lines[i]) && !/^\s*\|.*\|\s*$/.test(lines[i])) paragraph.push(lines[i++]);
+    nodes.push(<p key={`paragraph-${start}`}>{inline(paragraph.join(" "))}</p>);
+  }
+  return <>{nodes}</>;
+}
 function restoredNavigation() {
   try {
     const path = location.pathname.split("/").filter(Boolean);
@@ -50,6 +110,11 @@ function App() {
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("jarvis-theme", theme); }, [theme]);
   const [paired, setPaired] = useState(false),
     [code, setCode] = useState(""),
+    [username, setUsername] = useState(""),
+    [password, setPassword] = useState(""),
+    [inviteToken, setInviteToken] = useState(""),
+    [loginMode, setLoginMode] = useState(false),
+    [inviteMode, setInviteMode] = useState(false),
     [error, setError] = useState(""),
     [connection, setConnection] = useState("连接中"),
     [page, setPage] = useState(() => restoredNavigation().page),
@@ -62,6 +127,8 @@ function App() {
     [semantic, setSemantic] = useState<any>(),
     [applications, setApplications] = useState<any>(),
     [resources, setResources] = useState(new Map<string, Resource>()),
+    [toolStates, setToolStates] = useState<Record<string, Record<string, { capability: string; status: "running" | "completed" }>>>({}),
+    [workspaceTarget, setWorkspaceTarget] = useState<string>(),
     [agents, setAgents] = useState<any>(),
     [text, setText] = useState(""),
     [sending, setSending] = useState(false),
@@ -85,6 +152,14 @@ function App() {
     return () => window.removeEventListener("popstate", restore);
   }, []);
   const fail = (e: any) => setError(e.message ?? String(e));
+  const openApp = useCallback(async (appId: string) => {
+    try {
+      const resolved = await gateway.request("app.resolve", { app_id: appId === "homeassistant" ? "home-assistant" : appId, platform: "web" });
+      const link = resolved.link?.primary ?? resolved.link?.fallback;
+      if (link) window.open(link, "_blank", "noopener,noreferrer");
+      else setError("该应用尚未配置可用链接");
+    } catch (e) { fail(e); }
+  }, []);
   const loadView = useCallback(async (spec: ViewSpec, request = ++viewRequest.current) => {
     if (request !== viewRequest.current) return;
     setSemantic(undefined);
@@ -147,14 +222,10 @@ function App() {
         sessionStorage.removeItem("jarvis-pending");
       }
     }
-    fetch("/api/v2/session")
-      .then((r) => {
-        if (r.ok) {
-          setPaired(true);
-          gateway.open();
-        }
-      })
-      .catch(fail);
+    fetch("/api/v2/session").then(async (r) => {
+      if (!r.ok) { const refreshed = await fetch("/api/v2/auth/refresh", { method: "POST", credentials: "include" }); if (!refreshed.ok) return; r = await fetch("/api/v2/session"); }
+      if (r.ok) { setPaired(true); gateway.open(); }
+    }).catch(fail);
     return () => gateway.close();
   }, []);
   useEffect(() => {
@@ -163,7 +234,13 @@ function App() {
       return () => gateway.removeEventListener(name, fn);
     };
     const disposers = [
-      listen("connection", (e) => setConnection(e.detail)),
+      listen("connection", (e) => {
+        setConnection(e.detail);
+        // A reload can complete the WebSocket handshake before the snapshot
+        // listener effect is attached; every confirmed connection therefore
+        // performs an idempotent state refresh.
+        if (e.detail === "已连接") void snapshot().catch(fail);
+      }),
       listen("snapshot", () => void snapshot().catch(fail)),
       listen("conversation.updated", () => {
         void (async () => {
@@ -175,6 +252,28 @@ function App() {
               }),
             );
         })().catch(fail);
+      }),
+      listen("conversation.tool.started", (e) => {
+        const p = e.detail;
+        if (!p?.conversation_id || !p?.tool_call_id) return;
+        setToolStates((old) => ({
+          ...old,
+          [p.conversation_id]: {
+            ...(old[p.conversation_id] ?? {}),
+            [p.tool_call_id]: { capability: String(p.capability ?? "tool"), status: "running" },
+          },
+        }));
+      }),
+      listen("conversation.tool.completed", (e) => {
+        const p = e.detail;
+        if (!p?.conversation_id || !p?.tool_call_id) return;
+        setToolStates((old) => ({
+          ...old,
+          [p.conversation_id]: {
+            ...(old[p.conversation_id] ?? {}),
+            [p.tool_call_id]: { capability: String(p.capability ?? "tool"), status: "completed" },
+          },
+        }));
       }),
       listen("conversation.message.delta", (e) => {
         if (e.detail.conversation_id === selected)
@@ -208,14 +307,18 @@ function App() {
     ];
     if (gateway.socket?.readyState === 1) void snapshot().catch(fail);
     return () => disposers.forEach((d) => d());
-  }, [snapshot, selected, runId]);
+  }, [snapshot, selected, runId, page]);
   async function action(a: any) {
     try {
       if (a.type === "run.open") {
         setRunId(a.target);
         setPage("run");
       } else {
-        await gateway.request("ui.action.invoke", a);
+        const result = await gateway.request("ui.action.invoke", a);
+        if (a.type === "app.open") {
+          const link = result?.link?.primary ?? result?.link?.fallback;
+          if (link) window.open(link, "_blank", "noopener,noreferrer");
+        }
         await snapshot();
       }
     } catch (e) {
@@ -265,33 +368,39 @@ function App() {
         <div className="orb">J</div>
         <p className="eyebrow">YOUR PERSONAL CLOUD</p>
         <h1>连接 Jarvis</h1>
-        <p className="muted">使用一次性配对码，连接你的私人云。</p>
+        <p className="muted">{inviteMode ? "使用管理员发放的一次性邀请加入。" : loginMode ? "使用 Jarvis 账户登录。" : "使用一次性配对码，连接你的私人云。"}</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void fetch("/api/v1/pair", {
+            const endpoint = inviteMode ? "/api/v2/auth/invites/accept" : loginMode ? "/api/v2/auth/login" : "/api/v1/pair";
+            const browserDeviceId = localStorage.getItem("jarvis-device-id") ?? randomUUID();
+            localStorage.setItem("jarvis-device-id", browserDeviceId);
+            const body = inviteMode ? { token: inviteToken.trim(), password } : loginMode ? { username: username.trim(), password, device_id: browserDeviceId } : { device_id: randomUUID(), code: code.trim() };
+            void fetch(endpoint, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ device_id: randomUUID(), code: code.trim() }),
+              body: JSON.stringify(body),
             })
               .then(async (r) => {
-                if (!r.ok) throw Error("配对失败，请检查配对码");
+                if (!r.ok) throw Error(inviteMode ? "邀请无效或已过期" : loginMode ? "登录失败，请检查用户名和密码" : "配对失败，请检查配对码");
+                if (inviteMode) {
+                  const accepted = await r.json();
+                  const loggedIn = await fetch("/api/v2/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: accepted.username, password, device_id: browserDeviceId }) });
+                  if (!loggedIn.ok) throw Error("成员已创建，但自动登录失败");
+                }
                 setPaired(true);
                 setCode("");
+                setPassword("");
+                setInviteToken("");
                 gateway.open();
               })
               .catch(fail);
           }}
         >
-          <input
-            aria-label="配对码"
-            type="password"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="一次性配对码"
-          />
-          <button>配对并连接</button>
+          {inviteMode ? <><input aria-label="邀请令牌" value={inviteToken} onChange={(e) => setInviteToken(e.target.value)} placeholder="一次性邀请令牌" /><input aria-label="设置密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="设置密码（至少 12 位）" /></> : loginMode ? <><input aria-label="用户名" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="用户名" /><input aria-label="密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码" /></> : <input aria-label="配对码" type="password" value={code} onChange={(e) => setCode(e.target.value)} placeholder="一次性配对码" />}
+          <button>{inviteMode ? "接受邀请并登录" : loginMode ? "登录" : "配对并连接"}</button>
         </form>
+        <div className="auth-switches"><button className="quiet" onClick={() => { setLoginMode(!loginMode); setInviteMode(false); }}>{loginMode ? "使用配对码" : "使用用户名密码"}</button><button className="quiet" onClick={() => { setInviteMode(!inviteMode); setLoginMode(false); }}>{inviteMode ? "返回登录" : "接受成员邀请"}</button></div>
         {error && <p role="alert">{error}</p>}
       </main>
     );
@@ -334,6 +443,7 @@ function App() {
           <button className="quiet" onClick={() => void snapshot().catch(fail)}>
             刷新
           </button>
+          <ControlPlanePanel gateway={gateway} onError={fail} />
         </header>
         {error && (
           <div className="alert" role="alert">
@@ -345,13 +455,14 @@ function App() {
           navigate={(next, id) => { setPage(next); setRunId(next === "run" ? id : undefined); if (next === "jarvis" && id) setSelected(id); }}
           ask={(prompt) => { setText(prompt); setRunId(undefined); setPage("jarvis"); }} />
         : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} /><Empty title="选择你想探索的空间" text="空间内容将在对应数据服务连接后显示。" /></>
-        : page === "apps" ? <ApplicationList value={applications} />
+        : page === "apps" ? <ApplicationList value={applications} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
         : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} />
-        : page === "jarvis" ? (
-          <div className="conversation-layout">
+        : page === "jarvis" || page === "workspace" ? (
+          <div className={`conversation-layout ${page === "workspace" ? "with-workspace" : ""}`}>
             <div className="conversation-list">
               <button
                 onClick={() => {
+                  setWorkspaceTarget(undefined);
                   setSelected(undefined);
                   setConversation(undefined);
                 }}
@@ -362,7 +473,7 @@ function App() {
                 <button
                   className={c.id === selected ? "selected" : ""}
                   key={c.id}
-                  onClick={() => setSelected(c.id)}
+                  onClick={() => { setWorkspaceTarget(undefined); setSelected(c.id); }}
                 >
                   {c.title}
                 </button>
@@ -383,7 +494,8 @@ function App() {
                       {m.role === "user" ? "你" : "Jarvis"} ·{" "}
                       {labels[m.status] ?? m.status}
                     </small>
-                    <div className="prose">{m.content || "正在处理…"}</div>
+                    <div className="prose">{m.content ? <MarkdownContent value={m.content} /> : "正在处理…"}</div>
+                    {m.role === "jarvis" && selected && Object.values(toolStates[selected] ?? {}).length > 0 && <div className="rich-card tool-status-card"><strong>执行状态</strong>{Object.values(toolStates[selected]).map((tool) => <span key={tool.capability} className={tool.status}>{tool.capability} · {tool.status === "running" ? "运行中" : "已完成"}</span>)}</div>}
                     {m.run_id && (
                       <button
                         onClick={() =>
@@ -408,6 +520,7 @@ function App() {
                         查看图表
                       </button>
                     )}
+                    {m.workspace_id && <button onClick={() => { setWorkspaceTarget(m.workspace_id); setPage("workspace"); }}>打开工作区 →</button>}
                   </article>
                 ))}
               </div>
@@ -429,6 +542,14 @@ function App() {
                 </button>
               </form>
             </div>
+            {page === "workspace" && <aside className="workspace-side">
+              <div className="toolbar">
+                <button onClick={() => void show("usage_analysis").catch(fail)}>用量分析</button>
+                <button onClick={() => void show("network_overview").catch(fail)}>服务器网络</button>
+                <button onClick={() => void show("system_overview").catch(fail)}>系统趋势</button>
+              </div>
+              <WorkspacePanel gateway={gateway} conversationId={selected} workspaceId={workspaceTarget} fallbackView={semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view ? <Blocks view={view} resources={resources} action={action} /> : undefined} onError={fail} />
+            </aside>}
           </div>
         ) : page === "agents" ? (
           <>
@@ -468,23 +589,6 @@ function App() {
           </>
         ) : (
           <>
-            {page === "workspace" && (
-              <div className="toolbar">
-                <button onClick={() => void show("usage_analysis").catch(fail)}>
-                  用量分析
-                </button>
-                <button
-                  onClick={() => void show("network_overview").catch(fail)}
-                >
-                  服务器网络
-                </button>
-                <button
-                  onClick={() => void show("system_overview").catch(fail)}
-                >
-                  系统趋势
-                </button>
-              </div>
-            )}
             {semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view && (
               <Blocks view={view} resources={resources} action={action} />
             )}

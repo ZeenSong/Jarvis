@@ -23,8 +23,19 @@ import {
   metricsContext,
   definitionsContext,
 } from "../../../packages/agent-manager/src/context.js";
+import { WorkspaceStore } from "./workspaces.js";
+import { ControlPlane } from "./control-plane.js";
+import { appDescriptorSchema, resolveAppLink } from "../../../packages/app-bridge/src/index.js";
+import { ownerUserId } from "./ownership.js";
+import { capabilitySchema, mergeCapabilities, parseCapabilityCatalog, type Capability } from "../../../packages/capability-registry/src/index.js";
+import { IntegrationCredentialStore } from "./integration-credentials.js";
 export const m2Topics = [
   "application.list",
+  "integration.credential.list",
+  "integration.credential.put",
+  "integration.credential.revoke",
+  "capability.list",
+  "mcp.catalog.list",
   "conversation.create",
   "conversation.list",
   "conversation.get",
@@ -36,16 +47,47 @@ export const m2Topics = [
   "agent.run.cancel",
   "agent.run.input",
   "agent.run.resume",
+  "agent.claim",
+  "task.create",
+  "task.list",
+  "task.get",
+  "task.cancel",
+  "task.input",
   "approval.response",
   "resource.get",
   "view.get",
   "view.v2.get",
   "view.show",
   "ui.action.invoke",
+  "workspace.list",
+  "workspace.get",
+  "workspace.create",
+  "workspace.artifact.upsert",
+  "workspace.bind",
+  "app.resolve",
+  "approval.list",
+  "approval.create",
+  "approval.resolve",
+  "notification.list",
+  "notification.read",
+  "schedule.list",
+  "schedule.create",
+  "schedule.toggle",
+  "schedule.delete",
+  "node.invoke",
   "runtime.health",
 ] as const;
 export const m2Events = [
   "conversation.message.delta",
+  "conversation.tool.started",
+  "conversation.tool.completed",
+  "conversation.status",
+  "task.created",
+  "task.started",
+  "task.waiting",
+  "task.completed",
+  "task.failed",
+  "task.cancelled",
   "conversation.updated",
   "agent.run.created",
   "agent.run.started",
@@ -56,27 +98,55 @@ export const m2Events = [
   "resource.updated",
   "view.show",
   "view.updated",
+  "workspace.created",
+  "workspace.updated",
+  "workspace.artifact.updated",
+  "workspace.opened",
+  "approval.created",
+  "approval.resolved",
+  "notification.created",
+  "schedule.created",
 ];
+const capabilityCatalog: Capability[] = [
+  { id: "system.status.read", kind: "kernel", risk: "read", approval_required: false },
+  { id: "system.metrics.read", kind: "kernel", risk: "read", approval_required: false },
+  { id: "agent.list", kind: "kernel", risk: "read", approval_required: false },
+  { id: "agent.run.read", kind: "kernel", risk: "read", approval_required: false },
+  { id: "ui.view.show", kind: "kernel", risk: "write", approval_required: false },
+  { id: "node.system.read", kind: "node", risk: "read", approval_required: false },
+  { id: "node.file.read", kind: "node", risk: "read", approval_required: false },
+  { id: "node.git.read", kind: "node", risk: "read", approval_required: true },
+  { id: "node.codex.execute", kind: "node", risk: "execute", approval_required: true },
+  { id: "app.resolve", kind: "app-bridge", risk: "read", approval_required: false },
+].map((entry) => capabilitySchema.parse(entry));
 export class M2 {
   readonly manager: AgentManager;
   readonly conversations: ConversationService;
+  readonly workspaces: WorkspaceStore;
+  readonly control: ControlPlane;
+  readonly integrationCredentials: IntegrationCredentialStore;
   private timer?: NodeJS.Timeout;
   private busy = false;
+  private capabilities() { return mergeCapabilities(capabilityCatalog, parseCapabilityCatalog()); }
   constructor(
     readonly db: Database,
     readonly push: Push,
-    readonly reads: (name: string, args?: any) => Promise<any>,
+    readonly reads: (name: string, args?: any, owner?: string) => Promise<any>,
     registry = new RuntimeRegistry(),
     prices: Prices = {},
+    readonly invokeNode?: (owner: string, nodeId: string, capability: string, input: Record<string, unknown>) => Promise<unknown>,
   ) {
-    this.manager = new AgentManager(db, registry, push, prices);
+    this.control = new ControlPlane(db, push);
+    this.integrationCredentials = new IntegrationCredentialStore(db);
+    this.manager = new AgentManager(db, registry, push, prices, async (run, event) => {
+      await this.control.createApproval(run.requested_by, { run_id: run.id, capability: String(event.payload.capability ?? "unknown"), input: (event.payload.input as Record<string, unknown>) ?? {} });
+    });
     this.conversations = new ConversationService(
       db,
       this.manager,
       push,
-      (n, a) => this.readForAgent(n, a),
-      (i) => this.show(i),
     );
+    this.workspaces = new WorkspaceStore(db, push);
   }
   async start() {
     await this.manager.recover();
@@ -87,37 +157,53 @@ export class M2 {
       void (async () => {
         await this.manager.schedule();
         await this.conversations.schedule();
+        await this.runDueSchedules();
       })()
         .catch(() => {})
         .finally(() => (this.busy = false));
     }, 250);
   }
-  async definitions() {
+  private async runDueSchedules() {
+    const due = (await this.db.query("SELECT * FROM schedules WHERE enabled=true AND next_run_at<=now() ORDER BY next_run_at LIMIT 20")).rows;
+    for (const schedule of due) {
+      try {
+        let conversationId = schedule.conversation_id;
+        if (!conversationId) conversationId = (await this.db.query("INSERT INTO conversations(id,title,owner_device_id,owner_user_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3)) RETURNING id", [randomUUID(), `定时任务 · ${String(schedule.prompt).slice(0, 30)}`, schedule.owner_device_id])).rows[0].id;
+        await this.conversations.createScheduled(schedule.owner_device_id, conversationId, schedule.prompt, `schedule:${schedule.id}:${new Date(schedule.next_run_at).toISOString()}`);
+        await this.db.query(schedule.cadence === "once" ? "UPDATE schedules SET enabled=false,conversation_id=$2,updated_at=now() WHERE id=$1" : "UPDATE schedules SET next_run_at=next_run_at + CASE cadence WHEN 'daily' THEN interval '1 day' ELSE interval '7 days' END,conversation_id=$2,updated_at=now() WHERE id=$1", [schedule.id, conversationId]);
+      } catch { /* leave the due row for the next scheduler pass */ }
+    }
+  }
+  async definitions(owner?: string) {
+    const userId = owner ? await ownerUserId(this.db, owner) : undefined;
+    const ownerFilter = owner ? " WHERE (requested_by=$1 OR requested_by_user_id=$2 OR ($2 IS NULL AND requested_by_user_id IS NULL))" : "";
+    const ownerValues = owner ? [owner, userId ?? null] : [];
+    const definitions = (
+      await this.db.query("SELECT * FROM agent_definitions WHERE id <> 'coding-agent' ORDER BY tier,id")
+    ).rows.map((definition: any) => definition.id === "ops-agent" && this.manager.registry.has("hermes")
+      ? { ...definition, runtime_type: "hermes" }
+      : definition);
     return {
-      definitions: (
-        await this.db.query("SELECT * FROM agent_definitions ORDER BY tier,id")
-      ).rows,
-      instances: (
-        await this.db.query(
-          "SELECT * FROM agent_instances ORDER BY started_at DESC LIMIT 100",
-        )
-      ).rows,
+      // Codex is exposed through Node Bridge capabilities, not as a user-facing Agent.
+      definitions,
+      instances: (await this.db.query(owner ? "SELECT i.* FROM agent_instances i JOIN agent_runs r ON r.agent_instance_id=i.id WHERE (r.requested_by=$1 OR r.requested_by_user_id=$2 OR ($2 IS NULL AND r.requested_by_user_id IS NULL)) ORDER BY i.started_at DESC LIMIT 100" : "SELECT * FROM agent_instances ORDER BY started_at DESC LIMIT 100", ownerValues)).rows,
       runs: (
         await this.db.query(
-          "SELECT * FROM agent_runs ORDER BY created_at DESC LIMIT 100",
+          `SELECT * FROM agent_runs${ownerFilter} ORDER BY created_at DESC LIMIT 100`,
+          ownerValues,
         )
       ).rows,
     };
   }
-  async read(name: string, args?: any) {
-    if (name === "agent.list") return this.definitions();
+  async read(name: string, args?: any, owner?: string) {
+    if (name === "agent.list") return this.definitions(owner);
     if (name === "agent.run.read")
-      return this.manager.get(z.uuid().parse(args?.run_id));
+      return this.manager.get(z.uuid().parse(args?.run_id), owner);
     if (name === "system.metrics.read") return this.metrics();
-    return this.reads(name, args);
+    return this.reads(name, args, owner);
   }
-  async readForAgent(name: string, args?: any) {
-    const value = await this.read(name, args);
+  async readForAgent(name: string, args?: any, owner?: string) {
+    const value = await this.read(name, args, owner);
     if (name === "system.metrics.read") return metricsContext(value);
     if (name === "agent.run.read") return runContext(value);
     if (name === "agent.list") return definitionsContext(value);
@@ -197,14 +283,25 @@ export class M2 {
     this.push("resource.updated", value);
     return value;
   }
-  async resource(input: string) {
+  async resource(input: string, owner?: string) {
     const name = resourceName.parse(input);
-    return this.serialize(name, () => this.snapshot(name));
+    const ownerScoped = owner && (name.startsWith("agent-run/") || name.startsWith("conversation/"));
+    const queue = ownerScoped ? `${owner}:${name}` : name;
+    return this.serialize(queue, async () => {
+      const data = await this.snapshot(name, owner);
+      // Run snapshots contain owner-scoped task data; never persist or broadcast
+      // them through the global resource stream.
+      if (ownerScoped) {
+        const revision = Number(new Date((data as any)?.run?.updated_at ?? (data as any)?.conversation?.updated_at ?? 0).getTime()) || Date.now();
+        return { version: 1 as const, resource: name, revision, data };
+      }
+      return this.publish(name, data);
+    });
   }
-  private async snapshot(name: string) {
+  private async snapshot(name: string, owner?: string) {
     let data: unknown;
     if (name.startsWith("agent-run/")) {
-      const run = await this.manager.get(z.uuid().parse(name.slice(10)));
+      const run = await this.manager.get(z.uuid().parse(name.slice(10)), owner);
       data = { ...run, event_log: runEventLog(run.events), presentation: {
         artifacts: { items: run.artifacts.slice(0, 200).map((artifact) => ({
           title: String(artifact.name).slice(0, 300), status: String(artifact.media_type).slice(0, 100),
@@ -214,7 +311,7 @@ export class M2 {
       } };
     }
     else if (name.startsWith("conversation/"))
-      data = await this.conversations.get(z.uuid().parse(name.slice(13)));
+      data = await this.conversations.get(z.uuid().parse(name.slice(13)), owner);
     else
       switch (name) {
         case "system/status":
@@ -227,31 +324,35 @@ export class M2 {
           data = await this.metrics();
           break;
         case "agents/summary":
-          data = await this.definitions();
+          data = await this.definitions(owner);
           break;
         case "llm/usage/today":
-          data = await this.read("llm.usage.read");
+          data = await this.read("llm.usage.read", undefined, owner);
           break;
         case "llm/usage/agents":
-          data = await this.read("llm.usage.read", { group_by: "agent" });
+          data = await this.read("llm.usage.read", { group_by: "agent" }, owner);
           break;
         case "llm/usage/hourly":
           data = {
             series: (
               await this.db.query(
-                "SELECT date_trunc('hour',started_at) label,sum(input_tokens+output_tokens)::float8 value FROM llm_requests WHERE started_at>now()-interval '24 hours' GROUP BY 1 ORDER BY 1",
+                "SELECT date_trunc('hour',started_at) label,sum(input_tokens+output_tokens)::float8 value FROM llm_requests WHERE started_at>now()-interval '24 hours'" + (owner ? " AND (EXISTS (SELECT 1 FROM conversations c JOIN devices d ON d.id=c.owner_device_id WHERE c.id=llm_requests.conversation_id AND (d.id=$1 OR d.user_id::text=CASE WHEN $1 LIKE 'user-%' THEN substring($1 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$1) END)) OR EXISTS (SELECT 1 FROM agent_runs ar JOIN devices d ON d.id=ar.requested_by WHERE ar.id=llm_requests.run_id AND (d.id=$1 OR d.user_id::text=CASE WHEN $1 LIKE 'user-%' THEN substring($1 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$1) END)))" : "") + " GROUP BY 1 ORDER BY 1",
+                owner ? [owner] : [],
               )
             ).rows,
           };
           break;
       }
     // Revision assignment and snapshot read are serialized, avoiding stale computation overwriting newer state.
-    return this.publish(name, data);
+    // The caller owns revision assignment/publication. Returning the raw
+    // snapshot is essential for owner-scoped resources, which must never be
+    // wrapped twice or sent through the global resource stream.
+    return data;
   }
-  async show(intent: unknown) {
+  async show(intent: unknown, owner?: string) {
     const spec = preset(intent),
       id = randomUUID();
-    await this.db.query("INSERT INTO views(id,spec) VALUES($1,$2)", [id, spec]);
+    await this.db.query("INSERT INTO views(id,owner_device_id,owner_user_id,spec) VALUES($1,$2,(SELECT user_id FROM devices WHERE id=$2),$3)", [id, owner ?? null, spec]);
     const value = { id, spec };
     this.push("view.show", value);
     return value;
@@ -259,10 +360,16 @@ export class M2 {
   async handle(topic: string, p: any, device: string): Promise<unknown> {
     switch (topic) {
       case "application.list": return installedApplications();
+      case "integration.credential.list": return this.integrationCredentials.list(device);
+      case "integration.credential.put": return this.integrationCredentials.put(device, p);
+      case "integration.credential.revoke": return this.integrationCredentials.revoke(device, z.uuid().parse(p.credential_id));
+      case "capability.list":
+      case "mcp.catalog.list":
+        return { version: 1, capabilities: this.capabilities().map((entry) => ({ ...entry })) };
       case "view.v2.get": {
         const spec = preset(p.intent);
         const names = [...new Set(spec.blocks.flatMap((b) => b.resource ? [b.resource] : []))];
-        const snapshots = await Promise.all(names.map((name) => this.resource(name)));
+        const snapshots = await Promise.all(names.map((name) => this.resource(name, device)));
         return negotiateView(semanticView(p.intent.intent, spec, new Map(snapshots.map((r) => [r.resource, { ...r, version: 1 as const }]))), p.renderer);
       }
       case "conversation.create": {
@@ -275,30 +382,115 @@ export class M2 {
           .parse(p.title);
         const c = (
           await this.db.query(
-            "INSERT INTO conversations(id,title) VALUES($1,$2) RETURNING *",
-            [randomUUID(), title],
+            "INSERT INTO conversations(id,title,owner_device_id,owner_user_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3)) RETURNING *",
+            [randomUUID(), title, device],
           )
         ).rows[0];
         this.push("conversation.updated", { conversation_id: c.id });
         return c;
       }
+      case "workspace.list":
+        return this.workspaces.list(device, p.conversation_id);
+      case "workspace.get": {
+        const value = await this.workspaces.get(device, z.uuid().parse(p.workspace_id));
+        this.push("workspace.opened", { workspace_id: value.workspace.id, revision: Number(value.workspace.revision) });
+        return value;
+      }
+      case "workspace.create":
+        return this.workspaces.create(device, p);
+      case "workspace.artifact.upsert":
+        return this.workspaces.upsertArtifact(device, p);
+      case "workspace.bind":
+        return this.workspaces.bind(device, p.workspace_id, p.resource, p.revision, p.metadata);
+      case "app.resolve": {
+        const input = z.object({ app_id: z.enum(["home-assistant", "immich"]), kind: z.string().max(80).optional(), id: z.string().max(300).optional(), platform: z.enum(["web", "android"]) }).strict().parse(p);
+        const candidate = input.app_id === "home-assistant" ? process.env.HOME_ASSISTANT_URL : process.env.IMMICH_URL;
+        // The deployment is intentionally reachable through the user's
+        // Tailscale address over HTTP; the operator supplied these URLs, so
+        // keep the resolver constrained to http(s) URLs and never accept a
+        // client supplied target.
+        const base = candidate && /^https?:\/\//.test(candidate) ? candidate.replace(/\/$/, "") : undefined;
+        const deep_links = base ? input.app_id === "immich" ? { photo: `${base}/photos/{id}`, album: `${base}/albums/{id}`, search: `${base}/search` } : { entity: `${base}/config/entities?entity_id={id}`, dashboard: `${base}/lovelace/{id}` } : {};
+        const descriptor = appDescriptorSchema.parse({
+          id: input.app_id,
+          name: input.app_id === "immich" ? "Immich" : "Home Assistant",
+          launch: { web: base },
+          deep_links,
+          capabilities: input.app_id === "immich" ? ["immich.photo.search", "immich.album.read"] : ["homeassistant.entity.read", "homeassistant.dashboard.read"],
+          resources: input.app_id === "immich" ? ["photo", "album", "search"] : ["entity", "dashboard"],
+          icon: `/app-icons/${input.app_id === "immich" ? "immich.svg" : "homeassistant.svg"}`,
+          status: base ? "ready" : "unknown",
+        });
+        return { app: descriptor, link: resolveAppLink(descriptor, input, input.platform) };
+      }
+      case "approval.list": return this.control.approvals(device);
+      case "approval.create": return this.control.createApproval(device, p);
+      case "approval.resolve": {
+        const status = z.enum(["approved", "rejected"]).parse(p.status);
+        const approval = await this.control.resolveApproval(device, z.uuid().parse(p.approval_id), status);
+        if (status === "approved" && approval.run_id) await this.manager.approve(approval.run_id, device);
+        return approval;
+      }
+      case "notification.list": return this.control.notifications(device);
+      case "notification.read": return this.control.markNotification(device, z.uuid().parse(p.notification_id));
+      case "schedule.list": return this.control.schedules(device);
+      case "schedule.create": return this.control.createSchedule(device, p);
+      case "schedule.toggle": return this.control.toggleSchedule(device, z.uuid().parse(p.schedule_id), z.boolean().parse(p.enabled));
+      case "schedule.delete": return this.control.deleteSchedule(device, z.uuid().parse(p.schedule_id));
+      case "node.invoke": {
+        const input = z.object({
+          node_id: z.string().regex(/^[\w.-]{1,100}$/),
+          capability: z.enum(["node.system.read", "node.file.read", "node.git.read", "node.codex.execute"]),
+          input: z.record(z.string(), z.unknown()).default({}),
+          approval_id: z.uuid().optional(),
+        }).strict().parse(p);
+        if (!this.invokeNode) throw Error("node_bridge_unavailable");
+        const user = await ownerUserId(this.db, device);
+        const node = (await this.db.query("SELECT a.capabilities FROM agents a WHERE a.id=$1 AND a.status IS DISTINCT FROM 'offline' AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL))", [input.node_id, device, user ?? null])).rows[0];
+        if (!node) throw Error("node_not_found");
+        const capabilities = Array.isArray(node.capabilities) ? node.capabilities : typeof node.capabilities === "string" ? (() => { try { const parsed = JSON.parse(node.capabilities); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : [];
+        if (!capabilities.includes(input.capability)) throw Error("node_capability_unavailable");
+        if (input.capability === "node.git.read" || input.capability === "node.codex.execute") {
+          if (!input.approval_id) throw Error("approval_required");
+          const approved = (await this.db.query("SELECT 1 FROM approvals WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$4) AND status='approved' AND capability=$3", [input.approval_id, device, input.capability, user ?? null])).rowCount;
+          if (!approved) throw Error("approval_required");
+        }
+        return this.invokeNode(device, input.node_id, input.capability, input.input);
+      }
       case "conversation.list":
-        return this.conversations.list();
+        return this.conversations.list(device);
       case "conversation.get":
-        return this.conversations.get(z.uuid().parse(p.conversation_id));
+        return this.conversations.get(z.uuid().parse(p.conversation_id), device);
       case "conversation.message":
         return this.conversations.accept(device, p);
       case "agent.definition.list":
-        return this.definitions();
+        return this.definitions(device);
+      case "agent.claim": {
+        const agentId = z.string().regex(/^[\w.-]{1,100}$/).parse(p.agent_id);
+        const user = await ownerUserId(this.db, device);
+        if (!user) throw Error("user_login_required");
+        const claimed = (await this.db.query(
+          "UPDATE agents SET owner_user_id=$2,updated_at=now() WHERE id=$1 AND owner_user_id IS NULL RETURNING *",
+          [agentId, user],
+        )).rows[0];
+        if (!claimed) throw Error("agent_not_owned");
+        this.push("agent.status.changed", claimed);
+        return claimed;
+      }
       case "runtime.health":
         return this.manager.registry.health();
       case "agent.run.list":
-        return (await this.definitions()).runs;
+        return (await this.definitions(device)).runs;
+      case "task.list":
+        return (await this.definitions(device)).runs;
+      case "task.create":
+        return this.handle("agent.run.create", p, device);
       case "agent.run.create": {
         const input = z
           .object({
             agent_id: z.enum(["coding-agent", "ops-agent"]),
             conversation_id: z.uuid().optional(),
+            workspace_id: z.uuid().optional(),
             goal: z.string().min(1).max(16000),
             idempotency_key: z.string().min(1).max(128),
           })
@@ -343,34 +535,45 @@ export class M2 {
           return r;
         });
         this.push("agent.run.created", r);
+        this.push("task.created", { task_id: r.id, run_id: r.id, status: "queued" });
         return r;
       }
       case "agent.run.get":
-        return this.manager.get(z.uuid().parse(p.run_id));
+        return this.manager.get(z.uuid().parse(p.run_id), device);
+      case "task.get":
+        return this.manager.get(z.uuid().parse(p.task_id ?? p.run_id), device);
       case "agent.run.cancel":
-        await this.manager.cancel(z.uuid().parse(p.run_id));
+        await this.manager.cancel(z.uuid().parse(p.run_id), device);
+        return { cancelled: true };
+      case "task.cancel":
+        await this.manager.cancel(z.uuid().parse(p.task_id ?? p.run_id), device);
         return { cancelled: true };
       case "agent.run.input":
       case "agent.run.resume":
+      case "task.input":
         await this.manager.input(
-          z.uuid().parse(p.run_id),
+          z.uuid().parse(p.run_id ?? p.task_id),
           z.string().max(16000).parse(p.text),
           topic === "agent.run.resume",
+          device,
         );
         return { accepted: true };
       case "approval.response":
         if (z.boolean().parse(p.approved))
           throw Error("approval_cannot_elevate_permissions");
-        await this.manager.cancel(z.uuid().parse(p.run_id));
+        await this.manager.cancel(z.uuid().parse(p.run_id), device);
         return { approved: false };
       case "resource.get":
-        return this.resource(p.resource);
+        return this.resource(p.resource, device);
       case "view.show":
-        return this.show(p);
+        return this.show(p, device);
       case "view.get": {
+        const user = await ownerUserId(this.db, device);
         const v = (
-          await this.db.query("SELECT * FROM views WHERE id=$1", [
+          await this.db.query("SELECT * FROM views WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR (owner_device_id IS NULL AND owner_user_id IS NULL))", [
             z.uuid().parse(p.view_id),
+            device,
+            user ?? null,
           ])
         ).rows[0];
         if (!v) throw Error("not_found");
@@ -380,7 +583,7 @@ export class M2 {
         const a = actionSchema.parse(p);
         switch (a.type) {
           case "run.open":
-            return this.manager.get(z.uuid().parse(a.target));
+            return this.manager.get(z.uuid().parse(a.target), device);
           case "run.cancel":
             return this.handle(
               "agent.run.cancel",
@@ -395,7 +598,7 @@ export class M2 {
               device,
             );
           case "conversation.open":
-            return this.conversations.get(z.uuid().parse(a.target));
+            return this.conversations.get(z.uuid().parse(a.target), device);
           case "approval.response":
             return this.handle(
               "approval.response",
@@ -404,6 +607,13 @@ export class M2 {
             );
           case "view.show":
             return this.handle("view.get", { view_id: a.target }, device);
+          case "app.open":
+            return this.handle("app.resolve", {
+              app_id: a.target,
+              kind: a.kind,
+              id: a.resource_id,
+              platform: a.platform ?? "web",
+            }, device);
         }
       }
       default:

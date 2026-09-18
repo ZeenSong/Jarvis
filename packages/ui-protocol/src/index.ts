@@ -34,10 +34,14 @@ export const actionSchema = z
       "approval.response",
       "conversation.open",
       "view.show",
+      "app.open",
     ]),
     target: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
     approved: z.boolean().optional(),
     text: z.string().min(1).max(16000).optional(),
+    kind: z.string().regex(/^[a-z0-9._-]{1,80}$/).optional(),
+    resource_id: z.string().max(300).optional(),
+    platform: z.enum(["web", "android"]).optional(),
   })
   .strict();
 export const blockSchema = z

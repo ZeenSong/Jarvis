@@ -6,6 +6,7 @@ resources:
   - postgres.yaml
   - server.yaml
   - network-policy.yaml
+  - hermes.yaml
 configMapGenerator:
   - name: jarvis-prices
     files:

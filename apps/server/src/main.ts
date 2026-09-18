@@ -1,8 +1,9 @@
 import { RuntimeRegistry } from "../../../packages/agent-runtime/src/index.js";
-import { ControllerRuntime } from "../../../packages/agent-runtime-remote/src/index.js";
 import { readFile } from "node:fs/promises";
 import { buildApp } from "./app.js";
 import { configSchema, priceSchema } from "./config.js";
+import { HermesClient } from "../../../packages/hermes-bridge/src/index.js";
+import { HermesRuntime } from "../../../packages/hermes-runtime/src/index.js";
 const config = configSchema.parse(process.env);
 const prices = priceSchema.parse(
   process.env.PRICES_FILE
@@ -10,15 +11,10 @@ const prices = priceSchema.parse(
     : {},
 );
 const runtimes = new RuntimeRegistry();
-for (const type of ["codex", "pydantic"] as const)
-  runtimes.register(
-    type,
-    new ControllerRuntime(
-      type,
-      process.env.WORKER_CONTROLLER_URL ?? "",
-      process.env.CONTROLLER_TOKEN ?? "",
-    ),
-  );
+// Codex is a Node Bridge capability, not a Server Agent runtime. Pydantic and
+// the legacy worker-controller runtimes are deliberately absent here.
+if (process.env.HERMES_ENABLED === "1" && process.env.HERMES_URL && process.env.HERMES_API_KEY)
+  runtimes.register("hermes", new HermesRuntime(new HermesClient(process.env.HERMES_URL, process.env.HERMES_API_KEY)));
 const { app } = await buildApp({
   runtimes,
   databaseUrl: config.DATABASE_URL,

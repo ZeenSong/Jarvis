@@ -32,11 +32,11 @@ export function ProductHome({ system, runs, conversations, navigate, ask, applic
     <div className="home-bottom"><section className="product-panel"><div className="section-heading"><h2>当前任务</h2><button className="quiet" onClick={() => navigate("tasks")}>查看全部 →</button></div>
       {running.length ? running.slice(0, 3).map((r) => <button className="run-row" key={r.id} onClick={() => navigate("run", r.id)}><span>{r.goal}</span><small>{labels[r.status]}</small></button>) : <Empty title="现在没有进行中的任务" text="有想做的事，随时告诉 Jarvis。" />}
     </section><section className="product-panel"><h2>最近活动</h2>{conversations.length ? conversations.slice(0, 4).map((c) => <button className="activity-row" key={c.id} onClick={() => navigate("jarvis", c.id)}><span className="activity-dot" /><span>{c.title}</span><span>↗</span></button>) : <Empty title="从一次对话开始" text="你的对话与任务进展会汇集在这里。" />}</section></div>
-    <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} /></section>
+    <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} ask={ask} /></section>
   </div>;
 }
 type Application = { id: string; name: string; status: string; description?: string; service_count?: number | null };
-export function ApplicationList({ value }: { value?: { status: string; apps: Application[] } }) {
+export function ApplicationList({ value, openApp, ask }: { value?: { status: string; apps: Application[] }; openApp?: (appId: string) => void; ask?: (prompt: string) => void }) {
   const [selected, setSelected] = useState<string>();
   const dialog = useRef<HTMLDialogElement>(null);
   const app = value?.apps.find((item) => item.id === selected);
@@ -64,6 +64,8 @@ export function ApplicationList({ value }: { value?: { status: string; apps: App
       <dl><div><dt>运行状态</dt><dd>{app.status === "running" ? "运行中" : app.status === "stopped" ? "已停止" : "状态未知"}</dd></div>
       <div><dt>应用服务</dt><dd>CasaOS</dd></div><div><dt>服务数量</dt><dd>{app.service_count ?? "未知"}</dd></div><div><dt>应用标识</dt><dd>{app.id}</dd></div></dl>
       <p className="muted">当前提供只读状态。启停、更新等操作尚未开放。</p></>}
+      {app && ask && <button onClick={() => ask(`请读取并总结 ${app.name} 当前状态，同时告诉我下一步可以做什么。`)}>让 Jarvis 分析此应用 ✦</button>}
+      {app && openApp && ["homeassistant", "immich"].includes(app.id) && <button onClick={() => openApp(app.id)}>在应用中打开 ↗</button>}
   </dialog></>;
 }
 export function Empty({ title, text }: { title: string; text: string }) {

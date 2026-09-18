@@ -4,12 +4,23 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.*
 import java.util.UUID
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+
+private fun JsonObject?.str(key: String) = (this?.get(key) as? JsonPrimitive)?.contentOrNull ?: ""
 
 class M2Repository(private val gateway: GatewayClient, private val scope: CoroutineScope, private val cache: SnapshotDao, private val error: MutableStateFlow<String?>) {
     val semanticView = MutableStateFlow<JsonObject?>(null)
     suspend fun thumbnail(path:String)=gateway.thumbnail(path)
     val applications = MutableStateFlow<JsonObject?>(null)
     fun refreshApplications() { task { loadApplications() } }
+    fun openApp(id: String, context: Context) { task {
+        val appId = if (id == "homeassistant") "home-assistant" else id
+        val result = gateway.request("app.resolve", buildJsonObject { put("app_id", appId); put("platform", "android") }).jsonObject
+        val link = (result["link"] as? JsonObject)?.get("primary")?.jsonPrimitive?.contentOrNull ?: (result["link"] as? JsonObject)?.get("fallback")?.jsonPrimitive?.contentOrNull
+        if (link != null) context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link))) else error.value = "该应用尚未配置可用链接"
+    } }
     private suspend fun loadApplications() {
         applications.value = try { gateway.request("application.list").jsonObject }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -21,7 +32,14 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     val view = MutableStateFlow<JsonObject?>(null)
     val resources = MutableStateFlow<Map<String, JsonObject>>(emptyMap())
     val sending = MutableStateFlow(false)
+    val workspaces = MutableStateFlow<List<JsonObject>>(emptyList())
+    val workspace = MutableStateFlow<JsonObject?>(null)
+    val toolStates = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    val draft = MutableStateFlow("")
+    fun askAboutApp(name: String) { draft.value = "请读取并总结 $name 当前状态，同时告诉我下一步可以做什么。" }
+    fun clearDraft() { draft.value = "" }
     private var selected: String? = null
+    private var pendingWorkspaceId: String? = null
     private var runId: String? = null
     private var viewGeneration = 0
     private var refreshing = false
@@ -62,6 +80,8 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     }
     private suspend fun loadConversation(id: String) { val result = gateway.request("conversation.get", buildJsonObject { put("conversation_id",id) }).jsonObject; if(id == selected) { conversation.value = result; save("m2-conversation",result) } }
     fun selectConversation(id: String?) { selected = id; conversation.value = null; if(id != null) task { loadConversation(id) } }
+    fun openWorkspace(workspaceId: String? = null) { if (workspaceId != null) pendingWorkspaceId = workspaceId; selected?.let { id -> task { workspaces.value = gateway.request("workspace.list", buildJsonObject { put("conversation_id", id) }).jsonArray.map { it.jsonObject }; val target = pendingWorkspaceId ?: workspaces.value.firstOrNull()?.str("id"); workspace.value = target?.let { gateway.request("workspace.get", buildJsonObject { put("workspace_id", it) }).jsonObject } } } }
+    fun createWorkspace() { selected?.let { id -> task { workspace.value = gateway.request("workspace.create", buildJsonObject { put("conversation_id", id); put("type", "native"); put("title", "Jarvis 工作区") }).jsonObject; openWorkspace() } } }
     fun send(text: String) { if(text.isBlank() || sending.value) return; sending.value = true; task {
         try {
             var id = selected
@@ -115,6 +135,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
         when(topic) {
             "resource.updated" -> task { accept(value.jsonObject) }
             "conversation.updated" -> task { refresh() }
+            "workspace.created", "workspace.artifact.updated" -> task { openWorkspace() }
             "conversation.message.delta" -> {
                 val p = value.jsonObject
                 if(p["conversation_id"]?.jsonPrimitive?.content == selected) {
@@ -124,6 +145,13 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
                         if(m["id"] == p["message_id"] && (m["revision"]?.jsonPrimitive?.longOrNull ?: 0) < (p["revision"]?.jsonPrimitive?.longOrNull ?: 0)) JsonObject(m + mapOf("content" to (p["content"] ?: JsonPrimitive("")), "revision" to p.getValue("revision"))) else m
                     })))
                 }
+            }
+            "conversation.tool.started", "conversation.tool.completed" -> {
+                val p = value.jsonObject
+                val conversationId = p["conversation_id"]?.jsonPrimitive?.contentOrNull ?: return
+                val callId = p["tool_call_id"]?.jsonPrimitive?.contentOrNull ?: return
+                val status = if (topic.endsWith("started")) "running" else "completed"
+                toolStates.value = toolStates.value + (conversationId to ((toolStates.value[conversationId] ?: emptyMap()) + (callId to (p["capability"]?.jsonPrimitive?.contentOrNull ?: "tool") + "|" + status)))
             }
             "agent.run.updated", "agent.run.created" -> task { refresh() }
         }

@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hermes-api
+  namespace: jarvis
+type: Opaque
+stringData:
+  # Replace at deployment time; never commit a real key.
+  API_SERVER_KEY: replace-in-deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-jarvis-mcp
+  namespace: jarvis
+data:
+  config.yaml: |
+    model:
+      provider: "deepseek"
+      # DeepSeek's public API identifier for the V4.1-Flash release.
+      default: "deepseek-flash"
+    # The official Hermes MCP registry names a server toolset mcp-<server>.
+    # Keep the API server limited to Jarvis capabilities; the default Hermes
+    # API toolset includes terminal/file/code_execution tools.
+    platform_toolsets:
+      api_server: [mcp-jarvis]
+    mcp_servers:
+      jarvis:
+        command: /opt/hermes/.venv/bin/python
+        args: ["/opt/jarvis-mcp/jarvis_provider.py"]
+        env:
+          JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+          JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+  jarvis_provider.py: |
+    """Jarvis Capability provider for the official Hermes MCP client."""
+    from __future__ import annotations
+    import asyncio
+    import json
+    import os
+    import sys
+    from urllib.request import Request, urlopen
+    from mcp.server import MCPServer
+
+    BASE_URL = os.environ.get("JARVIS_INTERNAL_URL", "http://100.77.157.73:8080").rstrip("/")
+    BRIDGE_KEY = os.environ.get("JARVIS_BRIDGE_KEY", "")
+
+    def _call(tool: str, context_token: str, **arguments: object) -> str:
+        body = json.dumps({"tool": tool, "context_token": context_token, "arguments": arguments}).encode("utf-8")
+        request = Request(
+            f"{BASE_URL}/internal/hermes/capability", data=body, method="POST",
+            headers={"Content-Type": "application/json", "X-Jarvis-Bridge-Key": BRIDGE_KEY},
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.dumps(json.load(response), ensure_ascii=False)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+    server = MCPServer(
+        "jarvis",
+        instructions=(
+            "Jarvis authoritative capability provider. Hermes owns reasoning and the tool loop. "
+            "Every call requires the exact context_token from the Jarvis system message."
+        ),
+    )
+
+    @server.tool()
+    def system_status_read(context_token: str) -> str:
+        """读取 Jarvis 服务器当前状态。"""
+        return _call("system_status_read", context_token)
+
+    @server.tool()
+    def system_metrics_read(context_token: str) -> str:
+        """读取 Jarvis 最近 24 小时实际采集的系统指标。"""
+        return _call("system_metrics_read", context_token)
+
+    @server.tool()
+    def agent_list(context_token: str) -> str:
+        """读取当前用户可见的 Agent、Task 和 Run。"""
+        return _call("agent_list", context_token)
+
+    @server.tool()
+    def llm_usage_read(context_token: str) -> str:
+        """读取当前用户的模型用量。"""
+        return _call("llm_usage_read", context_token)
+
+    @server.tool()
+    def agent_run_status(context_token: str, run_id: str) -> str:
+        """读取当前用户指定任务的状态。"""
+        return _call("agent_run_status", context_token, run_id=run_id)
+
+    @server.tool()
+    def ui_view_show(context_token: str, intent: str, resources: list[str]) -> str:
+        """展示一个由 Jarvis 预设定义的安全仪表盘视图。"""
+        return _call("ui_view_show", context_token, intent=intent, resources=resources)
+
+    async def main() -> None:
+        if not BRIDGE_KEY:
+            print("JARVIS_BRIDGE_KEY is required", file=sys.stderr)
+            raise SystemExit(2)
+        await server.run_stdio_async()
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-data
+  namespace: jarvis
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-core
+  namespace: jarvis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: hermes-core }
+  template:
+    metadata:
+      labels: { app: hermes-core }
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        - name: prepare-hermes-data
+          image: nousresearch/hermes-agent:latest
+          command: ["sh", "-c", "cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml && chown -R 10000:10000 /opt/data"]
+          securityContext: { runAsUser: 0, runAsGroup: 0 }
+          volumeMounts:
+            - { name: data, mountPath: /opt/data }
+            - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
+      containers:
+        - name: hermes
+          image: nousresearch/hermes-agent:latest
+          imagePullPolicy: IfNotPresent
+          securityContext: { runAsUser: 0, runAsGroup: 0 }
+          command: ["hermes", "gateway", "run"]
+          env:
+            - name: API_SERVER_ENABLED
+              value: "true"
+            - name: API_SERVER_HOST
+              value: "0.0.0.0"
+            - name: API_SERVER_KEY
+              valueFrom: { secretKeyRef: { name: hermes-api, key: API_SERVER_KEY } }
+            - name: DEEPSEEK_API_KEY
+              valueFrom: { secretKeyRef: { name: hermes-provider, key: DEEPSEEK_API_KEY } }
+            - name: JARVIS_INTERNAL_URL
+              value: http://100.77.157.73:8080
+            - name: JARVIS_BRIDGE_KEY
+              valueFrom: { secretKeyRef: { name: hermes-bridge, key: bridge-key } }
+            # Native terminal/file tools are excluded by platform_toolsets.
+            # Jarvis capabilities arrive only through the read-only MCP provider.
+            # Hermes runs inside its own official container. Keep its unused
+            # native terminal backend local to that container; project and
+            # host execution go through the Jarvis Node Bridge instead.
+            - name: TERMINAL_ENV
+              value: local
+          ports: [{ name: http, containerPort: 8642 }]
+          startupProbe: { httpGet: { path: /health, port: http }, failureThreshold: 60, periodSeconds: 10, timeoutSeconds: 10 }
+          readinessProbe: { httpGet: { path: /health, port: http }, failureThreshold: 12, periodSeconds: 10, timeoutSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 120, failureThreshold: 6, periodSeconds: 30, timeoutSeconds: 10 }
+          volumeMounts:
+            - { name: data, mountPath: /opt/data }
+            - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: hermes-data } }
+        - { name: mcp, configMap: { name: hermes-jarvis-mcp, defaultMode: 0555 } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-core
+  namespace: jarvis
+spec:
+  selector: { app: hermes-core }
+  ports: [{ name: http, port: 8642, targetPort: http }]

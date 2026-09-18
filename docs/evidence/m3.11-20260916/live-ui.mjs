@@ -1,0 +1,29 @@
+import {chromium} from 'playwright';
+import {readFile,writeFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const dir='docs/evidence/m3.11-20260916',base='http://100.77.157.73:8080';
+// Reuse the existing audit account without copying its secret into evidence.
+const config=await readFile('.local/verify-live-workspace.mjs','utf8');
+const username=config.match(/username: '([^']+)'/)[1],password=config.match(/password: '([^']+)'/)[1];
+const b=await chromium.launch({executablePath:'/usr/bin/google-chrome',args:['--no-sandbox']}),c=await b.newContext({viewport:{width:1600,height:1100}}),p=await c.newPage();
+const r={time:new Date().toISOString(),errors:[],events:[],pages:[]};
+p.on('pageerror',e=>r.errors.push(e.message));p.on('websocket',ws=>ws.on('framereceived',f=>{try{const m=JSON.parse(f.payload.toString());if(m.type==='event'&&/^conversation\.(message.delta|tool|status)/.test(m.topic))r.events.push({at:Date.now(),topic:m.topic,payload:m.payload});}catch{}}));
+const shot=name=>p.screenshot({path:`${dir}/${name}.png`,fullPage:true});
+const rpc=async(topic,data={})=>{const q=await p.request.post(`${base}/api/v2/${topic}`,{headers:{Origin:base},data});return {status:q.status(),body:await q.json()};};
+async function ask(text,name){await p.locator('nav').getByRole('button',{name:'Jarvis',exact:true}).click();await p.getByRole('button',{name:'＋ 新会话',exact:true}).click();await p.getByLabel('消息',{exact:true}).fill(text);const start=Date.now();await p.getByRole('button',{name:'发送 ↑'}).click();let interim=false;while(Date.now()-start<150000){const msg=await p.locator('.message.jarvis').last().innerText().catch(()=>'');const status=await p.locator('.message.jarvis').last().locator(':scope > small').innerText().catch(()=>'');if(!interim&&r.events.some(e=>e.at>=start&&e.topic==='conversation.message.delta')){await shot(`${name}-streaming`);interim=true;}if(/已完成|失败/.test(status)){await shot(name);return {elapsedMs:Date.now()-start,text:msg,events:r.events.filter(e=>e.at>=start).map(e=>({topic:e.topic,at:e.at,capability:e.payload?.capability})),workspaceCards:await p.getByRole('button',{name:'打开工作区 →',exact:true}).count()};}await p.waitForTimeout(1000);}await shot(`${name}-timeout`);return {timeout:true,text:await p.locator('.messages').innerText()};}
+try{
+ await p.goto(base);await p.getByRole('button',{name:'使用用户名密码',exact:true}).click();await p.getByLabel('用户名',{exact:true}).fill(username);await p.getByLabel('密码',{exact:true}).fill(password);const loginResponse=p.waitForResponse(x=>x.url().endsWith('/auth/login'));await p.getByRole('button',{name:'登录',exact:true}).click();r.existingAuditLoginStatus=(await loginResponse).status();
+ if(r.existingAuditLoginStatus!==200){const code=execFileSync('kubectl',['--kubeconfig','.local/m2.kubeconfig','-n','jarvis','exec','deployment/jarvis-server','--','node','dist/apps/server/src/pair.js'],{encoding:'utf8'}).trim();await p.getByRole('button',{name:'使用配对码',exact:true}).click();await p.getByLabel('配对码',{exact:true}).fill(code);await p.getByRole('button',{name:'配对并连接',exact:true}).click();r.authMethod='fresh authorized pairing, old temporary credentials invalid';}else r.authMethod='username/password';
+ await p.getByRole('heading',{name:'让科技，回归生活。'}).waitFor();
+ r.assets=await p.locator('script[src]').evaluateAll(es=>es.map(e=>e.src));await shot('01-live-home');
+ for(const name of ['空间','任务','系统','应用']){await p.locator('nav').getByRole('button',{name,exact:true}).click();await p.waitForTimeout(600);r.pages.push({name,url:p.url(),body:await p.locator('main').innerText().then(s=>s.slice(0,1000))});await shot(`02-live-${name}`);}
+ await p.getByRole('button',{name:'查看 Immich 详情',exact:true}).click();await shot('03-live-app-detail');
+ const pop=c.waitForEvent('page',{timeout:15000}).catch(()=>null);await p.getByRole('dialog').getByRole('button',{name:/在应用中打开/}).click();const opened=await pop;if(opened){await opened.waitForLoadState('domcontentloaded').catch(()=>{});r.appOpened=opened.url();await opened.screenshot({path:`${dir}/04-live-immich.png`,fullPage:true});await opened.close();}else r.appOpened=null;
+ await p.keyboard.press('Escape');
+ r.statusConversation=await ask('M3.11 复验：请通过工具读取当前服务器状态，回复一段简短中文、一个两列表格和一个只读示例代码块，并展示系统状态图表。只读，不修改系统。','05-live-conversation');
+ if(await p.getByRole('button',{name:'打开工作区 →',exact:true}).count()){await p.getByRole('button',{name:'打开工作区 →',exact:true}).last().click();await p.getByRole('region',{name:'持久化工作区'}).waitFor();await shot('06-live-workspace');r.canvas={chat:await p.locator('.chat').count(),iframe:await p.locator('iframe').count(),text:await p.locator('.workspace-panel').innerText()};await p.reload();await p.waitForTimeout(1500);await shot('07-live-workspace-reload');r.canvasAfterReload=await p.locator('.workspace-panel').innerText().catch(()=> 'missing');}
+ r.delegation=await ask('M3.11 复验：请实际委派 Ops 子智能体，创建一个可在任务列表追踪的只读任务，分析近24小时CPU趋势。不要改动系统；若没有创建任务的工具，请明确说明未创建，不能把普通回复当成已执行任务。','08-live-delegation');
+ for(const topic of ['runtime.health','agent.definition.list','capability.list','workspace.list']){const q=await rpc(topic);r[topic]=topic==='agent.definition.list'?{status:q.status,definitions:q.body.definitions,runCount:q.body.runs?.length}:topic==='workspace.list'?{status:q.status,objects:q.body.map(w=>({id:w.id,title:w.title,type:w.type,revision:w.revision,artifacts:w.artifacts?.length}))}:q;}
+ r.appLinks=[];for(const app_id of ['immich','home-assistant'])for(const platform of ['web','android'])r.appLinks.push({app_id,platform,...await rpc('app.resolve',{app_id,platform})});
+}catch(e){r.error=String(e);await shot('live-ui-error').catch(()=>{});}finally{await writeFile(`${dir}/live-ui.json`,JSON.stringify(r,null,2));console.log({error:r.error,appOpened:r.appOpened,status:r.statusConversation,delegation:r.delegation});await b.close();}

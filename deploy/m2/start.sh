@@ -38,7 +38,7 @@ case "$command_name" in
     M2_SELECTED_BACKUP="$backup_dir" node --input-type=module -e 'import{readFile}from"node:fs/promises";const p=process.env.M2_SELECTED_BACKUP;const before=JSON.parse(await readFile(p+"/before.json"));const checked=JSON.parse(await readFile(p+"/postgres.dump.verified.json"));if(before.context!==process.env.M2_CONTEXT||checked.status!=="passed"||Date.now()-Date.parse(before.created_at)>86400000)throw Error("Run a fresh backup and restore verification for this cluster first")'
     export GATEWAY_IP="${GATEWAY_IP:-$(k -n jarvis get secret jarvis-secrets -o jsonpath='{.data.tailscale-ip}' | base64 -d)}"
     export GATEWAY_SOURCE_IP="${GATEWAY_SOURCE_IP:-$(k -n jarvis get pods -l app=jarvis-server -o jsonpath='{.items[0].status.podIP}')}"
-    export CORE_MODEL="${CORE_MODEL:-deepseek-v4-flash}" OPS_MODEL="${OPS_MODEL:-deepseek-v4-flash}" CODING_MODEL="${CODING_MODEL:-gpt-5.6-luna}"
+    export CORE_MODEL="${CORE_MODEL:-deepseek-flash}" OPS_MODEL="${OPS_MODEL:-deepseek-flash}" CODING_MODEL="${CODING_MODEL:-gpt-5.6-luna}"
     export CODING_REPOSITORY="${CODING_REPOSITORY:-https://github.com/ZeenSong/Jarvis.git}" CODING_COMMIT="${CODING_COMMIT:-48efaca2e421737e6f297dbefa2bad56bffcac03}"
     export M2_RENDER_DIR="${M2_RENDER_DIR:-$PWD/.local/m2-deploy}"
     node deploy/m2/render.mjs

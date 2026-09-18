@@ -16,7 +16,7 @@ private fun JsonObject.text(key: String) = (get(key) as? JsonPrimitive)?.content
 private fun state(value: String) = when(value) { "running" -> "运行中"; "stopped" -> "已停止"; else -> "状态未知" }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun ProductApplications(value: JsonObject?, refresh: () -> Unit) {
+@Composable fun ProductApplications(value: JsonObject?, refresh: () -> Unit, openApp: (String) -> Unit = {}, askApp: (String) -> Unit = {}) {
     var selected by remember { mutableStateOf<String?>(null) }
     val apps = (value?.get("apps") as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
     val status = value?.text("status")
@@ -49,7 +49,14 @@ private fun state(value: String) = when(value) { "running" -> "运行中"; "stop
             var expanded by remember(app.text("id")) { mutableStateOf(false) }
             if(app.text("description").isNotEmpty()) { TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "收起简介" else "应用简介 · 来自 CasaOS") };if(expanded) Text(app.text("description")) }
             Text("当前提供只读状态。启停、更新等操作尚未开放。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick={askApp(app.text("name")); selected=null}) { Text("让 Jarvis 分析此应用 ✦") }
+            if (app.text("id") in listOf("homeassistant", "immich")) TextButton(onClick={openApp(app.text("id")); selected=null}) { Text("在应用中打开 ↗") }
             TextButton(onClick={selected=null}) { Text("关闭应用详情") }
         }
     }
+}
+
+/** Backwards-compatible overload for existing callers that use a trailing refresh lambda. */
+@Composable fun ProductApplications(value: JsonObject?, refresh: () -> Unit) {
+    ProductApplications(value, refresh, {})
 }

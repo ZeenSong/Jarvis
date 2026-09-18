@@ -53,6 +53,7 @@ export function controlledRegistry() {
   const registry = new RuntimeRegistry();
   registry.register("pydantic", runtime);
   registry.register("codex", runtime);
+  registry.register("hermes", runtime);
   return registry;
 }
 export async function seedControlRuns(

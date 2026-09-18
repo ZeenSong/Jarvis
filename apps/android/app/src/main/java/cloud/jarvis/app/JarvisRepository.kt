@@ -34,7 +34,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     private var page = "home"
     private var selectedAgent: String? = null
     private var refreshing = false
-    val gateway = GatewayClient(scope, ::onEvent) { refresh() }
+    val gateway = GatewayClient(scope, ::onEvent, { refresh() }) { updated -> scope.launch { runCatching { credentials.save(updated) }.onFailure { error.value = "无法保存刷新后的会话" } } }
     val m2 = M2Repository(gateway, scope, cache, error)
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
@@ -61,6 +61,10 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     fun pair(server: String, code: String) { scope.launch {
         error.value = null
         runCatching { val auth = gateway.pair(server.trim(), code.trim()); credentials.save(auth); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
+    } }
+    fun login(server: String, username: String, password: String) { scope.launch {
+        error.value = null
+        runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
     } }
     private suspend fun save(key: String, value: JsonElement) { val now = System.currentTimeMillis(); cache.put(Snapshot(key, value.toString(), now)); savedAt.value = now }
     private fun onEvent(topic: String, value: JsonElement) {

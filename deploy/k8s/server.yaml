@@ -24,7 +24,7 @@ spec:
         runAsGroup: 1000
       containers:
         - name: server
-          image: jarvis-server:0.1.0
+          image: jarvis-server:0.3.0-m31-hermes-mcp17
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
@@ -37,6 +37,25 @@ spec:
               value: /host
             - name: PRICES_FILE
               value: /config/prices.json
+            - name: HERMES_URL
+              value: http://hermes-core:8642
+            - name: HERMES_ENABLED
+              value: "1"
+            - name: CORE_MODEL
+              value: deepseek-flash
+            - name: HOME_ASSISTANT_URL
+              value: http://100.77.157.73:8123
+            - name: IMMICH_URL
+              value: http://100.77.157.73:2283
+            - name: HERMES_API_KEY
+              valueFrom:
+                secretKeyRef: { name: hermes-api, key: API_SERVER_KEY, optional: true }
+            - name: HERMES_BRIDGE_KEY
+              valueFrom:
+                secretKeyRef: { name: hermes-bridge, key: bridge-key, optional: true }
+            - name: INTEGRATION_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: integration-credential-key, optional: true }
           ports:
             - containerPort: 8080
           securityContext:
@@ -45,8 +64,8 @@ spec:
             capabilities:
               drop: [ALL]
           resources:
-            requests: { cpu: 100m, memory: 128Mi }
-            limits: { cpu: "1", memory: 512Mi }
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
           # exec connects to the configured Tailnet listener, not another host interface.
           readinessProbe:
             exec:
