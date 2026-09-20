@@ -24,7 +24,7 @@ test.afterAll(async () => {
     await new Promise((resolve) => child.once("exit", resolve));
   }
 });
-test("Web pairing, deterministic conversation, shared history, refresh and reconnect", async ({
+test("Web pairing, deterministic conversation, isolated history, refresh and reconnect", async ({
   page,
   browser,
 }) => {
@@ -65,14 +65,8 @@ test("Web pairing, deterministic conversation, shared history, refresh and recon
   await second.getByRole("button", { name: "配对并连接" }).click();
   await expect(second.getByText("已连接", { exact: true })).toBeVisible();
   await second.getByRole("button", { name: "Jarvis", exact: true }).click();
-  await second
-    .locator(".conversation-list")
-    .getByRole("button", { name: "CPU 现在多少？" })
-    .first()
-    .click();
-  await expect(second.locator(".message.jarvis")).toContainText(
-    "当前 CPU 使用率",
-  );
+  await expect(second.locator(".conversation-list").getByRole("button", { name: "CPU 现在多少？" })).toHaveCount(0);
+  await expect(second.locator(".message.jarvis")).toHaveCount(0);
   await second.screenshot({
     path: ".local/evidence/m2-web-conversation.png",
     fullPage: true,

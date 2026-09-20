@@ -51,3 +51,17 @@ test("Hermes runtime executes only the bound Kernel tool bridge", async () => {
   assert.ok(events.some((event) => event.type === "agent.message.delta"));
   assert.equal(events.at(-1)?.type, "agent.run.completed");
 });
+
+
+test("Hermes durable tasks retain the final result and reject empty success", async () => {
+  for (const content of ["read-only result", ""]) {
+    const runtime = new HermesRuntime({ complete: async () => ({content, calls: []}) } as unknown as HermesClient);
+    const run = await runtime.start({id:"result-test",goal:"read state"});
+    const events = []; for await (const event of runtime.events(run.id)) events.push(event);
+    const final = events.at(-1)!;
+    assert.equal(final.type, content ? "agent.run.completed" : "agent.run.failed");
+    if (content) assert.equal(final.payload.summary, content);
+    else assert.equal(final.payload.error, "hermes_empty_response");
+    await runtime.dispose(run.id);
+  }
+});

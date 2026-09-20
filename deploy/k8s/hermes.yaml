@@ -1,13 +1,4 @@
-apiVersion: v1
-kind: Secret
-metadata:
-  name: hermes-api
-  namespace: jarvis
-type: Opaque
-stringData:
-  # Replace at deployment time; never commit a real key.
-  API_SERVER_KEY: replace-in-deployment
----
+# The existing hermes-api Secret is managed separately; never apply a placeholder key.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -32,67 +23,111 @@ data:
           JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
           JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
   jarvis_provider.py: |
-    """Jarvis Capability provider for the official Hermes MCP client."""
+    """Jarvis Capability provider for the official Hermes MCP client.
+
+    This process is intentionally small: Hermes owns the agent loop, while Jarvis
+    remains the authority for state, permissions, views, and durable runs.
+    """
+
     from __future__ import annotations
+
     import asyncio
     import json
     import os
     import sys
     from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+    from typing import Literal
+
     from mcp.server import MCPServer
 
-    BASE_URL = os.environ.get("JARVIS_INTERNAL_URL", "http://100.77.157.73:8080").rstrip("/")
+
+    BASE_URL = os.environ.get("JARVIS_INTERNAL_URL", "http://jarvis-server:8080").rstrip("/")
     BRIDGE_KEY = os.environ.get("JARVIS_BRIDGE_KEY", "")
 
+
     def _call(tool: str, context_token: str, **arguments: object) -> str:
-        body = json.dumps({"tool": tool, "context_token": context_token, "arguments": arguments}).encode("utf-8")
+        body = json.dumps({
+            "tool": tool,
+            "context_token": context_token,
+            "arguments": arguments,
+        }).encode("utf-8")
         request = Request(
-            f"{BASE_URL}/internal/hermes/capability", data=body, method="POST",
-            headers={"Content-Type": "application/json", "X-Jarvis-Bridge-Key": BRIDGE_KEY},
+            f"{BASE_URL}/internal/hermes/capability",
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Jarvis-Bridge-Key": BRIDGE_KEY,
+            },
         )
         try:
             with urlopen(request, timeout=30) as response:
                 return json.dumps(json.load(response), ensure_ascii=False)
+        except HTTPError as exc:
+            return exc.read(16000).decode("utf-8", errors="replace")
         except Exception as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
 
     server = MCPServer(
         "jarvis",
         instructions=(
-            "Jarvis authoritative capability provider. Hermes owns reasoning and the tool loop. "
-            "Every call requires the exact context_token from the Jarvis system message."
+            "Jarvis authoritative capability provider. Hermes owns reasoning and the "
+            "tool loop; use these tools for current Jarvis state, metrics, user runs, "
+            "usage, and dashboard views. Every tool call requires the exact context_token "
+            "from the Jarvis system message. Never invent one."
         ),
     )
+
 
     @server.tool()
     def system_status_read(context_token: str) -> str:
         """读取 Jarvis 服务器当前状态。"""
         return _call("system_status_read", context_token)
 
+
     @server.tool()
     def system_metrics_read(context_token: str) -> str:
         """读取 Jarvis 最近 24 小时实际采集的系统指标。"""
         return _call("system_metrics_read", context_token)
+
 
     @server.tool()
     def agent_list(context_token: str) -> str:
         """读取当前用户可见的 Agent、Task 和 Run。"""
         return _call("agent_list", context_token)
 
+
     @server.tool()
     def llm_usage_read(context_token: str) -> str:
         """读取当前用户的模型用量。"""
         return _call("llm_usage_read", context_token)
+
 
     @server.tool()
     def agent_run_status(context_token: str, run_id: str) -> str:
         """读取当前用户指定任务的状态。"""
         return _call("agent_run_status", context_token, run_id=run_id)
 
+
     @server.tool()
-    def ui_view_show(context_token: str, intent: str, resources: list[str]) -> str:
-        """展示一个由 Jarvis 预设定义的安全仪表盘视图。"""
+    def ui_view_show(context_token: str, intent: Literal["system_overview", "network_overview", "usage_analysis", "agent_run_analysis"], resources: list[str] = []) -> str:
+        """展示持久化图表。服务器趋势用 system_overview 和 []；任务分析用 agent_run_analysis 和 ["agent-run/<run_id>"]。"""
         return _call("ui_view_show", context_token, intent=intent, resources=resources)
+
+
+    @server.tool()
+    def task_create(context_token: str, goal: str, idempotency_key: str) -> str:
+        """创建可追踪的只读 Ops 持久任务。每个新请求用唯一 idempotency_key；网络重试复用同一 key。返回 task_id/run_id。"""
+        return _call("task_create", context_token, goal=goal, idempotency_key=idempotency_key)
+
+
+    @server.tool()
+    def task_cancel(context_token: str, run_id: str) -> str:
+        """仅在用户要求停止任务时取消当前用户的指定任务。"""
+        return _call("task_cancel", context_token, run_id=run_id)
+
 
     async def main() -> None:
         if not BRIDGE_KEY:
@@ -100,8 +135,10 @@ data:
             raise SystemExit(2)
         await server.run_stdio_async()
 
+
     if __name__ == "__main__":
         asyncio.run(main())
+
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -130,19 +167,28 @@ spec:
       automountServiceAccountToken: false
       initContainers:
         - name: prepare-hermes-data
-          image: nousresearch/hermes-agent:latest
-          command: ["sh", "-c", "cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml && chown -R 10000:10000 /opt/data"]
+          image: docker.io/nousresearch/hermes-agent@sha256:61b5b208cbda39186457116e4d267096bda7f503a135eef1572df3d8df216a7b
+          command: ["sh", "-c", "cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml && python -c \"import os; from dotenv import set_key; set_key('/opt/data/.env', 'API_SERVER_KEY', os.environ['API_SERVER_KEY']); os.chmod('/opt/data/.env', 0o600)\" && chown -R 10000:10000 /opt/data"]
+          env:
+            - name: API_SERVER_KEY
+              valueFrom: { secretKeyRef: { name: hermes-api, key: API_SERVER_KEY } }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
           volumeMounts:
             - { name: data, mountPath: /opt/data }
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
       containers:
         - name: hermes
-          image: nousresearch/hermes-agent:latest
+          image: jarvis-hermes-dashboard:20260920
           imagePullPolicy: IfNotPresent
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "2", memory: 1Gi }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
-          command: ["hermes", "gateway", "run"]
+          args: ["hermes", "gateway", "run"]
           env:
+            - { name: HERMES_DASHBOARD, value: "true" }
+            - { name: HERMES_DASHBOARD_HOST, value: "127.0.0.1" }
+            - { name: HERMES_DASHBOARD_PORT, value: "9119" }
             - name: API_SERVER_ENABLED
               value: "true"
             - name: API_SERVER_HOST

@@ -123,7 +123,7 @@ private fun parseMarkdown(value: String): List<MarkdownBlock> {
                     Text(if(m.text("role")=="user")"你" else "Jarvis",color=MaterialTheme.colorScheme.primary)
                     if (m.text("content").isBlank()) Text("正在处理…") else MarkdownMessage(m.text("content"));Text(display(m["status"]),style=MaterialTheme.typography.bodySmall)
                     val conversationId = current?.get("conversation")?.jsonObject?.text("id")
-                    toolStates[conversationId]?.values?.forEach { state -> val parts = state.split('|', limit = 2); Text("工具 · ${parts.firstOrNull() ?: "tool"} · ${if (parts.getOrNull(1) == "running") "运行中" else "已完成"}", modifier = Modifier.fillMaxWidth().background(Color(0x1800A6C7)).padding(8.dp), style = MaterialTheme.typography.bodySmall) }
+                    toolStates[conversationId]?.values?.forEach { state -> val parts = state.split('|', limit = 2); Text("工具 · ${parts.firstOrNull() ?: "tool"} · ${if (parts.getOrNull(1) == "running") "运行中" else if (parts.getOrNull(1) == "failed") "失败" else "已完成"}", modifier = Modifier.fillMaxWidth().background(Color(0x1800A6C7)).padding(8.dp), style = MaterialTheme.typography.bodySmall) }
                     (m["run_id"] as? JsonPrimitive)?.contentOrNull?.let { id -> TextButton(onClick={openRun(id)}){Text("查看任务 →")} }
                     (m["view_id"] as? JsonPrimitive)?.contentOrNull?.let { id -> TextButton(onClick={openView(id)}){Text("查看动态图表")} }
                     val workspaceId = (m["workspace_id"] as? JsonPrimitive)?.contentOrNull

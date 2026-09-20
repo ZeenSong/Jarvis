@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { hashPassword } from "../apps/server/src/identity.js";
 import { buildApp } from "../apps/server/src/app.js";
 import { createPairingCode } from "../apps/server/src/auth.js";
 import { controlledRegistry, seedControlRuns } from "./controlled-runtime.js";
@@ -38,15 +40,33 @@ process.env.HERMES_ENABLED = "1";
 process.env.HERMES_URL = `http://127.0.0.1:${hermesPort}`;
 process.env.HERMES_API_KEY = "web-test-hermes";
 process.env.HERMES_BRIDGE_KEY = "web-test-hermes-bridge-key";
+process.env.IMMICH_URL = "http://127.0.0.1:2283";
+process.env.HOME_ASSISTANT_URL = "http://127.0.0.1:8123";
 const ctx = await buildApp({
   databaseUrl: process.env.TEST_DATABASE_URL!,
   runtimes: controlledRegistry(),
+});
+const runs = await seedControlRuns(ctx);
+const login = {username: `web-${randomUUID()}`, password: "isolated-browser-regression-2026"};
+const userId = randomUUID();
+await ctx.db.query("INSERT INTO users(id,username,role) VALUES($1,$2,'member')", [userId,login.username]);
+await ctx.db.query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)", [userId,await hashPassword(login.password)]);
+// Explicitly bind only the first paired test device to the seeded task owner.
+// Other devices remain isolated; production pairing does not inherit ownership.
+let firstPair = true;
+ctx.app.addHook("onSend", async (request, reply, payload) => {
+  if (request.url === "/api/v1/pair" && reply.statusCode === 200 && firstPair) {
+    firstPair = false;
+    const device = (request.body as any).device_id;
+    await ctx.db.query("UPDATE agent_runs SET requested_by=$1 WHERE requested_by=$2", [device, runs.owner]);
+  }
+  return payload;
 });
 await ctx.app.listen({ host: "127.0.0.1", port: 0 });
 process.send?.({
   base: `http://127.0.0.1:${(ctx.app.server.address() as any).port}`,
   codes: [await createPairingCode(ctx.db), await createPairingCode(ctx.db)],
-  runs: await seedControlRuns(ctx),
+  runs, login,
 });
 process.on("message", () => void ctx.app.close().then(() => process.exit(0)));
 process.on("SIGTERM", () => void ctx.app.close().then(() => hermesStub.close(() => process.exit(0))));

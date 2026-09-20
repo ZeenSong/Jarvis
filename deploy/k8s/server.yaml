@@ -17,6 +17,13 @@ spec:
       # Read host interfaces and bind only its Tailscale IP (supplied by Secret).
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      # Single-node service IPs: host proxy intercepts DNS even to CoreDNS.
+      # Re-resolve from `kubectl -n jarvis get svc` if these Services are recreated.
+      hostAliases:
+        - ip: 10.43.159.41
+          hostnames: [postgres, postgres.jarvis.svc.cluster.local]
+        - ip: 10.43.99.133
+          hostnames: [hermes-core, hermes-core.jarvis.svc.cluster.local]
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -24,7 +31,7 @@ spec:
         runAsGroup: 1000
       containers:
         - name: server
-          image: jarvis-server:0.3.0-m31-hermes-mcp17
+          image: jarvis-server:0.3.0-m31-fix-20260920-r6
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
@@ -43,6 +50,10 @@ spec:
               value: "1"
             - name: CORE_MODEL
               value: deepseek-flash
+            - name: CASAOS_SESSION_FILE
+              value: /var/lib/jarvis-casaos/casaos-session.json
+            - name: CASAOS_PUBLIC_URL
+              value: http://100.77.157.73
             - name: HOME_ASSISTANT_URL
               value: http://100.77.157.73:8123
             - name: IMMICH_URL
@@ -83,6 +94,8 @@ spec:
             failureThreshold: 30
             periodSeconds: 5
           volumeMounts:
+            - name: casaos-session
+              mountPath: /var/lib/jarvis-casaos
             - name: host
               mountPath: /host
               readOnly: true
@@ -90,6 +103,10 @@ spec:
               mountPath: /config
               readOnly: true
       volumes:
+        - name: casaos-session
+          hostPath:
+            path: /home/root2023/Codes/Projects/Jarvis/.local/m3-production-casaos
+            type: Directory
         - name: host
           hostPath:
             path: /

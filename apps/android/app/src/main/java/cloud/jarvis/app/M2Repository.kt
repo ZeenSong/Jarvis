@@ -46,6 +46,12 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     private var refreshAgain = false
     private var pending: JsonObject? = null
     private fun task(block: suspend () -> Unit) { scope.launch { runCatching { block() }.onFailure { error.value = it.message } } }
+    fun reset() {
+        viewGeneration++; selected = null; pendingWorkspaceId = null; runId = null; pending = null
+        conversations.value = emptyList(); conversation.value = null; hierarchy.value = null
+        view.value = null; semanticView.value = null; resources.value = emptyMap(); applications.value = null
+        workspaces.value = emptyList(); workspace.value = null; toolStates.value = emptyMap(); draft.value = ""; sending.value = false
+    }
     suspend fun restore(s: Snapshot) {
         val value = Json.parseToJsonElement(s.json)
         when(s.key) {
@@ -80,7 +86,27 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     }
     private suspend fun loadConversation(id: String) { val result = gateway.request("conversation.get", buildJsonObject { put("conversation_id",id) }).jsonObject; if(id == selected) { conversation.value = result; save("m2-conversation",result) } }
     fun selectConversation(id: String?) { selected = id; conversation.value = null; if(id != null) task { loadConversation(id) } }
-    fun openWorkspace(workspaceId: String? = null) { if (workspaceId != null) pendingWorkspaceId = workspaceId; selected?.let { id -> task { workspaces.value = gateway.request("workspace.list", buildJsonObject { put("conversation_id", id) }).jsonArray.map { it.jsonObject }; val target = pendingWorkspaceId ?: workspaces.value.firstOrNull()?.str("id"); workspace.value = target?.let { gateway.request("workspace.get", buildJsonObject { put("workspace_id", it) }).jsonObject } } } }
+    fun openWorkspace(workspaceId: String? = null) {
+        if (workspaceId != null) pendingWorkspaceId = workspaceId
+        selected?.let { id -> task {
+            val list = gateway.request("workspace.list", buildJsonObject { put("conversation_id", id) }).jsonArray.map { it.jsonObject }
+            if (selected != id) return@task
+            workspaces.value = list
+            val target = pendingWorkspaceId ?: list.firstOrNull()?.str("id")
+            val result = target?.let { gateway.request("workspace.get", buildJsonObject { put("workspace_id", it) }).jsonObject }
+            if (selected != id) return@task
+            workspace.value = result
+            val native = result?.get("artifacts")?.jsonArray?.map { it.jsonObject }?.firstOrNull { it.str("type") == "native" }
+            if (native != null) {
+                val spec = Json.parseToJsonElement(native.str("source")).jsonObject
+                viewGeneration++
+                semanticView.value = null
+                view.value = spec
+                save("m3-semantic-view", JsonNull); save("m2-view", spec)
+                loadResources(spec)
+            }
+        } }
+    }
     fun createWorkspace() { selected?.let { id -> task { workspace.value = gateway.request("workspace.create", buildJsonObject { put("conversation_id", id); put("type", "native"); put("title", "Jarvis 工作区") }).jsonObject; openWorkspace() } } }
     fun send(text: String) { if(text.isBlank() || sending.value) return; sending.value = true; task {
         try {
@@ -146,11 +172,11 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
                     })))
                 }
             }
-            "conversation.tool.started", "conversation.tool.completed" -> {
+            "conversation.tool.started", "conversation.tool.completed", "conversation.tool.failed" -> {
                 val p = value.jsonObject
                 val conversationId = p["conversation_id"]?.jsonPrimitive?.contentOrNull ?: return
                 val callId = p["tool_call_id"]?.jsonPrimitive?.contentOrNull ?: return
-                val status = if (topic.endsWith("started")) "running" else "completed"
+                val status = if (topic.endsWith("started")) "running" else if (topic.endsWith("failed")) "failed" else "completed"
                 toolStates.value = toolStates.value + (conversationId to ((toolStates.value[conversationId] ?: emptyMap()) + (callId to (p["capability"]?.jsonPrimitive?.contentOrNull ?: "tool") + "|" + status)))
             }
             "agent.run.updated", "agent.run.created" -> task { refresh() }

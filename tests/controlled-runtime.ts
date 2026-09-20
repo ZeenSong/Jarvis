@@ -69,6 +69,7 @@ export async function seedControlRuns(
       ctx.m2.manager.create(c, { agent_id: "ops-agent", goal }, auth.device_id),
     );
   return {
+    owner: auth.device_id,
     input: (await create("输入验收任务")).id,
     cancel: (await create("取消验收任务")).id,
   };

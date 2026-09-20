@@ -60,11 +60,11 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     fun selectPage(value: String) { page = value; gateway.subscribe(foreground && value in listOf("home", "server")) }
     fun pair(server: String, code: String) { scope.launch {
         error.value = null
-        runCatching { val auth = gateway.pair(server.trim(), code.trim()); credentials.save(auth); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
+        runCatching { val auth = gateway.pair(server.trim(), code.trim()); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
     } }
     fun login(server: String, username: String, password: String) { scope.launch {
         error.value = null
-        runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
+        runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
     } }
     private suspend fun save(key: String, value: JsonElement) { val now = System.currentTimeMillis(); cache.put(Snapshot(key, value.toString(), now)); savedAt.value = now }
     private fun onEvent(topic: String, value: JsonElement) {

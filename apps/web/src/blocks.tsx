@@ -23,6 +23,7 @@ import {
   type Resource,
 } from "../../../packages/ui-protocol/src/index";
 export const labels: Record<string, string> = {
+  streaming: "回复中",
   queued: "排队中",
   starting: "启动中",
   running: "运行中",

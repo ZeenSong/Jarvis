@@ -43,15 +43,17 @@ export class HermesRuntime implements AgentRuntime {
         delta: async (text: string) => this.push(run, { type: "agent.message.delta", payload: { text } }),
         report: async (usage: { provider: string; model: string; input_tokens: number; output_tokens: number; cached_input_tokens: number }) => this.push(run, { type: "agent.usage.updated", payload: usage }),
       };
+      let summary = "";
       if (!this.bridge) {
         const answer = await this.client.complete(messages, [], completeOptions);
         if (answer.calls.length) throw Error("hermes_returned_unhandled_tool_calls");
+        summary = answer.content;
       } else {
         // Kept as a test/embedding adapter. Production M3.1 registers Hermes
         // without this bridge, so capability execution happens through MCP.
         for (let round = 0; round < 8; round++) {
           const answer = await this.client.complete(messages, this.bridge.tools, completeOptions);
-          if (!answer.calls.length) break;
+          if (!answer.calls.length) { summary = answer.content; break; }
           for (const call of answer.calls) {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(call.function.arguments || "{}"); } catch { throw Error("hermes_tool_arguments_invalid"); }
@@ -69,7 +71,8 @@ export class HermesRuntime implements AgentRuntime {
           if (round === 7) throw Error("hermes_tool_round_limit");
         }
       }
-      if (!run.abort.signal.aborted) this.push(run, { type: "agent.run.completed", payload: { runtime: "hermes" } });
+      if (!summary.trim()) throw Error("hermes_empty_response");
+      if (!run.abort.signal.aborted) this.push(run, { type: "agent.run.completed", payload: { runtime: "hermes", summary } });
     } catch (error) {
       if (!run.abort.signal.aborted) this.push(run, { type: "agent.run.failed", payload: { error: error instanceof Error ? error.message : "hermes_failed" } });
     } finally {

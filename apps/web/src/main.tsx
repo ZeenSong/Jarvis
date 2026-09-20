@@ -11,7 +11,7 @@ import type {
 import { viewSchema } from "../../../packages/ui-protocol/src/index";
 import "./style.css";
 import "./product.css";
-import { ProductHome, SpaceCards, Empty, ApplicationList } from "./product";
+import { ProductHome, SpaceCards, Empty, ApplicationList, HermesConsole } from "./product";
 import { WorkspacePanel } from "./workspace-panel";
 import { DynamicView, webRenderer } from "./dynamic-v2";
 import { NavigationIcon } from "./icons";
@@ -24,20 +24,18 @@ const nav = [
   ["apps", "应用"],
   ["tasks", "任务"],
   ["jarvis", "Jarvis"],
+  ["agents", "Hermes"],
   ["system", "系统"],
 ];
 function restoredNavigation() {
   try {
     const path = location.pathname.split("/").filter(Boolean);
-    if (path[0] === "tasks" && /^[a-f0-9-]{36}$/.test(path[1] ?? "")) return { page: "run", runId: path[1], selected: undefined };
-    if (nav.some(([key]) => key === path[0])) return { page: path[0], runId: undefined, selected: undefined };
-    const value = JSON.parse(
-      sessionStorage.getItem("jarvis-navigation") ?? "{}",
-    );
-    const uuid = (v: unknown) =>
-      typeof v === "string" && /^[a-f0-9-]{36}$/.test(v) ? v : undefined;
+    const value = JSON.parse(sessionStorage.getItem("jarvis-navigation") ?? "{}");
+    const uuid = (v: unknown) => typeof v === "string" && /^[a-f0-9-]{36}$/.test(v) ? v : undefined;
+    if (path[0] === "tasks" && uuid(path[1])) return { page: "run", runId: path[1], selected: uuid(value.selected) };
+    if (nav.some(([key]) => key === path[0]) || path[0] === "workspace") return { page: path[0], runId: undefined, selected: uuid(value.selected) };
     return {
-      page: [...nav.map((n) => n[0]), "run"].includes(value.page)
+      page: [...nav.map((n) => n[0]), "run", "workspace"].includes(value.page)
         ? value.page
         : "home",
       selected: uuid(value.selected),
@@ -428,7 +426,7 @@ function App() {
                 <button
                   className={c.id === selected ? "selected" : ""}
                   key={c.id}
-                  onClick={() => { setWorkspaceTarget(undefined); setSelected(c.id); }}
+                  onClick={() => { setWorkspaceTarget(undefined); if (selected !== c.id) setConversation(undefined); setSelected(c.id); }}
                 >
                   {c.title}
                 </button>
@@ -513,6 +511,7 @@ function App() {
               <h2>◈ Jarvis</h2>
               <p>对话、委派与结果汇总</p>
             </section>
+            <HermesConsole />
             <h2>领域智能体</h2>
             <div className="blocks">
               {agents?.definitions

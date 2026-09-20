@@ -5,6 +5,14 @@ export function Orb({ small = false }: { small?: boolean }) {
   return <span aria-hidden="true" className={`jarvis-orb ${small ? "small" : ""}`} />;
 }
 
+export function HermesConsole() {
+  return <section className="product-panel">
+    <div className="section-heading"><h2>Hermes Agent</h2><a href="http://127.0.0.1:9119" target="_blank" rel="noopener noreferrer">打开 Hermes 官方控制台 ↗</a></div>
+    <p className="muted">会话、模型、技能与 MCP 使用 Hermes 原生界面管理。控制台通过 SSH 隧道访问。</p>
+    <details><summary>SSH 访问方式</summary><p>先在服务器的 Jarvis 项目目录运行：</p><pre>kubectl --kubeconfig .local/m2.kubeconfig -n jarvis port-forward --address=127.0.0.1 deployment/hermes-core 9119:9119</pre><p>然后在你自己的电脑运行：</p><pre>ssh -N -L 9119:127.0.0.1:9119 root2023@100.77.157.73</pre><p>保持两个终端运行，再点击上方入口。</p></details>
+  </section>;
+}
+
 export function ProductHome({ system, runs, conversations, navigate, ask, applications, openApp, problem }: {
   applications?: any; openApp?: (id: string) => void; problem?: boolean;
   system: any; runs: any[]; conversations: any[]; navigate: (page: string, id?: string) => void; ask: (prompt: string) => void;
@@ -32,6 +40,7 @@ export function ProductHome({ system, runs, conversations, navigate, ask, applic
     <div className="home-bottom"><section className="product-panel"><div className="section-heading"><h2>当前任务</h2><button className="quiet" onClick={() => navigate("tasks")}>查看全部 →</button></div>
       {running.length ? running.slice(0, 3).map((r) => <button className="run-row" key={r.id} onClick={() => navigate("run", r.id)}><span>{r.goal}</span><small>{labels[r.status]}</small></button>) : <Empty title="现在没有进行中的任务" text="有想做的事，随时告诉 Jarvis。" />}
     </section><section className="product-panel"><h2>最近活动</h2>{conversations.length ? conversations.slice(0, 4).map((c) => <button className="activity-row" key={c.id} onClick={() => navigate("jarvis", c.id)}><span className="activity-dot" /><span>{c.title}</span><span>↗</span></button>) : <Empty title="从一次对话开始" text="你的对话与任务进展会汇集在这里。" />}</section></div>
+    <HermesConsole />
     <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} ask={ask} openApp={openApp} /></section>
   </div>;
 }

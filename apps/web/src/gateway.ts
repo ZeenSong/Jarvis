@@ -28,7 +28,7 @@ export class Gateway extends EventTarget {
   resources = new Map<string, Resource>();
   async open(restart = false) {
     if (restart) this.closed = false;
-    if (this.socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(this.socket.readyState)) return;
+    if (this.socket && (this.socket.readyState === WebSocket.CONNECTING || this.socket.readyState === WebSocket.OPEN)) return;
     if (this.closed) return;
     this.dispatchEvent(new CustomEvent("connection", { detail: "连接中" }));
     try {

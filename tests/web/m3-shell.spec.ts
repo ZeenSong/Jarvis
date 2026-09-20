@@ -66,15 +66,15 @@ test("personal cloud home, navigation, command handoff and semantic workspace", 
   await expect(page.locator(".metric-tile").first().locator("strong")).toContainText("%");
   await page.screenshot({ path: ".local/evidence/m3-web-home-light.png", fullPage: true });
   await page.getByRole("button", { name: "切换深色主题" }).click();
-  await page.locator(".space-photos").click();
-  await expect(page.getByRole("dialog")).toContainText("不是你的照片");
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".space-photos")).toBeFocused();
-  await page.locator(".space-family").click();
-  await expect(page.getByRole("dialog")).toContainText("Home Assistant");
-  await page.getByRole("button", { name: "查看已安装应用" }).click();
-  await expect(page.locator('nav button[aria-current="page"]')).toHaveText("应用");
-  await page.locator("nav").getByRole("button", { name: "首页", exact: true }).click();
+  await page.context().route(/http:\/\/127\.0\.0\.1:(2283|8123)\//, route => route.fulfill({body:"Domain application test fixture"}));
+  for (const [selector, url] of [[".space-photos", "http://127.0.0.1:2283/"], [".space-family", "http://127.0.0.1:8123/"]]) {
+    const popupPromise = page.waitForEvent("popup");
+    await page.locator(selector).click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL(url);
+    await expect(popup.locator("body")).toContainText("Domain application test fixture");
+    await popup.close();
+  }
   await page.getByLabel("问 Jarvis", { exact: true }).fill("CPU 现在多少？");
   await page.getByRole("button", { name: "发送给 Jarvis", exact: true }).click();
   await expect(page.getByLabel("消息", { exact: true })).toHaveValue("CPU 现在多少？");
