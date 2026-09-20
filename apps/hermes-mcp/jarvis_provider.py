@@ -11,6 +11,8 @@ import json
 import os
 import sys
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from typing import Literal
 
 from mcp.server import MCPServer
 
@@ -37,6 +39,8 @@ def _call(tool: str, context_token: str, **arguments: object) -> str:
     try:
         with urlopen(request, timeout=30) as response:
             return json.dumps(json.load(response), ensure_ascii=False)
+    except HTTPError as exc:
+        return exc.read(16000).decode("utf-8", errors="replace")
     except Exception as exc:
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
@@ -83,9 +87,21 @@ def agent_run_status(context_token: str, run_id: str) -> str:
 
 
 @server.tool()
-def ui_view_show(context_token: str, intent: str, resources: list[str]) -> str:
-    """展示一个由 Jarvis 预设定义的安全仪表盘视图。"""
+def ui_view_show(context_token: str, intent: Literal["system_overview", "network_overview", "usage_analysis", "agent_run_analysis"], resources: list[str] = []) -> str:
+    """展示持久化图表。服务器趋势用 system_overview 和 []；任务分析用 agent_run_analysis 和 ["agent-run/<run_id>"]。"""
     return _call("ui_view_show", context_token, intent=intent, resources=resources)
+
+
+@server.tool()
+def task_create(context_token: str, goal: str, idempotency_key: str) -> str:
+    """创建可追踪的只读 Ops 持久任务。每个新请求用唯一 idempotency_key；网络重试复用同一 key。返回 task_id/run_id。"""
+    return _call("task_create", context_token, goal=goal, idempotency_key=idempotency_key)
+
+
+@server.tool()
+def task_cancel(context_token: str, run_id: str) -> str:
+    """仅在用户要求停止任务时取消当前用户的指定任务。"""
+    return _call("task_cancel", context_token, run_id=run_id)
 
 
 async def main() -> None:

@@ -97,9 +97,9 @@ export class AgentManager {
       ])
     ).rows[0];
     if (!definition) throw Error("agent_not_found");
-    if (p.conversation_id && !(await c.query("SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [p.conversation_id, device, userId])).rowCount)
+    if (p.conversation_id && !(await c.query("SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.conversation_id, device, userId])).rowCount)
       throw Error("not_found");
-    if (p.workspace_id && !(await c.query("SELECT 1 FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [p.workspace_id, device, userId])).rowCount)
+    if (p.workspace_id && !(await c.query("SELECT 1 FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.workspace_id, device, userId])).rowCount)
       throw Error("not_found");
     let depth = definition.tier === "core" ? 0 : 1;
     if (p.parent_run_id) {
@@ -149,7 +149,7 @@ export class AgentManager {
   async get(id: string, owner?: string) {
     const userId = owner ? await ownerUserId(this.db, owner) : null;
     const run = (
-      await this.db.query(owner ? "SELECT * FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3 OR ($3 IS NULL AND requested_by_user_id IS NULL))" : "SELECT * FROM agent_runs WHERE id=$1", owner ? [id, owner, userId] : [id])
+      await this.db.query(owner ? "SELECT * FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3)" : "SELECT * FROM agent_runs WHERE id=$1", owner ? [id, owner, userId] : [id])
     ).rows[0];
     if (!run) throw Error("not_found");
     return {
@@ -379,7 +379,7 @@ export class AgentManager {
     const userId = owner ? await ownerUserId(this.db, owner) : null;
     const cancelled = await transaction(this.db, async (c) => {
       const root = (
-        await c.query(owner ? "SELECT * FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3 OR ($3 IS NULL AND requested_by_user_id IS NULL)) FOR UPDATE" : "SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE", owner ? [id, owner, userId] : [id])
+        await c.query(owner ? "SELECT * FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3) FOR UPDATE" : "SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE", owner ? [id, owner, userId] : [id])
       ).rows[0];
       if (!root) throw Error("not_found");
       const rows = (

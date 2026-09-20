@@ -25,6 +25,8 @@ export async function migrate(db: Database) {
       CREATE TABLE IF NOT EXISTS integration_credentials (id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, provider TEXT NOT NULL, label TEXT NOT NULL, secret_ciphertext TEXT NOT NULL, metadata JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), revoked_at TIMESTAMPTZ);
       CREATE INDEX IF NOT EXISTS integration_credentials_user ON integration_credentials(user_id,provider,updated_at DESC);
       CREATE TABLE IF NOT EXISTS approvals (id UUID PRIMARY KEY, owner_device_id TEXT NOT NULL REFERENCES devices(id), owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL, run_id UUID, capability TEXT NOT NULL, input JSONB NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','expired')), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), resolved_at TIMESTAMPTZ);
+      ALTER TABLE approvals ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ;
+      ALTER TABLE approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NOT NULL DEFAULT (now()+interval '15 minutes');
       ALTER TABLE approvals ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
       UPDATE approvals a SET owner_user_id=d.user_id FROM devices d WHERE a.owner_device_id=d.id AND a.owner_user_id IS NULL AND d.user_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS approvals_owner_status ON approvals(owner_device_id,status,created_at DESC);

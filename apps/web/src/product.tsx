@@ -5,8 +5,8 @@ export function Orb({ small = false }: { small?: boolean }) {
   return <span aria-hidden="true" className={`jarvis-orb ${small ? "small" : ""}`} />;
 }
 
-export function ProductHome({ system, runs, conversations, navigate, ask, applications }: {
-  applications?: any;
+export function ProductHome({ system, runs, conversations, navigate, ask, applications, openApp, problem }: {
+  applications?: any; openApp?: (id: string) => void; problem?: boolean;
   system: any; runs: any[]; conversations: any[]; navigate: (page: string, id?: string) => void; ask: (prompt: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -15,7 +15,7 @@ export function ProductHome({ system, runs, conversations, navigate, ask, applic
   return <div className="product-home">
     <section className="home-hero">
       <div><p className="eyebrow">YOUR PERSONAL AI CLOUD</p><h1>让科技，回归生活。</h1>
-        <p className="muted">{system ? system.jarvis?.server_status === "healthy" ? "你的私人云，一切正常" : "你的私人云有状态需要关注" : "正在连接你的私人云…"}{system && ` · ${running.length} 个任务进行中`}</p>
+        <p className="muted">{system ? system.jarvis?.server_status === "healthy" && !problem && applications?.status === "ready" ? "服务器在线，应用状态已同步" : "你的私人云有状态需要关注" : "正在连接你的私人云…"}{system && ` · ${running.length} 个任务进行中`}</p>
       </div><div className="hero-signature" aria-hidden="true">More Life<br /><span>Less Work</span></div>
       <form className="command-bar" onSubmit={(e) => { e.preventDefault(); if (prompt.trim()) ask(prompt); }}>
         <Orb small /><input aria-label="问 Jarvis" placeholder="问 Jarvis，或描述你想做的事…" value={prompt} onChange={(e) => setPrompt(e.target.value)} /><button aria-label="发送给 Jarvis" disabled={!prompt.trim()}>↑</button>
@@ -28,15 +28,15 @@ export function ProductHome({ system, runs, conversations, navigate, ask, applic
       <span className="meter"><span style={{ width: `${typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0}%` }} /></span>
     </button>)}<button className="metric-tile status-tile" onClick={() => navigate("tasks")}><span>Jarvis 正在工作</span><strong>{running.length}<small> 个任务</small></strong><span className="muted">查看进展与待处理事项 →</span></button></section>
     <div className="section-heading"><h2>我的空间</h2><button className="quiet" onClick={() => navigate("spaces")}>全部空间 ↗</button></div>
-    <SpaceCards navigate={navigate} />
+    <SpaceCards navigate={navigate} openApp={openApp} />
     <div className="home-bottom"><section className="product-panel"><div className="section-heading"><h2>当前任务</h2><button className="quiet" onClick={() => navigate("tasks")}>查看全部 →</button></div>
       {running.length ? running.slice(0, 3).map((r) => <button className="run-row" key={r.id} onClick={() => navigate("run", r.id)}><span>{r.goal}</span><small>{labels[r.status]}</small></button>) : <Empty title="现在没有进行中的任务" text="有想做的事，随时告诉 Jarvis。" />}
     </section><section className="product-panel"><h2>最近活动</h2>{conversations.length ? conversations.slice(0, 4).map((c) => <button className="activity-row" key={c.id} onClick={() => navigate("jarvis", c.id)}><span className="activity-dot" /><span>{c.title}</span><span>↗</span></button>) : <Empty title="从一次对话开始" text="你的对话与任务进展会汇集在这里。" />}</section></div>
-    <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} ask={ask} /></section>
+    <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} ask={ask} openApp={openApp} /></section>
   </div>;
 }
 type Application = { id: string; name: string; status: string; description?: string; service_count?: number | null };
-export function ApplicationList({ value, openApp, ask }: { value?: { status: string; apps: Application[] }; openApp?: (appId: string) => void; ask?: (prompt: string) => void }) {
+export function ApplicationList({ value, openApp, ask }: { value?: { status: string; apps: Application[]; launchers?: { id: string; name: string; url: string }[] }; openApp?: (appId: string) => void; ask?: (prompt: string) => void }) {
   const [selected, setSelected] = useState<string>();
   const dialog = useRef<HTMLDialogElement>(null);
   const app = value?.apps.find((item) => item.id === selected);
@@ -52,7 +52,7 @@ export function ApplicationList({ value, openApp, ask }: { value?: { status: str
       unavailable: ["暂时无法读取应用", "请检查 CasaOS 连接，稍后刷新重试。"],
     };
     const [title, text] = value ? states[value.status] ?? states.unavailable : ["正在读取应用", "正在连接你的私人云应用服务…"];
-    return <div role="status"><Empty title={title} text={text} /></div>;
+    return <div role="status"><Empty title={title} text={text} /><p className="muted">应用列表连接异常不会影响你直接使用原应用。CasaOS 登录与 Jarvis 的服务端集成会话独立。</p><div className="toolbar">{value?.launchers?.map((item) => <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer">打开 {item.name} ↗</a>)}</div></div>;
   }
   if (!value.apps.length) return <Empty title="还没有安装应用" text="CasaOS 已连接，当前没有已安装应用。" />;
   return <><div className="application-grid">{value.apps.map((app) => <button className="application-card" key={app.id} onClick={() => setSelected(app.id)} aria-label={`查看 ${app.name} 详情`}>
@@ -71,7 +71,7 @@ export function ApplicationList({ value, openApp, ask }: { value?: { status: str
 export function Empty({ title, text }: { title: string; text: string }) {
   return <div className="product-empty"><span aria-hidden="true">◇</span><h3>{title}</h3><p>{text}</p></div>;
 }
-export function SpaceCards({ navigate }: { navigate: (page: string) => void }) {
+export function SpaceCards({ navigate, openApp }: { navigate: (page: string) => void; openApp?: (id: string) => void }) {
   const [selected, setSelected] = useState<string>();
   const dialog = useRef<HTMLDialogElement>(null);
   const descriptions: Record<string, string> = {
@@ -83,7 +83,7 @@ export function SpaceCards({ navigate }: { navigate: (page: string) => void }) {
   };
   useEffect(() => { if (selected) dialog.current?.showModal(); }, [selected]);
   return <><div className="space-grid">{[["photos", "照片", "那些值得珍藏的时刻"], ["files", "文件", "你的资料，触手可及"], ["knowledge", "知识", "让想法持续生长"], ["family", "家庭", "设备与生活"], ["media", "媒体", "你的影音空间"], ["development", "开发", "把想法变成作品"]].map(([key, title, text]) =>
-    <button key={key} className={`space-card space-${key}`} onClick={() => key === "development" ? navigate("tasks") : setSelected(key)}><span className="space-art" aria-hidden="true" /><strong>{title}</strong><small>{text}</small><span className="space-arrow">↗</span></button>)}</div>
+    <button key={key} className={`space-card space-${key}`} onClick={() => openApp && (key === "photos" || key === "family") ? openApp(key === "photos" ? "immich" : "home-assistant") : key === "development" ? navigate("tasks") : setSelected(key)}><span className="space-art" aria-hidden="true" /><strong>{title}</strong><small>{key === "photos" ? "在 Immich 中打开" : key === "family" ? "在 Home Assistant 中打开" : key === "development" ? "查看任务" : "尚未接入"}</small><span className="space-arrow">↗</span></button>)}</div>
     <dialog ref={dialog} className="application-detail" aria-labelledby="space-detail-title" onClose={() => setSelected(undefined)}>
       <header><h2 id="space-detail-title">空间接入进度</h2><button aria-label="关闭空间详情" onClick={() => dialog.current?.close()}>×</button></header>
       <p>{selected && descriptions[selected]}</p>

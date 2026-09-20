@@ -36,13 +36,13 @@ export class WorkspaceStore {
     return (await this.db.query(`
       SELECT w.*, COALESCE(json_agg(a ORDER BY a.updated_at DESC) FILTER (WHERE a.id IS NOT NULL),'[]') AS artifacts
       FROM workspace_records w LEFT JOIN workspace_artifacts a ON a.workspace_id=w.id
-      WHERE (w.owner_device_id=$1 OR w.owner_user_id=$2 OR ($2 IS NULL AND w.owner_user_id IS NULL))${filter} GROUP BY w.id ORDER BY w.updated_at DESC LIMIT 100
+      WHERE (w.owner_device_id=$1 OR w.owner_user_id=$2)${filter} GROUP BY w.id ORDER BY w.updated_at DESC LIMIT 100
     `, values)).rows;
   }
 
   async get(owner: string, id: string) {
     const userId = await ownerUserId(this.db, owner);
-    const workspace = (await this.db.query("SELECT * FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [z.uuid().parse(id), owner, userId ?? null])).rows[0];
+    const workspace = (await this.db.query("SELECT * FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [z.uuid().parse(id), owner, userId ?? null])).rows[0];
     if (!workspace) throw Error("not_found");
     const [artifacts, bindings] = await Promise.all([
       this.db.query("SELECT * FROM workspace_artifacts WHERE workspace_id=$1 ORDER BY updated_at DESC", [workspace.id]),
@@ -54,10 +54,10 @@ export class WorkspaceStore {
   async create(owner: string, input: unknown) {
     const p = workspaceCreateSchema.parse(input);
     const userId = await ownerUserId(this.db, owner);
-    const conversation = (await this.db.query("SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [p.conversation_id, owner, userId ?? null])).rowCount;
+    const conversation = (await this.db.query("SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.conversation_id, owner, userId ?? null])).rowCount;
     if (!conversation) throw Error("not_found");
     if (p.task_id) {
-      const task = (await this.db.query("SELECT conversation_id FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3 OR ($3 IS NULL AND requested_by_user_id IS NULL))", [p.task_id, owner, userId ?? null])).rows[0];
+      const task = (await this.db.query("SELECT conversation_id FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3)", [p.task_id, owner, userId ?? null])).rows[0];
       if (!task || (task.conversation_id && task.conversation_id !== p.conversation_id)) throw Error("not_found");
     }
     const id = randomUUID();
@@ -71,7 +71,7 @@ export class WorkspaceStore {
     const p = artifactUpsertSchema.parse(input);
     if (p.type === "html" || p.type === "react") { validateArtifactSource(p.source); if (p.compiled) validateArtifactSource(p.compiled); }
     const userId = await ownerUserId(this.db, owner);
-    const workspace = (await this.db.query("SELECT id,revision FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [p.workspace_id, owner, userId ?? null])).rows[0];
+    const workspace = (await this.db.query("SELECT id,revision FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.workspace_id, owner, userId ?? null])).rows[0];
     if (!workspace) throw Error("not_found");
     const id = p.artifact_id ?? randomUUID();
     if (p.artifact_id) {
@@ -90,7 +90,7 @@ export class WorkspaceStore {
   async bind(owner: string, workspaceId: string, resource: string, revision: number, metadata: Record<string, unknown> = {}) {
     z.uuid().parse(workspaceId); z.string().trim().min(1).max(300).parse(resource); z.number().int().min(0).parse(revision);
     const userId = await ownerUserId(this.db, owner);
-    const ok = (await this.db.query("SELECT 1 FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))", [workspaceId, owner, userId ?? null])).rowCount;
+    const ok = (await this.db.query("SELECT 1 FROM workspace_records WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [workspaceId, owner, userId ?? null])).rowCount;
     if (!ok) throw Error("not_found");
     return (await this.db.query(`INSERT INTO workspace_bindings(workspace_id,resource,revision,metadata) VALUES($1,$2,$3,$4)
       ON CONFLICT(workspace_id,resource) DO UPDATE SET revision=excluded.revision,metadata=excluded.metadata RETURNING *`, [workspaceId, resource, revision, JSON.stringify(metadata)])).rows[0];

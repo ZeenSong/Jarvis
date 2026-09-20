@@ -81,6 +81,7 @@ export const m2Events = [
   "conversation.message.delta",
   "conversation.tool.started",
   "conversation.tool.completed",
+  "conversation.tool.failed",
   "conversation.status",
   "task.created",
   "task.started",
@@ -176,7 +177,7 @@ export class M2 {
   }
   async definitions(owner?: string) {
     const userId = owner ? await ownerUserId(this.db, owner) : undefined;
-    const ownerFilter = owner ? " WHERE (requested_by=$1 OR requested_by_user_id=$2 OR ($2 IS NULL AND requested_by_user_id IS NULL))" : "";
+    const ownerFilter = owner ? " WHERE (requested_by=$1 OR requested_by_user_id=$2)" : "";
     const ownerValues = owner ? [owner, userId ?? null] : [];
     const definitions = (
       await this.db.query("SELECT * FROM agent_definitions WHERE id <> 'coding-agent' ORDER BY tier,id")
@@ -186,7 +187,7 @@ export class M2 {
     return {
       // Codex is exposed through Node Bridge capabilities, not as a user-facing Agent.
       definitions,
-      instances: (await this.db.query(owner ? "SELECT i.* FROM agent_instances i JOIN agent_runs r ON r.agent_instance_id=i.id WHERE (r.requested_by=$1 OR r.requested_by_user_id=$2 OR ($2 IS NULL AND r.requested_by_user_id IS NULL)) ORDER BY i.started_at DESC LIMIT 100" : "SELECT * FROM agent_instances ORDER BY started_at DESC LIMIT 100", ownerValues)).rows,
+      instances: (await this.db.query(owner ? "SELECT i.* FROM agent_instances i JOIN agent_runs r ON r.agent_instance_id=i.id WHERE (r.requested_by=$1 OR r.requested_by_user_id=$2) ORDER BY i.started_at DESC LIMIT 100" : "SELECT * FROM agent_instances ORDER BY started_at DESC LIMIT 100", ownerValues)).rows,
       runs: (
         await this.db.query(
           `SELECT * FROM agent_runs${ownerFilter} ORDER BY created_at DESC LIMIT 100`,
@@ -285,7 +286,7 @@ export class M2 {
   }
   async resource(input: string, owner?: string) {
     const name = resourceName.parse(input);
-    const ownerScoped = owner && (name.startsWith("agent-run/") || name.startsWith("conversation/"));
+    const ownerScoped = owner && !name.startsWith("system/");
     const queue = ownerScoped ? `${owner}:${name}` : name;
     return this.serialize(queue, async () => {
       const data = await this.snapshot(name, owner);
@@ -446,13 +447,20 @@ export class M2 {
         }).strict().parse(p);
         if (!this.invokeNode) throw Error("node_bridge_unavailable");
         const user = await ownerUserId(this.db, device);
-        const node = (await this.db.query("SELECT a.capabilities FROM agents a WHERE a.id=$1 AND a.status IS DISTINCT FROM 'offline' AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL))", [input.node_id, device, user ?? null])).rows[0];
+        const node = (await this.db.query("SELECT a.capabilities FROM agents a WHERE a.id=$1 AND a.status IS DISTINCT FROM 'offline' AND (a.owner_device_id=$2 OR a.owner_user_id=$3)", [input.node_id, device, user ?? null])).rows[0];
         if (!node) throw Error("node_not_found");
         const capabilities = Array.isArray(node.capabilities) ? node.capabilities : typeof node.capabilities === "string" ? (() => { try { const parsed = JSON.parse(node.capabilities); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })() : [];
         if (!capabilities.includes(input.capability)) throw Error("node_capability_unavailable");
         if (input.capability === "node.git.read" || input.capability === "node.codex.execute") {
           if (!input.approval_id) throw Error("approval_required");
-          const approved = (await this.db.query("SELECT 1 FROM approvals WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$4) AND status='approved' AND capability=$3", [input.approval_id, device, input.capability, user ?? null])).rowCount;
+          // JSONB equality binds the reviewed node and complete input, independent of key order.
+          // Atomic consume BEFORE dispatch: even a timeout cannot replay a side effect.
+          const approved = (await this.db.query(`UPDATE approvals SET consumed_at=now()
+            WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$4)
+            AND status='approved' AND capability=$3 AND consumed_at IS NULL AND expires_at>now()
+            AND input=$5::jsonb RETURNING id`,
+            [input.approval_id, device, input.capability, user ?? null,
+             JSON.stringify({ node_id: input.node_id, input: input.input })])).rowCount;
           if (!approved) throw Error("approval_required");
         }
         return this.invokeNode(device, input.node_id, input.capability, input.input);

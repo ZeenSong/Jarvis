@@ -27,13 +27,13 @@ export class AgentRegistry {
   ) {}
   async list(owner?: string) {
     const user = owner ? await ownerUserId(this.db, owner) : null;
-    return (await this.db.query(owner ? "SELECT * FROM agents WHERE owner_device_id=$1 OR owner_user_id=$2 OR ($2 IS NULL AND owner_user_id IS NULL) ORDER BY name" : "SELECT * FROM agents ORDER BY name", owner ? [owner, user] : [])).rows;
+    return (await this.db.query(owner ? "SELECT * FROM agents WHERE owner_device_id=$1 OR owner_user_id=$2 ORDER BY name" : "SELECT * FROM agents ORDER BY name", owner ? [owner, user] : [])).rows;
   }
   async get(id: string, owner?: string) {
     const user = owner ? await ownerUserId(this.db, owner) : null;
     return (
       await this.db.query(
-        owner ? "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1 AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL))" : "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1",
+        owner ? "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1 AND (a.owner_device_id=$2 OR a.owner_user_id=$3)" : "SELECT a.*,s.started_at AS session_start FROM agents a LEFT JOIN agent_sessions s ON s.agent_id=a.id AND s.ended_at IS NULL WHERE a.id=$1",
         owner ? [id, owner, user] : [id],
       )
     ).rows[0];
@@ -42,7 +42,7 @@ export class AgentRegistry {
     const user = owner ? await ownerUserId(this.db, owner) : null;
     return (
       await this.db.query(
-        owner ? "SELECT e.* FROM agent_events e JOIN agents a ON a.id=e.agent_id WHERE e.agent_id=$1 AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL)) ORDER BY e.created_at DESC,e.id DESC LIMIT 100" : "SELECT * FROM agent_events WHERE agent_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100",
+        owner ? "SELECT e.* FROM agent_events e JOIN agents a ON a.id=e.agent_id WHERE e.agent_id=$1 AND (a.owner_device_id=$2 OR a.owner_user_id=$3) ORDER BY e.created_at DESC,e.id DESC LIMIT 100" : "SELECT * FROM agent_events WHERE agent_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100",
         owner ? [id, owner, user] : [id],
       )
     ).rows;

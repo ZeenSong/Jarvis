@@ -78,7 +78,7 @@ private fun parseMarkdown(value: String): List<MarkdownBlock> {
         }
         append(value.substring(last))
     }
-    ClickableText(text, style = style, onClick = { offset -> text.getStringAnnotations("url", offset, offset).firstOrNull()?.let { uriHandler.openUri(it.item) } })
+    ClickableText(text, style = style.copy(color = MaterialTheme.colorScheme.onSurface), onClick = { offset -> text.getStringAnnotations("url", offset, offset).firstOrNull()?.let { uriHandler.openUri(it.item) } })
 }
 
 @Composable private fun MarkdownMessage(value: String) {

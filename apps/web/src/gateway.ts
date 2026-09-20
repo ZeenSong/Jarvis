@@ -3,6 +3,16 @@ import {
   type Resource,
 } from "../../../packages/ui-protocol/src/index";
 import { randomUUID } from "./uuid";
+let refreshing: Promise<boolean> | undefined;
+export async function ensureSession(): Promise<boolean> {
+  const response = await fetch("/api/v2/session", { credentials: "include" });
+  if (response.ok) return true;
+  if (response.status !== 401) throw Error("暂时无法验证登录状态");
+  if (!refreshing) refreshing = fetch("/api/v2/auth/refresh", { method: "POST", credentials: "include" })
+    .then((result) => { if (result.ok) return true; if (result.status === 401) return false; throw Error("登录续期暂时失败"); })
+    .finally(() => { refreshing = undefined; });
+  return refreshing;
+}
 export class Gateway extends EventTarget {
   socket?: WebSocket;
   private pending = new Map<
@@ -16,9 +26,18 @@ export class Gateway extends EventTarget {
   private retry = 0;
   private closed = false;
   resources = new Map<string, Resource>();
-  open() {
+  async open(restart = false) {
+    if (restart) this.closed = false;
+    if (this.socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(this.socket.readyState)) return;
     if (this.closed) return;
     this.dispatchEvent(new CustomEvent("connection", { detail: "连接中" }));
+    try {
+      if (!await ensureSession()) { this.dispatchEvent(new Event("auth-required")); return; }
+    } catch {
+      if (!this.closed) setTimeout(() => void this.open(), Math.min(30000, 1000 * 2 ** this.retry++));
+      return;
+    }
+    if (this.closed) return;
     const socket = (this.socket = new WebSocket(
       `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`,
     ));
@@ -36,7 +55,7 @@ export class Gateway extends EventTarget {
             clearTimeout(p.timer);
             this.pending.delete(m.reply_to);
             m.type === "error"
-              ? p.reject(Error(m.payload.error))
+              ? p.reject(Error(`${topicLabel(m.topic)}：${errorLabel(m.payload.error)}`))
               : p.resolve(m.payload);
           }
           return;
@@ -49,13 +68,14 @@ export class Gateway extends EventTarget {
         );
       }
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       for (const p of this.pending.values()) {
         clearTimeout(p.timer);
         p.reject(Error("连接中断，正在恢复"));
       }
       this.pending.clear();
       this.dispatchEvent(new CustomEvent("connection", { detail: "重新连接" }));
+      if (event.code === 4001) { this.closed = true; this.resources.clear(); this.dispatchEvent(new Event("auth-required")); return; }
       if (!this.closed)
         setTimeout(
           () => this.open(),
@@ -92,3 +112,6 @@ export class Gateway extends EventTarget {
     this.socket?.close();
   }
 }
+
+function topicLabel(topic: string) { return topic.startsWith("view.") ? "视图加载失败" : topic === "resource.get" ? "数据加载失败" : "请求失败"; }
+function errorLabel(code: string) { return ({ request_failed: "服务器暂时无法完成请求，请刷新重试", approval_required: "审批已失效、已使用或与本次操作不一致", validation_error: "请求格式不符合接口要求" } as Record<string,string>)[code] ?? code; }

@@ -26,12 +26,12 @@ export class ConversationService {
   async list(owner?: string) {
     if (!owner) return (await this.db.query("SELECT * FROM conversations ORDER BY updated_at DESC LIMIT 100")).rows;
     const userId = await ownerUserId(this.db, owner);
-    return (await this.db.query("SELECT * FROM conversations WHERE owner_device_id=$1 OR owner_user_id=$2 OR ($2 IS NULL AND owner_user_id IS NULL) ORDER BY updated_at DESC LIMIT 100", [owner, userId ?? null])).rows;
+    return (await this.db.query("SELECT * FROM conversations WHERE owner_device_id=$1 OR owner_user_id=$2 ORDER BY updated_at DESC LIMIT 100", [owner, userId ?? null])).rows;
   }
   async get(id: string, owner?: string) {
     const userId = owner ? await ownerUserId(this.db, owner) : undefined;
     const conversation = (
-      await this.db.query(owner ? "SELECT * FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL))" : "SELECT * FROM conversations WHERE id=$1", owner ? [id, owner, userId ?? null] : [id])
+      await this.db.query(owner ? "SELECT * FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)" : "SELECT * FROM conversations WHERE id=$1", owner ? [id, owner, userId ?? null] : [id])
     ).rows[0];
     if (!conversation) throw Error("not_found");
     return {
@@ -39,7 +39,7 @@ export class ConversationService {
       messages: (
         await this.db.query(
           owner
-            ? "SELECT * FROM conversation_messages WHERE conversation_id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL)) ORDER BY sequence"
+            ? "SELECT * FROM conversation_messages WHERE conversation_id=$1 AND (owner_device_id=$2 OR owner_user_id=$3) ORDER BY sequence"
             : "SELECT * FROM conversation_messages WHERE conversation_id=$1 ORDER BY sequence",
           owner ? [id, owner, userId ?? null] : [id],
         )
@@ -76,7 +76,7 @@ export class ConversationService {
       if (
         !(
           await c.query(
-            "SELECT id FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3 OR ($3 IS NULL AND owner_user_id IS NULL)) AND status='active' FOR UPDATE",
+            "SELECT id FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3) AND status='active' FOR UPDATE",
             [p.conversation_id, device, userId ?? null],
           )
         ).rowCount
@@ -197,6 +197,9 @@ export class ConversationService {
       });
       if (answer.calls.length) throw Error("hermes_returned_unhandled_tool_calls");
       await flush(true);
+      const output = (await this.db.query("SELECT content,workspace_id,view_id,run_id FROM conversation_messages WHERE id=$1", [job.id])).rows[0];
+      if (!output?.content?.trim() && !output?.workspace_id && !output?.view_id && !output?.run_id)
+        throw Error("hermes_empty_response");
       await this.db.query(
         "UPDATE conversation_messages SET status='completed',view_id=COALESCE($2,view_id) WHERE id=$1",
         [job.id, null],

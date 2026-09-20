@@ -15,7 +15,7 @@ async function refreshSession(path: string, session: any) {
       });
       if (!response.ok) throw new CasaOSError("unauthorized");
       const result = await response.json() as any;
-      const token = result.data;
+      const token = result.data?.token ?? result.data;
       if (!token?.access_token || !token?.refresh_token) throw new CasaOSError("unauthorized");
       const temp = `${path}.${randomUUID()}.pending`;
       await writeFile(temp, JSON.stringify({ base_url: session.base_url, username: session.username, token }), { mode: 0o600, flag: "wx" });
@@ -26,6 +26,11 @@ async function refreshSession(path: string, session: any) {
   await pending;
 }
 export async function installedApplications() {
+  const result = await readInstalledApplications();
+  const launchers = [["casaos", "CasaOS", process.env.CASAOS_PUBLIC_URL], ["immich", "Immich", process.env.IMMICH_URL], ["home-assistant", "Home Assistant", process.env.HOME_ASSISTANT_URL]].filter((entry) => entry[2] && /^https?:\/\//.test(entry[2])).map(([id,name,url]) => ({id,name,url}));
+  return { ...result, launchers };
+}
+async function readInstalledApplications() {
   const path = process.env.CASAOS_SESSION_FILE;
   if (!path) return { status: "not_configured", apps: [] };
   try {

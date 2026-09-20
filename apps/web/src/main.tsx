@@ -1,3 +1,4 @@
+import { MarkdownContent } from "./markdown";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { Gateway } from "./gateway";
@@ -25,64 +26,6 @@ const nav = [
   ["jarvis", "Jarvis"],
   ["system", "系统"],
 ];
-function MarkdownContent({ value }: { value: string }) {
-  const lines = value.split("\n");
-  const nodes: React.ReactNode[] = [];
-  const inline = (line: string): React.ReactNode[] => {
-    const result: React.ReactNode[] = [];
-    const token = /(`[^`\n]+`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_))/g;
-    let last = 0; let match: RegExpExecArray | null; let key = 0;
-    while ((match = token.exec(line))) {
-      if (match.index > last) result.push(line.slice(last, match.index));
-      if (match[0].startsWith("`")) result.push(<code key={key++}>{match[0].slice(1, -1)}</code>);
-      else if (match[3]) result.push(<a key={key++} href={match[3]} target="_blank" rel="noreferrer">{match[2]}</a>);
-      else if (match[4] || match[5]) result.push(<strong key={key++}>{match[4] ?? match[5]}</strong>);
-      else result.push(<em key={key++}>{match[6] ?? match[7]}</em>);
-      last = match.index + match[0].length;
-    }
-    if (last < line.length) result.push(line.slice(last));
-    return result;
-  };
-  const tableCells = (line: string) => line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.trim().startsWith("```")) {
-      const start = i++; const code: string[] = [];
-      while (i < lines.length && !lines[i].trim().startsWith("```")) code.push(lines[i++]);
-      if (i < lines.length) i++;
-      nodes.push(<pre key={`code-${start}`}><code>{code.join("\n")}</code></pre>);
-      continue;
-    }
-    if (/^\s*\|.*\|\s*$/.test(line)) {
-      const rows: string[][] = [];
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
-        const row = tableCells(lines[i++]);
-        if (!row.every((cell) => /^:?-{3,}:?$/.test(cell))) rows.push(row);
-      }
-      if (rows.length) nodes.push(<table key={`table-${i}`}><thead><tr>{rows[0].map((cell, j) => <th key={j}>{inline(cell)}</th>)}</tr></thead><tbody>{rows.slice(1).map((row, r) => <tr key={r}>{row.map((cell, j) => <td key={j}>{inline(cell)}</td>)}</tr>)}</tbody></table>);
-      continue;
-    }
-    if (!line.trim()) { nodes.push(<div className="markdown-break" key={`break-${i++}`} />); continue; }
-    const heading = line.match(/^(#{1,3})\s+(.+)/);
-    if (heading) { const Tag = (`h${heading[1].length}`) as "h1" | "h2" | "h3"; nodes.push(<Tag key={`heading-${i}`}>{inline(heading[2])}</Tag>); i++; continue; }
-    if (/^\s*>\s?/.test(line)) {
-      const quote: string[] = []; const start = i;
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
-      nodes.push(<blockquote key={`quote-${start}`}>{quote.map((part, j) => <p key={j}>{inline(part)}</p>)}</blockquote>); continue;
-    }
-    const list = line.match(/^\s*([-+*]|\d+[.)])\s+(.+)/);
-    if (list) {
-      const ordered = /^\d/.test(list[1]); const items: string[] = []; const start = i;
-      while (i < lines.length) { const item = lines[i].match(/^\s*([-+*]|\d+[.)])\s+(.+)/); if (!item || /^\d/.test(item[1]) !== ordered) break; items.push(item[2]); i++; }
-      const Tag = ordered ? "ol" : "ul"; nodes.push(<Tag key={`list-${start}`}>{items.map((item, j) => <li key={j}>{inline(item)}</li>)}</Tag>); continue;
-    }
-    const paragraph: string[] = []; const start = i;
-    while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^#{1,3}\s+/.test(lines[i]) && !/^\s*>\s?/.test(lines[i]) && !/^\s*([-+*]|\d+[.)])\s+/.test(lines[i]) && !/^\s*\|.*\|\s*$/.test(lines[i])) paragraph.push(lines[i++]);
-    nodes.push(<p key={`paragraph-${start}`}>{inline(paragraph.join(" "))}</p>);
-  }
-  return <>{nodes}</>;
-}
 function restoredNavigation() {
   try {
     const path = location.pathname.split("/").filter(Boolean);
@@ -127,7 +70,7 @@ function App() {
     [semantic, setSemantic] = useState<any>(),
     [applications, setApplications] = useState<any>(),
     [resources, setResources] = useState(new Map<string, Resource>()),
-    [toolStates, setToolStates] = useState<Record<string, Record<string, { capability: string; status: "running" | "completed" }>>>({}),
+    [toolStates, setToolStates] = useState<Record<string, Record<string, { capability: string; status: "running" | "completed" | "failed" }>>>({}),
     [workspaceTarget, setWorkspaceTarget] = useState<string>(),
     [agents, setAgents] = useState<any>(),
     [text, setText] = useState(""),
@@ -153,12 +96,14 @@ function App() {
   }, []);
   const fail = (e: any) => setError(e.message ?? String(e));
   const openApp = useCallback(async (appId: string) => {
+    const target = window.open("about:blank", "_blank");
+    if (target) target.opener = null;
     try {
       const resolved = await gateway.request("app.resolve", { app_id: appId === "homeassistant" ? "home-assistant" : appId, platform: "web" });
       const link = resolved.link?.primary ?? resolved.link?.fallback;
-      if (link) window.open(link, "_blank", "noopener,noreferrer");
-      else setError("该应用尚未配置可用链接");
-    } catch (e) { fail(e); }
+      if (link) { if (target) target.location.replace(link); else location.assign(link); }
+      else { target?.close(); setError("该应用尚未配置可用链接"); }
+    } catch (e) { target?.close(); fail(e); }
   }, []);
   const loadView = useCallback(async (spec: ViewSpec, request = ++viewRequest.current) => {
     if (request !== viewRequest.current) return;
@@ -191,6 +136,7 @@ function App() {
     [loadView],
   );
   const snapshot = useCallback(async () => {
+    setError("");
     if (page === "home" || page === "apps") setApplications(await gateway.request("application.list").catch(() => ({ status: "unavailable", apps: [] })));
     setConversations(await gateway.request("conversation.list"));
     setAgents(await gateway.request("agent.definition.list"));
@@ -224,7 +170,7 @@ function App() {
     }
     fetch("/api/v2/session").then(async (r) => {
       if (!r.ok) { const refreshed = await fetch("/api/v2/auth/refresh", { method: "POST", credentials: "include" }); if (!refreshed.ok) return; r = await fetch("/api/v2/session"); }
-      if (r.ok) { setPaired(true); gateway.open(); }
+      if (r.ok) { setPaired(true); void gateway.open(true); }
     }).catch(fail);
     return () => gateway.close();
   }, []);
@@ -234,6 +180,12 @@ function App() {
       return () => gateway.removeEventListener(name, fn);
     };
     const disposers = [
+      listen("auth-required", () => { setPaired(false); setConversation(undefined); setConversations([]); setSelected(undefined); setWorkspaceTarget(undefined); gateway.resources.clear(); setResources(new Map()); sessionStorage.removeItem("jarvis-navigation"); sessionStorage.removeItem("jarvis-view"); }),
+      listen("conversation.tool.failed", (e) => {
+        const p = e.detail;
+        if (!p?.conversation_id || !p?.tool_call_id) return;
+        setToolStates((old) => ({ ...old, [p.conversation_id]: { ...(old[p.conversation_id] ?? {}), [p.tool_call_id]: { capability: p.capability, status: "failed" } } }));
+      }),
       listen("connection", (e) => {
         setConnection(e.detail);
         // A reload can complete the WebSocket handshake before the snapshot
@@ -309,6 +261,8 @@ function App() {
     return () => disposers.forEach((d) => d());
   }, [snapshot, selected, runId, page]);
   async function action(a: any) {
+    const target = a.type === "app.open" ? window.open("about:blank", "_blank") : null;
+    if (target) target.opener = null;
     try {
       if (a.type === "run.open") {
         setRunId(a.target);
@@ -317,11 +271,12 @@ function App() {
         const result = await gateway.request("ui.action.invoke", a);
         if (a.type === "app.open") {
           const link = result?.link?.primary ?? result?.link?.fallback;
-          if (link) window.open(link, "_blank", "noopener,noreferrer");
+          if (link) { if (target) target.location.replace(link); else location.assign(link); }
         }
         await snapshot();
       }
     } catch (e) {
+      target?.close();
       fail(e);
     }
   }
@@ -392,7 +347,7 @@ function App() {
                 setCode("");
                 setPassword("");
                 setInviteToken("");
-                gateway.open();
+                void gateway.open(true);
               })
               .catch(fail);
           }}
@@ -451,10 +406,10 @@ function App() {
             <button onClick={() => setError("")}>关闭</button>
           </div>
         )}
-        {page === "home" ? <ProductHome applications={applications} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
+        {page === "home" ? <ProductHome openApp={openApp} problem={!!error} applications={applications} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
           navigate={(next, id) => { setPage(next); setRunId(next === "run" ? id : undefined); if (next === "jarvis" && id) setSelected(id); }}
           ask={(prompt) => { setText(prompt); setRunId(undefined); setPage("jarvis"); }} />
-        : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} /><Empty title="选择你想探索的空间" text="空间内容将在对应数据服务连接后显示。" /></>
+        : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} openApp={openApp} /><Empty title="选择你想探索的空间" text="照片与家庭使用原应用完整界面；其他空间将在接入后开放。" /></>
         : page === "apps" ? <ApplicationList value={applications} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
         : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} />
         : page === "jarvis" || page === "workspace" ? (
@@ -495,7 +450,7 @@ function App() {
                       {labels[m.status] ?? m.status}
                     </small>
                     <div className="prose">{m.content ? <MarkdownContent value={m.content} /> : "正在处理…"}</div>
-                    {m.role === "jarvis" && selected && Object.values(toolStates[selected] ?? {}).length > 0 && <div className="rich-card tool-status-card"><strong>执行状态</strong>{Object.values(toolStates[selected]).map((tool) => <span key={tool.capability} className={tool.status}>{tool.capability} · {tool.status === "running" ? "运行中" : "已完成"}</span>)}</div>}
+                    {m.role === "jarvis" && selected && Object.values(toolStates[selected] ?? {}).length > 0 && <div className="rich-card tool-status-card"><strong>执行状态</strong>{Object.values(toolStates[selected]).map((tool) => <span key={tool.capability} className={tool.status}>{tool.capability} · {tool.status === "running" ? "运行中" : tool.status === "failed" ? "失败" : "已完成"}</span>)}</div>}
                     {m.run_id && (
                       <button
                         onClick={() =>

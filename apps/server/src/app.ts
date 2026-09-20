@@ -1,3 +1,4 @@
+import { eventAudience } from "./event-audience.js";
 import { M2, m2Topics, m2Events } from "./m2.js";
 import { permitted } from "./permissions.js";
 import { hash } from "./auth.js";
@@ -55,12 +56,12 @@ export async function buildApp(options: {
   await migrate(db);
   const media = new MediaStore();
   const monitor = new SystemMonitor(options.hostRoot, options.networkInterface);
-  const sockets = new Map<WebSocket, { topics: Set<string>; alive: boolean; sessionId?: string }>();
+  const sockets = new Map<WebSocket, { topics: Set<string>; alive: boolean; sessionId?: string; device: string; user?: string; events: Promise<void> }>();
   const nodeSockets = new Map<string, WebSocket>();
-  const nodePending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  const nodePending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout; node: WebSocket }>();
   const invokeNode = async (owner: string, nodeId: string, capability: string, input: Record<string, unknown>) => {
     const user = await ownerUserId(db, owner);
-    const record = await db.query("SELECT 1 FROM agents a WHERE a.id=$1 AND a.status IS DISTINCT FROM 'offline' AND (a.owner_device_id=$2 OR a.owner_user_id=$3 OR ($3 IS NULL AND a.owner_user_id IS NULL))", [nodeId, owner, user ?? null]);
+    const record = await db.query("SELECT 1 FROM agents a WHERE a.id=$1 AND a.status IS DISTINCT FROM 'offline' AND (a.owner_device_id=$2 OR a.owner_user_id=$3)", [nodeId, owner, user ?? null]);
     if (!record.rowCount) throw Error("node_not_found");
     const ws = nodeSockets.get(nodeId);
     if (!ws || ws.readyState !== 1) throw Error("node_bridge_unavailable");
@@ -68,7 +69,7 @@ export async function buildApp(options: {
     const request = { id, version: 1, type: "request", topic: "node.invoke", timestamp: new Date().toISOString(), payload: { capability, input } };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { nodePending.delete(id); reject(Error("node_invoke_timeout")); }, 120000);
-      nodePending.set(id, { resolve, reject, timer });
+      nodePending.set(id, { resolve, reject, timer, node: ws });
       ws.send(JSON.stringify(request), (error) => {
         if (error) { clearTimeout(timer); nodePending.delete(id); reject(error); }
       });
@@ -77,14 +78,18 @@ export async function buildApp(options: {
   let sequence = 0;
   const push = (topic: string, payload: unknown) => {
     const event = { ...message("event", topic, payload), sequence: ++sequence };
-    for (const [ws, s] of sockets)
-      if (s.topics.has(topic) && ws.readyState === 1) {
-        if (ws.bufferedAmount > 1024 * 1024) {
-          ws.close(1013, "slow_consumer");
-          continue;
-        }
+    const audience = eventAudience(db, topic, payload);
+    for (const [ws, s] of sockets) {
+      if (!s.topics.has(topic)) continue;
+      s.events = s.events.then(async () => {
+        const target = await audience;
+        if (!target.shared && target.device !== s.device && !(s.user && target.user === s.user)) return;
+        if (ws.readyState !== 1) return;
+        if (ws.bufferedAmount > 1024 * 1024) { ws.close(1013, "slow_consumer"); return; }
         ws.send(JSON.stringify(event));
-      }
+      }).catch(() => app.log.warn({ topic }, "event_delivery_failed"));
+    }
+    void audience.catch(() => {});
   };
   const agents = new AgentRegistry(
       db,
@@ -114,13 +119,18 @@ export async function buildApp(options: {
   app.post("/internal/hermes/capability", async (req, reply) => {
     if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey)
       return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
+    let toolEvent: { conversation_id: string; tool_call_id: string; capability: string } | undefined;
     try {
       const input = hermesCapabilityInput.parse(req.body);
       const context = verifyHermesContextToken(hermesBridgeKey, input.context_token);
       if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
       const args = input.arguments;
       const toolCallId = `mcp-${randomBytes(12).toString("hex")}`;
-      const conversationId = z.uuid().safeParse(context.session).success ? context.session : undefined;
+      const contextUser = await ownerUserId(db, context.owner);
+      const conversationId = z.uuid().safeParse(context.session).success && (await db.query(
+        "SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)",
+        [context.session, context.owner, contextUser ?? null])).rowCount ? context.session : undefined;
+      if (conversationId) toolEvent = { conversation_id: conversationId, tool_call_id: toolCallId, capability: input.tool };
       if (conversationId) push("conversation.tool.started", {
         conversation_id: conversationId,
         tool_call_id: toolCallId,
@@ -144,6 +154,16 @@ export async function buildApp(options: {
         case "agent_run_status":
           result = await m2.readForAgent("agent.run.read", args, context.owner);
           break;
+        case "task_create": {
+          if (!conversationId) throw Error("conversation_required");
+          const task = await m2.handle("task.create", { ...args, agent_id: "ops-agent", conversation_id: conversationId }, context.owner) as any;
+          result = { ...task, task_id: task.id, run_id: task.id };
+          await db.query("UPDATE conversation_messages SET run_id=$2 WHERE id=(SELECT id FROM conversation_messages WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' ORDER BY sequence DESC LIMIT 1)", [conversationId, task.id]);
+          break;
+        }
+        case "task_cancel":
+          result = await m2.handle("task.cancel", args, context.owner);
+          break;
         case "ui_view_show":
           {
             const view = await m2.show({ type: "view.show", ...args }, context.owner);
@@ -156,6 +176,11 @@ export async function buildApp(options: {
                 type: "native",
                 title: "Jarvis 工作区",
               });
+            if (workspace) {
+              await m2.workspaces.upsertArtifact(context.owner, { workspace_id: workspace.id, artifact_id: workspace.artifact_id ?? undefined,
+                type: "native", media_type: "application/vnd.jarvis.view+json", source: JSON.stringify(view.spec), status: "ready" });
+              for (const block of view.spec.blocks) if (block.resource) await m2.workspaces.bind(context.owner, workspace.id, block.resource, 0);
+            }
             if (conversationId) {
               await db.query(
                 "UPDATE conversation_messages SET view_id=$2,workspace_id=$3,content_type='rich' WHERE id=(SELECT id FROM conversation_messages WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' ORDER BY sequence DESC LIMIT 1)",
@@ -167,7 +192,7 @@ export async function buildApp(options: {
             break;
           }
         default:
-          return reply.code(404).send({ error: "hermes_capability_not_allowed" });
+          throw Error("hermes_capability_not_allowed");
       }
       if (conversationId) push("conversation.tool.completed", {
         conversation_id: conversationId,
@@ -177,9 +202,10 @@ export async function buildApp(options: {
       });
       return result;
     } catch (error) {
+      if (toolEvent) push("conversation.tool.failed", { ...toolEvent, error: error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "tool_failed" });
       // The MCP provider receives the HTTP error body and Hermes can report it
       // as a failed capability call without exposing bridge credentials.
-      return reply.code(400).send({ error: error instanceof Error ? error.message : "hermes_capability_invalid" });
+      return reply.code(400).send({ error: error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "hermes_capability_invalid", ...(error instanceof z.ZodError ? { issues: error.issues } : {}) });
     }
   });
   await m2.start();
@@ -599,8 +625,12 @@ export async function buildApp(options: {
               ],
         ),
         alive: true,
+        device: identity.id,
+        user: (identity as any).user_id as string | undefined,
+        events: Promise.resolve(),
         sessionId: (identity as any).session_id as string | undefined,
       };
+      state.events = ownerUserId(db, identity.id).then((user) => { state.user = user; });
       sockets.set(ws, state);
       ws.on("pong", () => {
         state.alive = true;
@@ -609,6 +639,7 @@ export async function buildApp(options: {
         sockets.delete(ws);
         for (const [nodeId, candidate] of nodeSockets) if (candidate === ws) nodeSockets.delete(nodeId);
         for (const [requestId, pending] of nodePending) {
+          if (pending.node !== ws) continue;
           pending.reject(Error("node_bridge_disconnected"));
           clearTimeout(pending.timer);
           nodePending.delete(requestId);
@@ -641,7 +672,7 @@ export async function buildApp(options: {
               topic = m.topic;
               if ((m.type === "response" || m.type === "error") && m.reply_to) {
                 const pending = nodePending.get(m.reply_to);
-                if (pending) {
+                if (pending && pending.node === ws) {
                   clearTimeout(pending.timer);
                   nodePending.delete(m.reply_to);
                   if (m.type === "error") pending.reject(Error(String(m.payload.error ?? "node_invoke_failed")));
@@ -731,6 +762,7 @@ export async function buildApp(options: {
                 replies.delete(replies.keys().next().value!);
               if (ws.readyState === 1) ws.send(response);
             } catch (e) {
+              app.log.warn({ topic, error: e instanceof Error ? e.message : "unknown" }, "request_failed");
               if (ws.readyState === 1)
                 ws.send(
                   JSON.stringify(
@@ -742,7 +774,7 @@ export async function buildApp(options: {
                           e instanceof z.ZodError
                             ? "validation_error"
                             : e instanceof Error &&
-                                /^(agent_|unknown_topic|invalid_|id_reused|not_found|custom_|integration_|user_login_required)/.test(
+                                /^(agent_|node_|approval_|unknown_topic|invalid_|id_reused|not_found|custom_|integration_|user_login_required)/.test(
                                   e.message,
                                 )
                               ? e.message

@@ -60,6 +60,9 @@ test(
         payload: { device_id: randomUUID(), code: deviceCode },
       });
       deviceToken = device.json().token;
+      const ownerUser = randomUUID();
+      await db.query("INSERT INTO users(id,username,role) VALUES($1,$2,'member')", [ownerUser, `integration-${ownerUser}`]);
+      await db.query("UPDATE devices SET user_id=$1 WHERE id=ANY($2::text[])", [ownerUser, [device.json().device_id, paired.json().device_id]]);
       const auth = { authorization: `Bearer ${token}` };
       const unauthorized = new WebSocket(base.replace("http", "ws") + "/ws");
       const rejected = await new Promise<number>((resolve) => {
