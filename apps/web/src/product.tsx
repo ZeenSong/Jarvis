@@ -7,14 +7,13 @@ export function Orb({ small = false }: { small?: boolean }) {
 
 export function HermesConsole() {
   return <section className="product-panel">
-    <div className="section-heading"><h2>Hermes Agent</h2><a href="http://127.0.0.1:9119" target="_blank" rel="noopener noreferrer">打开 Hermes 官方控制台 ↗</a></div>
-    <p className="muted">会话、模型、技能与 MCP 使用 Hermes 原生界面管理。控制台通过 SSH 隧道访问。</p>
-    <details><summary>SSH 访问方式</summary><p>先在服务器的 Jarvis 项目目录运行：</p><pre>kubectl --kubeconfig .local/m2.kubeconfig -n jarvis port-forward --address=127.0.0.1 deployment/hermes-core 9119:9119</pre><p>然后在你自己的电脑运行：</p><pre>ssh -N -L 9119:127.0.0.1:9119 root2023@100.77.157.73</pre><p>保持两个终端运行，再点击上方入口。</p></details>
+    <div className="section-heading"><h2>Hermes Agent</h2><a href="/hermes-dashboard/" target="_blank" rel="noopener noreferrer">打开 Hermes 控制台 ↗</a></div>
+    <p className="muted">会话、模型、技能与 MCP 使用 Hermes 官方界面管理，打开后会在当前 Jarvis 登录状态下继续使用。</p>
   </section>;
 }
 
-export function ProductHome({ system, runs, conversations, navigate, ask, applications, openApp, problem }: {
-  applications?: any; openApp?: (id: string) => void; problem?: boolean;
+export function ProductHome({ system, runs, conversations, navigate, ask, applications, openApp, onCasaosLogin, problem }: {
+  applications?: any; openApp?: (id: string) => void; onCasaosLogin?: (username: string, password: string) => Promise<void>; problem?: boolean;
   system: any; runs: any[]; conversations: any[]; navigate: (page: string, id?: string) => void; ask: (prompt: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -41,12 +40,17 @@ export function ProductHome({ system, runs, conversations, navigate, ask, applic
       {running.length ? running.slice(0, 3).map((r) => <button className="run-row" key={r.id} onClick={() => navigate("run", r.id)}><span>{r.goal}</span><small>{labels[r.status]}</small></button>) : <Empty title="现在没有进行中的任务" text="有想做的事，随时告诉 Jarvis。" />}
     </section><section className="product-panel"><h2>最近活动</h2>{conversations.length ? conversations.slice(0, 4).map((c) => <button className="activity-row" key={c.id} onClick={() => navigate("jarvis", c.id)}><span className="activity-dot" /><span>{c.title}</span><span>↗</span></button>) : <Empty title="从一次对话开始" text="你的对话与任务进展会汇集在这里。" />}</section></div>
     <HermesConsole />
-    <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} ask={ask} openApp={openApp} /></section>
+    <section className="product-panel home-applications"><div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 →</button></div><ApplicationList value={applications} ask={ask} openApp={openApp} onCasaosLogin={onCasaosLogin} /></section>
   </div>;
 }
 type Application = { id: string; name: string; status: string; description?: string; service_count?: number | null };
-export function ApplicationList({ value, openApp, ask }: { value?: { status: string; apps: Application[]; launchers?: { id: string; name: string; url: string }[] }; openApp?: (appId: string) => void; ask?: (prompt: string) => void }) {
+export function ApplicationList({ value, openApp, ask, onCasaosLogin }: { value?: { status: string; apps: Application[]; launchers?: { id: string; name: string; url: string }[] }; openApp?: (appId: string) => void; ask?: (prompt: string) => void; onCasaosLogin?: (username: string, password: string) => Promise<void> }) {
   const [selected, setSelected] = useState<string>();
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const app = value?.apps.find((item) => item.id === selected);
   useEffect(() => {
@@ -61,7 +65,7 @@ export function ApplicationList({ value, openApp, ask }: { value?: { status: str
       unavailable: ["暂时无法读取应用", "请检查 CasaOS 连接，稍后刷新重试。"],
     };
     const [title, text] = value ? states[value.status] ?? states.unavailable : ["正在读取应用", "正在连接你的私人云应用服务…"];
-    return <div role="status"><Empty title={title} text={text} /><p className="muted">应用列表连接异常不会影响你直接使用原应用。CasaOS 登录与 Jarvis 的服务端集成会话独立。</p><div className="toolbar">{value?.launchers?.map((item) => <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer">打开 {item.name} ↗</a>)}</div></div>;
+    return <div role="status"><Empty title={title} text={text} />{value?.status === "authentication_required" && onCasaosLogin && <><button onClick={async () => { setLoginError(""); const result = await fetch("/api/v2/integrations/casaos", { credentials: "include" }); if (result.ok) setUsername((await result.json()).username ?? ""); setLoginOpen(true); }}>重新连接 CasaOS</button><dialog open={loginOpen} className="application-detail" aria-labelledby="casaos-login-title"><form onSubmit={async (event) => { event.preventDefault(); setLoggingIn(true); setLoginError(""); try { await onCasaosLogin(username, password); setLoginOpen(false); setPassword(""); } catch (error) { setLoginError(error instanceof Error ? error.message : "CasaOS 登录失败"); } finally { setLoggingIn(false); } }}><header><h2 id="casaos-login-title">连接 CasaOS</h2><button type="button" aria-label="关闭 CasaOS 登录" onClick={() => setLoginOpen(false)}>×</button></header><p className="muted">输入 CasaOS 账号完成连接。密码只用于本次登录，不会显示在 Jarvis 页面或保存到浏览器。</p><label>CasaOS 用户名<input aria-label="CasaOS 用户名" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" /></label><label>CasaOS 密码<input aria-label="CasaOS 密码" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /></label>{loginError && <p role="alert">{loginError}</p>}<button disabled={loggingIn || !username || !password}>{loggingIn ? "连接中…" : "登录并连接"}</button></form></dialog></>}{<p className="muted">应用列表连接异常不会影响你直接使用原应用。</p>}<div className="toolbar">{value?.launchers?.map((item) => <a key={item.id} href={item.url} target="_blank" rel="noopener noreferrer">打开 {item.name} ↗</a>)}</div></div>;
   }
   if (!value.apps.length) return <Empty title="还没有安装应用" text="CasaOS 已连接，当前没有已安装应用。" />;
   return <><div className="application-grid">{value.apps.map((app) => <button className="application-card" key={app.id} onClick={() => setSelected(app.id)} aria-label={`查看 ${app.name} 详情`}>

@@ -187,8 +187,12 @@ spec:
           args: ["hermes", "gateway", "run"]
           env:
             - { name: HERMES_DASHBOARD, value: "true" }
-            - { name: HERMES_DASHBOARD_HOST, value: "127.0.0.1" }
+            - { name: HERMES_DASHBOARD_HOST, value: "0.0.0.0" }
             - { name: HERMES_DASHBOARD_PORT, value: "9119" }
+            - name: HERMES_DASHBOARD_BASIC_AUTH_USERNAME
+              valueFrom: { secretKeyRef: { name: hermes-api, key: DASHBOARD_USERNAME } }
+            - name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+              valueFrom: { secretKeyRef: { name: hermes-api, key: DASHBOARD_PASSWORD } }
             - name: API_SERVER_ENABLED
               value: "true"
             - name: API_SERVER_HOST
@@ -208,7 +212,9 @@ spec:
             # host execution go through the Jarvis Node Bridge instead.
             - name: TERMINAL_ENV
               value: local
-          ports: [{ name: http, containerPort: 8642 }]
+          ports:
+            - { name: http, containerPort: 8642 }
+            - { name: dashboard, containerPort: 9119 }
           startupProbe: { httpGet: { path: /health, port: http }, failureThreshold: 60, periodSeconds: 10, timeoutSeconds: 10 }
           readinessProbe: { httpGet: { path: /health, port: http }, failureThreshold: 12, periodSeconds: 10, timeoutSeconds: 10 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 120, failureThreshold: 6, periodSeconds: 30, timeoutSeconds: 10 }
@@ -226,4 +232,6 @@ metadata:
   namespace: jarvis
 spec:
   selector: { app: hermes-core }
-  ports: [{ name: http, port: 8642, targetPort: http }]
+  ports:
+    - { name: http, port: 8642, targetPort: http }
+    - { name: dashboard, port: 9119, targetPort: dashboard }

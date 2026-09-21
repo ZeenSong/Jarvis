@@ -103,6 +103,11 @@ function App() {
       else { target?.close(); setError("该应用尚未配置可用链接"); }
     } catch (e) { target?.close(); fail(e); }
   }, []);
+  const reconnectCasaos = useCallback(async (username: string, password: string) => {
+    const response = await fetch("/api/v2/integrations/casaos/login", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+    if (!response.ok) throw Error(response.status === 401 ? "CasaOS 用户名或密码不正确" : response.status === 403 ? "只有 Jarvis 管理员可以连接 CasaOS" : "CasaOS 连接失败，请稍后重试");
+    setApplications(await gateway.request("application.list"));
+  }, []);
   const loadView = useCallback(async (spec: ViewSpec, request = ++viewRequest.current) => {
     if (request !== viewRequest.current) return;
     setSemantic(undefined);
@@ -404,11 +409,11 @@ function App() {
             <button onClick={() => setError("")}>关闭</button>
           </div>
         )}
-        {page === "home" ? <ProductHome openApp={openApp} problem={!!error} applications={applications} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
+        {page === "home" ? <ProductHome openApp={openApp} onCasaosLogin={reconnectCasaos} problem={!!error} applications={applications} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
           navigate={(next, id) => { setPage(next); setRunId(next === "run" ? id : undefined); if (next === "jarvis" && id) setSelected(id); }}
           ask={(prompt) => { setText(prompt); setRunId(undefined); setPage("jarvis"); }} />
         : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} openApp={openApp} /><Empty title="选择你想探索的空间" text="照片与家庭使用原应用完整界面；其他空间将在接入后开放。" /></>
-        : page === "apps" ? <ApplicationList value={applications} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
+        : page === "apps" ? <ApplicationList value={applications} onCasaosLogin={reconnectCasaos} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
         : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} />
         : page === "jarvis" || page === "workspace" ? (
           <div className={`conversation-layout ${page === "workspace" ? "with-workspace" : ""}`}>

@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import type { RuntimeRegistry } from "../../../packages/agent-runtime/src/index.js";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
-import type { WebSocket } from "ws";
+import WebSocket, { type RawData } from "ws";
 import { z } from "zod";
 import { database, migrate } from "./persistence.js";
 import { authenticate, pair } from "./auth.js";
@@ -26,6 +26,7 @@ import {
 } from "../../../packages/llm-usage/src/index.js";
 import { ownerUserId } from "./ownership.js";
 import { verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
+import { installedApplications, casaosLogin, casaosAccount } from "./applications.js";
 const SERVER_VERSION = "0.3.0-preview.1";
 export async function buildApp(options: {
   databaseUrl: string;
@@ -53,6 +54,7 @@ export async function buildApp(options: {
       : false,
     bodyLimit: 65536,
   });
+  await app.register(websocket, { options: { maxPayload: 65536 } });
   await migrate(db);
   const media = new MediaStore();
   const monitor = new SystemMonitor(options.hostRoot, options.networkInterface);
@@ -367,8 +369,81 @@ export async function buildApp(options: {
   const userIdentity = async (req: any) => {
     const value = cookieValue(req, "jarvis_access");
     const bearer = req.headers.authorization ?? (value ? `Bearer ${value}` : undefined);
-    return authenticateUserAccess(db, bearer);
+    const user = await authenticateUserAccess(db, bearer);
+    if (user) return user;
+    const session = cookieValue(req, "jarvis_session");
+    if (!session) return undefined;
+    const device = (await db.query("SELECT d.id AS device_id,d.user_id,u.username,u.role FROM web_sessions s JOIN devices d ON d.id=s.device_id LEFT JOIN users u ON u.id=d.user_id WHERE s.token_hash=$1 AND s.expires_at>now()", [hash(session)])).rows[0];
+    return device ? { user_id: device.user_id, username: device.username, role: device.role ?? "device", device_id: device.device_id, session_id: undefined } : undefined;
   };
+  const hermesDashboardUrl = process.env.HERMES_DASHBOARD_URL ?? "";
+  let hermesDashboardCookie = "";
+  let hermesDashboardLogin: Promise<string> | undefined;
+  const ensureHermesDashboardCookie = async () => {
+    if (hermesDashboardCookie) {
+      const check = await fetch(new URL("/api/status", hermesDashboardUrl), { headers: { Cookie: hermesDashboardCookie }, signal: AbortSignal.timeout(10000) }).catch(() => undefined);
+      if (check?.ok) return hermesDashboardCookie;
+      hermesDashboardCookie = "";
+    }
+    if (!hermesDashboardLogin) hermesDashboardLogin = (async () => {
+      const response = await fetch(new URL("/auth/password-login", hermesDashboardUrl), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "basic", username: process.env.HERMES_DASHBOARD_PROXY_USERNAME, password: process.env.HERMES_DASHBOARD_PROXY_PASSWORD, next: "/" }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw Error("hermes_dashboard_login_failed");
+      const values = response.headers.getSetCookie?.() ?? [];
+      const cookies = values.map((value) => value.split(";", 1)[0]).filter(Boolean);
+      if (!cookies.length) throw Error("hermes_dashboard_cookie_missing");
+      hermesDashboardCookie = cookies.join("; ");
+      return hermesDashboardCookie;
+    })().finally(() => { hermesDashboardLogin = undefined; });
+    return hermesDashboardLogin;
+  };
+  const hermesPrefix = "/hermes-dashboard";
+  const hermesProxy = async (req: any, reply: any) => {
+    const identity = await userIdentity(req);
+    if (!identity) return reply.code(401).send({ error: "unauthorized" });
+    if (!hermesDashboardUrl) return reply.code(503).send({ error: "hermes_dashboard_unavailable" });
+    const suffix = req.params["*"] ? `/${req.params["*"]}` : "/";
+    const target = new URL(suffix + (req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""), hermesDashboardUrl);
+    const headers: Record<string, string> = {};
+    for (const name of ["accept", "content-type", "x-hermes-session-token", "if-none-match", "if-modified-since"]) {
+      const value = req.headers[name]; if (typeof value === "string") headers[name] = value;
+    }
+    const dashboardCookie = await ensureHermesDashboardCookie().catch(() => "");
+    if (!dashboardCookie) return reply.code(503).send({ error: "hermes_dashboard_unavailable" });
+    headers.cookie = dashboardCookie;
+    const method = req.method.toUpperCase();
+    const body = method === "GET" || method === "HEAD" ? undefined : (typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}));
+    let upstream: Response;
+    try { upstream = await fetch(target, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(30000) }); }
+    catch { return reply.code(503).send({ error: "hermes_dashboard_unavailable" }); }
+    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
+    let payload = Buffer.from(await upstream.arrayBuffer());
+    if (contentType.includes("text/html")) {
+      let html = payload.toString("utf8");
+      html = html.replace(/(src|href)="\//g, `$1="${hermesPrefix}/`);
+      html = html.replace(/window\.__HERMES_BASE_PATH__=""/g, `window.__HERMES_BASE_PATH__="${hermesPrefix}"`);
+      payload = Buffer.from(html);
+    }
+    reply.code(upstream.status).header("Content-Type", contentType).header("Cache-Control", "no-store").send(payload);
+  };
+  app.get(`${hermesPrefix}`, hermesProxy);
+  app.get(`${hermesPrefix}/ws`, { websocket: true }, async (client, req) => {
+    const identity = await userIdentity(req);
+    if (!identity || !hermesDashboardUrl) return client.close(1008, "unauthorized");
+    const dashboardCookie = await ensureHermesDashboardCookie().catch(() => "");
+    if (!dashboardCookie) return client.close(1013, "dashboard_unavailable");
+    const upstream = new WebSocket(new URL("/ws", hermesDashboardUrl), {
+      headers: { cookie: dashboardCookie, "x-hermes-session-token": typeof req.headers["x-hermes-session-token"] === "string" ? req.headers["x-hermes-session-token"] : "" },
+    });
+    const relay = (source: WebSocket, target: WebSocket) => source.on("message", (data: RawData) => { if (target.readyState === WebSocket.OPEN) target.send(data); });
+    upstream.on("open", () => relay(client, upstream)); relay(upstream, client);
+    const close = () => { if (client.readyState === WebSocket.OPEN) client.close(); if (upstream.readyState === WebSocket.OPEN) upstream.close(); };
+    client.on("close", close); upstream.on("close", close); client.on("error", close); upstream.on("error", close);
+  });
+  app.all(`${hermesPrefix}/*`, hermesProxy);
   app.post("/api/v1/pair", async (req, reply) => {
     const now = Date.now();
     for (const [ip, a] of attempts) if (a.until < now) attempts.delete(ip);
@@ -425,6 +500,21 @@ export async function buildApp(options: {
       reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/api/v2/auth; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
       return result;
     } catch (e) { return reply.code(401).send({ error: e instanceof Error ? e.message : "invalid_credentials" }); }
+  });
+  app.get("/api/v2/integrations/casaos", async (req, reply) => {
+    const identity = await userIdentity(req); if (!identity) return reply.code(401).send({ error: "unauthorized" });
+    return casaosAccount();
+  });
+  app.post("/api/v2/integrations/casaos/login", async (req, reply) => {
+    const identity = await userIdentity(req); if (!identity) return reply.code(401).send({ error: "unauthorized" });
+    try {
+      const body = z.object({ username: z.string().min(1).max(160), password: z.string().min(1).max(512) }).strict().parse(req.body);
+      await casaosLogin(body.username, body.password);
+      return { connected: true };
+    } catch (error) {
+      const code = error instanceof Error && error.message === "casaos:unauthorized" ? "invalid_credentials" : "login_failed";
+      return reply.code(code === "invalid_credentials" ? 401 : 400).send({ error: code });
+    }
   });
   app.post("/api/v2/auth/refresh", async (req, reply) => {
     try {
@@ -493,7 +583,6 @@ export async function buildApp(options: {
       .parse(req.body);
     return m2.readForAgent(p.tool, p.args);
   });
-  await app.register(websocket, { options: { maxPayload: 65536 } });
   await app.register(async (api) => {
     // Routes in this encapsulated plugin need their own handler: the
     // websocket plugin captures the child error boundary before the root

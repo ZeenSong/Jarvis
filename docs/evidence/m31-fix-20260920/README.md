@@ -1,11 +1,11 @@
 # 2026-09-20 修复与部署证据
 
-最终部署：`jarvis-server:0.3.0-m31-fix-20260920-r6`，Hermes 原生 Dashboard 与 Gateway 同容器，由官方 s6 管理。生产测试通过现有已认证浏览器状态使用 Playwright + 无头 Chrome；私有状态文件不纳入仓库。
+最终部署：`jarvis-server:0.3.0-m31-fix-20260921-r4`，Hermes 原生 Dashboard 与 Gateway 同容器，由官方 s6 管理，并由 Jarvis 同源代理保护。生产测试通过现有已认证浏览器状态使用 Playwright + 无头 Chrome；私有状态文件不纳入仓库。
 
 ## 最终复验
 
 - `final-smoke.json`：生产左侧 Hermes 入口→官方控制台实际新页打开；Gateway Running；持久化图表工作区刷新恢复；页面 JS 错误为零。
-- `hermes-entry.png`、`hermes-dashboard.png`：用户入口和未经重写的 Hermes 官方界面。控制台访问经本机 port-forward；用户电脑需 SSH 隧道。
+- `hermes-entry.png`、`hermes-proxied.png`：用户入口和未经重写的 Hermes 官方界面。控制台由 Jarvis 同源代理自动完成内部认证，用户不需要 port-forward 或 SSH。
 - `home.png`、`system.png`、`browser-errors.json`：首页真实状态、CasaOS 待重新认证提示、系统指标。
 - `app-photos.png`、`app-family.png`：实际打开 Immich 与 Home Assistant 原应用页面。只证明入口与登录页面可达，不代表已认证后的全部业务操作通过。
 - `live-chart-message.png`、`live-workspace.png`、`live-workspace-reloaded.png`：真实模型调用 system_status_read / ui_view_show，工作区持久恢复。

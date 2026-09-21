@@ -31,7 +31,7 @@ spec:
         runAsGroup: 1000
       containers:
         - name: server
-          image: jarvis-server:0.3.0-m31-fix-20260920-r6
+          image: jarvis-server:0.3.0-m31-fix-20260921-r4
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
@@ -46,6 +46,12 @@ spec:
               value: /config/prices.json
             - name: HERMES_URL
               value: http://hermes-core:8642
+            - name: HERMES_DASHBOARD_URL
+              value: http://hermes-core:9119
+            - name: HERMES_DASHBOARD_PROXY_USERNAME
+              valueFrom: { secretKeyRef: { name: hermes-api, key: DASHBOARD_USERNAME } }
+            - name: HERMES_DASHBOARD_PROXY_PASSWORD
+              valueFrom: { secretKeyRef: { name: hermes-api, key: DASHBOARD_PASSWORD } }
             - name: HERMES_ENABLED
               value: "1"
             - name: CORE_MODEL
