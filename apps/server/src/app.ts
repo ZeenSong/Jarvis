@@ -27,7 +27,7 @@ import {
 import { ownerUserId } from "./ownership.js";
 import { verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
 import { installedApplications, casaosLogin, casaosAccount } from "./applications.js";
-const SERVER_VERSION = "0.3.0-preview.1";
+const SERVER_VERSION = "0.3.1";
 export async function buildApp(options: {
   databaseUrl: string;
   runtimes?: RuntimeRegistry;
@@ -342,8 +342,31 @@ export async function buildApp(options: {
         )
         .send(await readFile(resolve("apps/web/dist/assets", name)));
     } catch {
+      // Hermes' Vite chat bundle currently emits a few lazy-loaded assets as
+      // root-relative /assets/... URLs. The Dashboard itself is mounted under
+      // /hermes-dashboard, so serve those missing names from Hermes after the
+      // Jarvis asset lookup fails.
+      if (hermesDashboardUrl) {
+        const upstream = await fetch(new URL(`/assets/${name}`, hermesDashboardUrl), { signal: AbortSignal.timeout(15000) }).catch(() => undefined);
+        if (upstream?.ok) {
+          return reply
+            .header("Content-Type", upstream.headers.get("content-type") ?? "application/octet-stream")
+            .header("Cache-Control", "no-store")
+            .send(Buffer.from(await upstream.arrayBuffer()));
+        }
+      }
       return reply.code(404).send();
     }
+  });
+  app.get<{ Params: { "*": string } }>("/fonts-terminal/*", async (req, reply) => {
+    const name = req.params["*"];
+    if (!/^[-a-zA-Z0-9_.]+\.woff2$/.test(name) || !hermesDashboardUrl) return reply.code(404).send();
+    const upstream = await fetch(new URL(`/fonts-terminal/${name}`, hermesDashboardUrl), { signal: AbortSignal.timeout(15000) }).catch(() => undefined);
+    if (!upstream?.ok) return reply.code(404).send();
+    return reply
+      .header("Content-Type", upstream.headers.get("content-type") ?? "font/woff2")
+      .header("Cache-Control", "no-store")
+      .send(Buffer.from(await upstream.arrayBuffer()));
   });
   app.get<{ Params: { name: string } }>("/artwork/:name", async (req, reply) => {
     const name = req.params.name;
@@ -381,8 +404,12 @@ export async function buildApp(options: {
   let hermesDashboardLogin: Promise<string> | undefined;
   const ensureHermesDashboardCookie = async () => {
     if (hermesDashboardCookie) {
-      const check = await fetch(new URL("/api/status", hermesDashboardUrl), { headers: { Cookie: hermesDashboardCookie }, signal: AbortSignal.timeout(10000) }).catch(() => undefined);
-      if (check?.ok) return hermesDashboardCookie;
+      // /api/status is intentionally public, so it cannot prove that the
+      // cached dashboard session cookie is still valid. Check a protected
+      // page instead; an expired cookie otherwise causes the upstream 302 to
+      // /login to be surfaced as hermes_dashboard_unavailable.
+      const check = await fetch(new URL("/chat", hermesDashboardUrl), { headers: { Cookie: hermesDashboardCookie }, redirect: "manual", signal: AbortSignal.timeout(10000) }).catch(() => undefined);
+      if (check?.ok && !check.headers.get("location")) return hermesDashboardCookie;
       hermesDashboardCookie = "";
     }
     if (!hermesDashboardLogin) hermesDashboardLogin = (async () => {
@@ -401,6 +428,24 @@ export async function buildApp(options: {
     return hermesDashboardLogin;
   };
   const hermesPrefix = "/hermes-dashboard";
+  const relayHermesSocket = (client: WebSocket, upstream: WebSocket) => {
+    const pending: RawData[] = [];
+    const sendToUpstream = (data: RawData) => {
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(data);
+      else pending.push(data);
+    };
+    const flushPending = () => {
+      while (pending.length && upstream.readyState === WebSocket.OPEN) upstream.send(pending.shift()!);
+    };
+    // The browser can send session.create immediately after its own socket
+    // opens, before Hermes has completed the upstream handshake. Register the
+    // client listener first so that JSON-RPC messages are not lost in that gap.
+    client.on("message", sendToUpstream);
+    upstream.on("open", flushPending);
+    upstream.on("message", (data: RawData) => { if (client.readyState === WebSocket.OPEN) client.send(data); });
+    const close = () => { if (client.readyState === WebSocket.OPEN) client.close(); if (upstream.readyState === WebSocket.OPEN) upstream.close(); };
+    client.on("close", close); upstream.on("close", close); client.on("error", close); upstream.on("error", close);
+  };
   const hermesProxy = async (req: any, reply: any) => {
     const identity = await userIdentity(req);
     if (!identity) return reply.code(401).send({ error: "unauthorized" });
@@ -438,11 +483,25 @@ export async function buildApp(options: {
     const upstream = new WebSocket(new URL("/ws", hermesDashboardUrl), {
       headers: { cookie: dashboardCookie, "x-hermes-session-token": typeof req.headers["x-hermes-session-token"] === "string" ? req.headers["x-hermes-session-token"] : "" },
     });
-    const relay = (source: WebSocket, target: WebSocket) => source.on("message", (data: RawData) => { if (target.readyState === WebSocket.OPEN) target.send(data); });
-    upstream.on("open", () => relay(client, upstream)); relay(upstream, client);
-    const close = () => { if (client.readyState === WebSocket.OPEN) client.close(); if (upstream.readyState === WebSocket.OPEN) upstream.close(); };
-    client.on("close", close); upstream.on("close", close); client.on("error", close); upstream.on("error", close);
+    relayHermesSocket(client, upstream);
   });
+  // Hermes Chat's PTY and JSON-RPC sockets are the only websocket endpoints
+  // below /api. Keep this list explicit: a websocket wildcard would also
+  // capture normal Dashboard HTTP endpoints such as /api/status and return
+  // 404 before the HTTP proxy can handle them.
+  for (const socketPath of ["pty", "ws", "events"]) {
+    app.get(`${hermesPrefix}/api/${socketPath}`, { websocket: true }, async (client, req) => {
+      const identity = await userIdentity(req);
+      if (!identity || !hermesDashboardUrl) return client.close(1008, "unauthorized");
+      const dashboardCookie = await ensureHermesDashboardCookie().catch(() => "");
+      if (!dashboardCookie) return client.close(1013, "dashboard_unavailable");
+      const path = req.url.slice(hermesPrefix.length) || "/";
+      const upstream = new WebSocket(new URL(path, hermesDashboardUrl), {
+        headers: { cookie: dashboardCookie, "x-hermes-session-token": typeof req.headers["x-hermes-session-token"] === "string" ? req.headers["x-hermes-session-token"] : "" },
+      });
+      relayHermesSocket(client, upstream);
+    });
+  }
   app.all(`${hermesPrefix}/*`, hermesProxy);
   app.post("/api/v1/pair", async (req, reply) => {
     const now = Date.now();

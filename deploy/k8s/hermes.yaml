@@ -10,11 +10,12 @@ data:
       provider: "deepseek"
       # DeepSeek's public API identifier for the V4.1-Flash release.
       default: "deepseek-flash"
-    # The official Hermes MCP registry names a server toolset mcp-<server>.
-    # Keep the API server limited to Jarvis capabilities; the default Hermes
-    # API toolset includes terminal/file/code_execution tools.
-    platform_toolsets:
-      api_server: [mcp-jarvis]
+    # Expose named Hermes Agent profiles below /p/<profile>/ on this gateway.
+    gateway:
+      multiplex_profiles: true
+    # Jarvis is a Hermes Agent profile. Do not set platform_toolsets.api_server
+    # here: an explicit whitelist would hide Hermes' native Skills, toolsets and
+    # any MCP servers enabled for the Jarvis Agent.
     mcp_servers:
       jarvis:
         command: /opt/hermes/.venv/bin/python
@@ -23,10 +24,10 @@ data:
           JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
           JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
   jarvis_provider.py: |
-    """Jarvis Capability provider for the official Hermes MCP client.
+    """Jarvis capability provider for the Hermes Jarvis Agent.
 
-    This process is intentionally small: Hermes owns the agent loop, while Jarvis
-    remains the authority for state, permissions, views, and durable runs.
+    Jarvis is a first-class Hermes Agent profile. This MCP server is only its
+    Jarvis-kernel capability bridge; it is not the Agent identity.
     """
 
     from __future__ import annotations
@@ -73,7 +74,8 @@ data:
     server = MCPServer(
         "jarvis",
         instructions=(
-            "Jarvis authoritative capability provider. Hermes owns reasoning and the "
+            "Jarvis kernel capability provider for the first-class Jarvis Agent. "
+            "Hermes owns reasoning and the "
             "tool loop; use these tools for current Jarvis state, metrics, user runs, "
             "usage, and dashboard views. Every tool call requires the exact context_token "
             "from the Jarvis system message. Never invent one."
@@ -163,15 +165,65 @@ spec:
   template:
     metadata:
       labels: { app: hermes-core }
+      annotations:
+        config-version: hermes-agent-profile-20260921-r2
     spec:
       automountServiceAccountToken: false
       initContainers:
         - name: prepare-hermes-data
           image: docker.io/nousresearch/hermes-agent@sha256:61b5b208cbda39186457116e4d267096bda7f503a135eef1572df3d8df216a7b
-          command: ["sh", "-c", "cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml && python -c \"import os; from dotenv import set_key; set_key('/opt/data/.env', 'API_SERVER_KEY', os.environ['API_SERVER_KEY']); os.chmod('/opt/data/.env', 0o600)\" && chown -R 10000:10000 /opt/data"]
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              export HERMES_HOME=/opt/data
+              cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml
+              python - <<'PY'
+              import base64, hashlib, hmac, os, subprocess, yaml
+              from dotenv import set_key
+              base = os.environ["API_SERVER_KEY"]
+              profile = os.environ.get("JARVIS_PROFILE_API_KEY") or base64.urlsafe_b64encode(hmac.new(base.encode(), b"hermes-profile:jarvis", hashlib.sha256).digest()).rstrip(b"=").decode()
+              if os.path.exists("/opt/data/.env"):
+                  os.chmod("/opt/data/.env", 0o644)
+              set_key("/opt/data/.env", "API_SERVER_KEY", base)
+              profile_dir = "/opt/data/profiles/jarvis"
+              if not os.path.exists(profile_dir):
+                  subprocess.run(["hermes", "profile", "create", "jarvis", "--clone", "--description", "Jarvis personal cloud coordinator"], check=True)
+              elif not os.path.exists(os.path.join(profile_dir, "config.yaml")):
+                  raise RuntimeError("Jarvis Hermes profile exists but is incomplete")
+              profile_env = os.path.join(profile_dir, ".env")
+              if os.path.exists(profile_env):
+                  os.chmod(profile_env, 0o644)
+              set_key(profile_env, "API_SERVER_KEY", profile)
+              soul_path = os.path.join(profile_dir, "SOUL.md")
+              if not os.path.exists(soul_path):
+                  with open(soul_path, "w", encoding="utf-8") as soul:
+                      soul.write("You are Jarvis, the user's personal cloud coordinator. Use your configured Hermes Skills, MCP servers, and tools. Use the Jarvis MCP server for authoritative Jarvis state, permissions, UI views, and durable tasks. Be concise, truthful, and never invent unavailable state.\n")
+              meta_path = os.path.join(profile_dir, "profile.yaml")
+              try:
+                  with open(meta_path, encoding="utf-8") as meta_file:
+                      meta = yaml.safe_load(meta_file) or {}
+              except FileNotFoundError:
+                  meta = {}
+              if not isinstance(meta, dict):
+                  raise RuntimeError("Jarvis Hermes profile metadata is not a mapping")
+              meta["description"] = "Jarvis personal cloud coordinator"
+              ui_meta = meta.get("ui_meta") if isinstance(meta.get("ui_meta"), dict) else {}
+              bot_meta = ui_meta.get("hermes-bots") if isinstance(ui_meta.get("hermes-bots"), dict) else {}
+              bot_meta.setdefault("title", "Jarvis")
+              ui_meta["hermes-bots"] = bot_meta
+              meta["ui_meta"] = ui_meta
+              with open(meta_path, "w", encoding="utf-8") as meta_file:
+                  yaml.safe_dump(meta, meta_file, sort_keys=False, allow_unicode=True)
+              subprocess.run(["hermes", "-p", "jarvis", "chat", "-c", "Bot Chat", "--create-if-missing"], check=True)
+              PY
+              chmod 600 /opt/data/.env /opt/data/profiles/jarvis/.env
+              chown -R 10000:10000 /opt/data
           env:
             - name: API_SERVER_KEY
               valueFrom: { secretKeyRef: { name: hermes-api, key: API_SERVER_KEY } }
+            - name: JARVIS_PROFILE_API_KEY
+              valueFrom: { secretKeyRef: { name: hermes-api, key: JARVIS_API_SERVER_KEY, optional: true } }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
           volumeMounts:
             - { name: data, mountPath: /opt/data }
@@ -181,11 +233,12 @@ spec:
           image: jarvis-hermes-dashboard:20260920
           imagePullPolicy: IfNotPresent
           resources:
-            requests: { cpu: 100m, memory: 256Mi }
-            limits: { cpu: "2", memory: 1Gi }
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
           args: ["hermes", "gateway", "run"]
           env:
+            - { name: HERMES_HOME, value: "/opt/data" }
             - { name: HERMES_DASHBOARD, value: "true" }
             - { name: HERMES_DASHBOARD_HOST, value: "0.0.0.0" }
             - { name: HERMES_DASHBOARD_PORT, value: "9119" }
@@ -199,17 +252,17 @@ spec:
               value: "0.0.0.0"
             - name: API_SERVER_KEY
               valueFrom: { secretKeyRef: { name: hermes-api, key: API_SERVER_KEY } }
+            - name: JARVIS_PROFILE_API_KEY
+              valueFrom: { secretKeyRef: { name: hermes-api, key: JARVIS_API_SERVER_KEY, optional: true } }
             - name: DEEPSEEK_API_KEY
               valueFrom: { secretKeyRef: { name: hermes-provider, key: DEEPSEEK_API_KEY } }
             - name: JARVIS_INTERNAL_URL
               value: http://100.77.157.73:8080
             - name: JARVIS_BRIDGE_KEY
               valueFrom: { secretKeyRef: { name: hermes-bridge, key: bridge-key } }
-            # Native terminal/file tools are excluded by platform_toolsets.
-            # Jarvis capabilities arrive only through the read-only MCP provider.
-            # Hermes runs inside its own official container. Keep its unused
-            # native terminal backend local to that container; project and
-            # host execution go through the Jarvis Node Bridge instead.
+            # Hermes native Skills, toolsets and configured MCP servers are
+            # available to the Jarvis Agent. Native terminal/file access remains
+            # local to this container; host/project execution uses Node Bridge.
             - name: TERMINAL_ENV
               value: local
           ports:

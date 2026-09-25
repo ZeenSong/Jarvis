@@ -92,6 +92,7 @@ ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS workspace_id UUID REF
 UPDATE conversation_messages m SET owner_device_id=COALESCE(m.owner_device_id,c.owner_device_id),owner_user_id=COALESCE(m.owner_user_id,c.owner_user_id) FROM conversations c WHERE m.conversation_id=c.id AND (m.owner_device_id IS NULL OR m.owner_user_id IS NULL);
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS sequence BIGSERIAL;
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS hermes_run_id TEXT;
 CREATE INDEX IF NOT EXISTS message_conversation ON conversation_messages(conversation_id,created_at);
 CREATE INDEX IF NOT EXISTS message_owner_sequence ON conversation_messages(owner_user_id,conversation_id,sequence);
 CREATE TABLE IF NOT EXISTS run_events (id BIGSERIAL PRIMARY KEY,run_id UUID NOT NULL REFERENCES agent_runs(id),agent_id TEXT NOT NULL REFERENCES agent_definitions(id),type TEXT NOT NULL,payload JSONB NOT NULL,timestamp TIMESTAMPTZ NOT NULL DEFAULT now());

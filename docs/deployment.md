@@ -5,9 +5,9 @@
 ## 构建与导入
 
 ```bash
-docker build -f apps/server/Dockerfile -t jarvis-server:0.3.0-preview.1 .
-docker save jarvis-server:0.3.0-preview.1 -o jarvis-server-0.3.0-preview.1.tar
-sudo k3s ctr images import jarvis-server-0.3.0-preview.1.tar
+docker build -f apps/server/Dockerfile -t jarvis-server:0.3.1 .
+docker save jarvis-server:0.3.1 -o jarvis-server-0.3.1.tar
+sudo k3s ctr images import jarvis-server-0.3.1.tar
 ```
 
 若使用镜像仓库，修改 deploy/k8s/server.yaml 的 image 为实际地址。单节点默认一个副本，Recreate 避免 hostNetwork 端口冲突。

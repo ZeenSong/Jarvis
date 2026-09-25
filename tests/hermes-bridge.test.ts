@@ -1,17 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HermesClient } from "../packages/hermes-bridge/src/index.js";
+import { deriveHermesProfileKey, hermesAgentConfig, HermesClient } from "../packages/hermes-bridge/src/index.js";
 import { HermesRuntime } from "../packages/hermes-runtime/src/index.js";
 
 test("Hermes bridge forwards authenticated session and parses SSE deltas", async () => {
   let request: Request | undefined;
   const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"你好"}}]}\n\ndata: [DONE]\n\n')); c.close(); } });
-  const client = new HermesClient("http://hermes:8642", "secret", async (input, init) => { request = new Request(input, init); return new Response(body, { status: 200 }); });
-  const values = []; for await (const value of client.stream([{ role: "user", content: "hi" }], { sessionId: "session-1", tools: [{ type: "function", function: { name: "system_status_read", parameters: { type: "object" } } }] })) values.push(value);
+  const client = new HermesClient("http://hermes:8642/p/jarvis", "secret", async (input, init) => { request = new Request(input, init); return new Response(body, { status: 200 }); });
+  const values = []; for await (const value of client.stream([{ role: "user", content: "hi" }], { sessionId: "session-1", sessionKey: "jarvis:device-1", tools: [{ type: "function", function: { name: "system_status_read", parameters: { type: "object" } } }] })) values.push(value);
   assert.deepEqual(values.map((v) => v.type), ["delta", "completed"]);
+  assert.equal(new URL(request!.url).pathname, "/p/jarvis/v1/chat/completions");
   assert.equal(request?.headers.get("authorization"), "Bearer secret");
   assert.equal(request?.headers.get("x-hermes-session-id"), "session-1");
+  assert.equal(request?.headers.get("x-hermes-session-key"), "jarvis:device-1");
   assert.match(await request!.text(), /system_status_read/);
+});
+
+test("Hermes Agent config targets the named Jarvis profile", () => {
+  const config = hermesAgentConfig({
+    HERMES_URL: "http://hermes:8642/p/jarvis/",
+    HERMES_PROFILE: "jarvis",
+    HERMES_API_KEY: "gateway-secret",
+  });
+  assert.deepEqual(config, {
+    url: "http://hermes:8642/p/jarvis",
+    profile: "jarvis",
+    apiKey: deriveHermesProfileKey("gateway-secret", "jarvis"),
+  });
 });
 
 test("Hermes bridge reconstructs streamed tool calls for the Kernel loop", async () => {

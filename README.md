@@ -1,15 +1,15 @@
 # Jarvis
 
-个人私有云骨架：TypeScript 模块化单体 + PostgreSQL + Kotlin/Compose Android。实现目标以 [M1 方案](Jarvis_M1_常驻服务与移动监控.md) 为准；真实环境验收进度见 [验收记录](docs/m1-acceptance.md)。
+个人私有云：TypeScript 模块化单体 + PostgreSQL + Kotlin/Compose Android。当前发布为 M3.1，版本 `v0.3.1`；实现目标与验收边界见 [M3.1 发布记录](docs/m3.1-release.md)。
 
 M2 预发布版本 `0.2.0-rc.1` 已增加真实对话、分层 Agent、隔离 Worker 与 Web/Android 动态界面。交付与启动见 [M2 操作指导](deploy/m2/README.md)，通过项和上线前剩余检查见 [M2 验收记录](docs/m2/acceptance.md)。下方 v0.1.0 Release 仍为已验收的正式版本。
 
 ## 下载与镜像
 
-- Android APK 与可离线导入的服务镜像：[v0.1.0 Release](https://github.com/ZeenSong/Jarvis/releases/tag/v0.1.0)
-- 容器镜像：`ghcr.io/zeensong/jarvis-server:0.1.0`
+- M3.1 `v0.3.1`：Android APK 与服务镜像见 [GitHub Release](https://github.com/ZeenSong/Jarvis/releases/tag/v0.3.1)
+- 容器镜像：`jarvis-server:0.3.1`（可导入目标 K3s 节点）
 
-当前 APK 是 M1 调试签名构建，适合自用测试；升级正式签名版本前应先卸载它，或使用相同签名密钥。
+当前 APK 是 M3.1 调试签名构建，适合自用测试；升级正式签名版本前应先卸载它，或使用相同签名密钥。
 
 ## 本地运行
 

@@ -12,7 +12,7 @@ if [[ ! -f /sys/fs/cgroup/cgroup.controllers ]] && ! awk '$1=="memory" && $4==1 
   exit 1
 fi
 command -v docker >/dev/null
-docker image inspect jarvis-server:0.3.0-preview.1 >/dev/null
+docker image inspect jarvis-server:0.3.1 >/dev/null
 docker image inspect postgres:17-alpine >/dev/null
 jarvis_temp=$(mktemp -d /tmp/jarvis-bootstrap.XXXXXX)
 trap 'rm -f "$jarvis_temp/tailscale-install.sh" "$jarvis_temp/k3s-install.sh" "$jarvis_temp/postgres-password" "$jarvis_temp/database-url" "$jarvis_temp/tailscale-ip"; rmdir "$jarvis_temp"' EXIT
@@ -39,7 +39,7 @@ fi
 systemctl enable --now k3s
 kctl() { k3s kubectl --server="https://$jarvis_tailnet_ip:6443" "$@"; }
 kctl wait --for=condition=Ready node --all --timeout=180s
-docker save jarvis-server:0.3.0-preview.1 postgres:17-alpine | k3s ctr images import -
+docker save jarvis-server:0.3.1 postgres:17-alpine | k3s ctr images import -
 kctl apply -f deploy/k8s/namespace.yaml
 if ! kctl -n jarvis get secret jarvis-secrets >/dev/null 2>&1; then
   umask 077

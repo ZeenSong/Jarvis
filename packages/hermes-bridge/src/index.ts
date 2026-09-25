@@ -4,11 +4,45 @@ export type HermesMessage = { role: "system" | "user" | "assistant" | "tool"; co
 export type HermesDelta = { type: "delta" | "tool.started" | "tool.completed" | "completed" | "error"; text?: string; payload?: unknown };
 export type HermesTool = { type: "function"; function: { name: string; description?: string; parameters: Record<string, unknown> } };
 export type HermesToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
+export type HermesRun = {
+  run_id: string;
+  status: string;
+  session_id?: string;
+  output?: string;
+  error?: string;
+  usage?: unknown;
+  [key: string]: unknown;
+};
+export type HermesRunEvent = { event?: string; run_id?: string; delta?: string; output?: string; error?: string; [key: string]: unknown };
 
 type HermesContext = { owner: string; session: string; exp: number };
 
 function encoded(value: string) {
   return Buffer.from(value, "utf8").toString("base64url");
+}
+
+/** Derive the private API key used by a named Hermes profile when no separate
+ * Kubernetes secret has been provisioned for that profile yet. */
+export function deriveHermesProfileKey(baseKey: string, profile: string) {
+  if (!baseKey || !profile) throw Error("hermes_profile_key_missing");
+  return createHmac("sha256", baseKey).update(`hermes-profile:${profile}`).digest("base64url");
+}
+
+export type HermesAgentConfig = { url: string; apiKey: string; profile: string };
+
+/** Jarvis talks to a named Hermes Agent profile, never to the default profile. */
+export function hermesAgentConfig(env: NodeJS.ProcessEnv = process.env): HermesAgentConfig | undefined {
+  const profile = env.HERMES_PROFILE?.trim() || "jarvis";
+  const url = (env.HERMES_AGENT_URL?.trim() || env.HERMES_URL?.trim())?.replace(/\/$/, "");
+  const baseKey = env.HERMES_API_KEY?.trim();
+  if (!url || !baseKey) return undefined;
+  const apiKey = env.HERMES_PROFILE_API_KEY?.trim() || deriveHermesProfileKey(baseKey, profile);
+  return { url, apiKey, profile };
+}
+
+function endpoint(baseUrl: string, path: string) {
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  return new URL(path.replace(/^\/+/, ""), base);
 }
 
 /** Short lived, signed context passed to the MCP capability provider. */
@@ -37,13 +71,65 @@ export function verifyHermesContextToken(key: string, token: string): HermesCont
 export class HermesClient {
   constructor(private readonly baseUrl: string, private readonly key: string, private readonly fetcher: typeof fetch = fetch) {}
   async health(signal?: AbortSignal) {
-    const r = await this.fetcher(new URL("/health", this.baseUrl), { signal, headers: { Authorization: `Bearer ${this.key}` } });
+    const r = await this.fetcher(endpoint(this.baseUrl, "health"), { signal, headers: { Authorization: `Bearer ${this.key}` } });
     return r.ok;
   }
-  async *stream(messages: HermesMessage[], options: { sessionId: string; signal?: AbortSignal; model?: string; tools?: HermesTool[] }): AsyncGenerator<HermesDelta> {
-    const response = await this.fetcher(new URL("/v1/chat/completions", this.baseUrl), {
+  /** Admit a durable Hermes run. The HTTP response only acknowledges admission;
+   * execution continues in Hermes even if the caller disconnects. */
+  async startRun(input: string, options: { sessionId: string; sessionKey?: string; idempotencyKey: string; signal?: AbortSignal; model?: string; instructions?: string }) {
+    const response = await this.fetcher(endpoint(this.baseUrl, "v1/runs"), {
       method: "POST", signal: options.signal,
-      headers: { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json", "X-Hermes-Session-Id": options.sessionId },
+      headers: {
+        Authorization: `Bearer ${this.key}`, "Content-Type": "application/json",
+        "Idempotency-Key": options.idempotencyKey,
+        ...(options.sessionKey ? { "X-Hermes-Session-Key": options.sessionKey } : {}),
+      },
+      body: JSON.stringify({
+        input,
+        session_id: options.sessionId,
+        model: options.model ?? "hermes-agent",
+        ...(options.instructions ? { instructions: options.instructions } : {}),
+      }),
+    });
+    if (!response.ok) throw Error(`hermes_run_http_${response.status}`);
+    return await response.json() as HermesRun;
+  }
+  async runStatus(runId: string, signal?: AbortSignal) {
+    const response = await this.fetcher(endpoint(this.baseUrl, `v1/runs/${encodeURIComponent(runId)}`), {
+      signal, headers: { Authorization: `Bearer ${this.key}` },
+    });
+    if (!response.ok) throw Error(`hermes_run_status_http_${response.status}`);
+    return await response.json() as HermesRun;
+  }
+  async *runEvents(runId: string, signal?: AbortSignal): AsyncGenerator<HermesRunEvent> {
+    const response = await this.fetcher(endpoint(this.baseUrl, `v1/runs/${encodeURIComponent(runId)}/events`), {
+      signal, headers: { Authorization: `Bearer ${this.key}`, Accept: "text/event-stream" },
+    });
+    if (!response.ok || !response.body) throw Error(`hermes_run_events_http_${response.status}`);
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+    while (true) {
+      const next = await reader.read(); if (next.done) break;
+      buffer += decoder.decode(next.value, { stream: true });
+      const records = buffer.split("\n\n"); buffer = records.pop() ?? "";
+      for (const record of records) {
+        const data = record.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+        if (!data) continue;
+        try { yield JSON.parse(data) as HermesRunEvent; } catch { /* keep the run monitor alive */ }
+      }
+    }
+  }
+  async sessionMessages(sessionId: string, signal?: AbortSignal) {
+    const response = await this.fetcher(endpoint(this.baseUrl, `api/sessions/${encodeURIComponent(sessionId)}/messages`), {
+      signal, headers: { Authorization: `Bearer ${this.key}` },
+    });
+    if (!response.ok) throw Error(`hermes_session_messages_http_${response.status}`);
+    const data = await response.json() as any;
+    return Array.isArray(data) ? data : Array.isArray(data.messages) ? data.messages : Array.isArray(data.data) ? data.data : [];
+  }
+  async *stream(messages: HermesMessage[], options: { sessionId: string; sessionKey?: string; signal?: AbortSignal; model?: string; tools?: HermesTool[] }): AsyncGenerator<HermesDelta> {
+    const response = await this.fetcher(endpoint(this.baseUrl, "v1/chat/completions"), {
+      method: "POST", signal: options.signal,
+      headers: { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json", "X-Hermes-Session-Id": options.sessionId, ...(options.sessionKey ? { "X-Hermes-Session-Key": options.sessionKey } : {}) },
       body: JSON.stringify({ model: options.model ?? "hermes-agent", messages, stream: true, ...(options.tools?.length ? { tools: options.tools, tool_choice: "auto" } : {}) }),
     });
     if (!response.ok || !response.body) throw Error(`hermes_http_${response.status}`);
@@ -64,7 +150,7 @@ export class HermesClient {
       }
     }
   }
-  async complete(messages: HermesMessage[], tools: HermesTool[], options: { sessionId: string; signal?: AbortSignal; model?: string; contextToken?: string; delta?: (text: string) => Promise<void>; report?: (usage: { provider: string; model: string; input_tokens: number; output_tokens: number; cached_input_tokens: number }) => Promise<void> }) {
+  async complete(messages: HermesMessage[], tools: HermesTool[], options: { sessionId: string; sessionKey?: string; signal?: AbortSignal; model?: string; contextToken?: string; delta?: (text: string) => Promise<void>; report?: (usage: { provider: string; model: string; input_tokens: number; output_tokens: number; cached_input_tokens: number }) => Promise<void> }) {
     let content = "";
     const calls = new Map<number, HermesToolCall>();
     const contextualMessages = options.contextToken

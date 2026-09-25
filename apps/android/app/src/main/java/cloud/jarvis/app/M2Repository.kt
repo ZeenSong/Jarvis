@@ -161,7 +161,10 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
         when(topic) {
             "resource.updated" -> task { accept(value.jsonObject) }
             "conversation.updated" -> task { refresh() }
-            "workspace.created", "workspace.artifact.updated" -> task { openWorkspace() }
+            "workspace.created", "workspace.updated", "workspace.artifact.updated" -> task { openWorkspace() }
+            "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled",
+            "agent.run.created", "agent.run.updated" -> task { refresh() }
+            "conversation.status" -> selected?.let { id -> task { loadConversation(id) } }
             "conversation.message.delta" -> {
                 val p = value.jsonObject
                 if(p["conversation_id"]?.jsonPrimitive?.content == selected) {
@@ -179,7 +182,6 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
                 val status = if (topic.endsWith("started")) "running" else if (topic.endsWith("failed")) "failed" else "completed"
                 toolStates.value = toolStates.value + (conversationId to ((toolStates.value[conversationId] ?: emptyMap()) + (callId to (p["capability"]?.jsonPrimitive?.contentOrNull ?: "tool") + "|" + status)))
             }
-            "agent.run.updated", "agent.run.created" -> task { refresh() }
         }
     }
 }

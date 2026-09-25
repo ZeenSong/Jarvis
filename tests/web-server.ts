@@ -5,10 +5,45 @@ import { createPairingCode } from "../apps/server/src/auth.js";
 import { controlledRegistry, seedControlRuns } from "./controlled-runtime.js";
 import { createServer } from "node:http";
 
+const hermesRuns = new Map<string, { answer: string; status: string }>();
 const hermesStub = createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ status: "healthy" }));
+    return;
+  }
+  if (req.method === "POST" && req.url === "/v1/runs") {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const input = JSON.parse(body).input ?? "";
+      const runId = `hermes-test-${hermesRuns.size + 1}`;
+      const answer = String(input).includes("CPU")
+        ? "当前 CPU 使用率为 0%，这是测试环境的 Hermes 流式回复。"
+        : "测试环境的 Hermes 流式回复已完成。";
+      hermesRuns.set(runId, { answer, status: "queued" });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ run_id: runId, status: "queued" }));
+    });
+    return;
+  }
+  const eventMatch = req.method === "GET" && req.url?.match(/^\/v1\/runs\/([^/]+)\/events$/);
+  if (eventMatch) {
+    const run = hermesRuns.get(decodeURIComponent(eventMatch[1]));
+    if (!run) { res.writeHead(404); res.end(); return; }
+    run.status = "completed";
+    res.writeHead(200, { "content-type": "text/event-stream", connection: "keep-alive", "cache-control": "no-cache" });
+    res.write(`data: ${JSON.stringify({ event: "message.delta", delta: run.answer })}\n\n`);
+    res.write(`data: ${JSON.stringify({ event: "run.completed", status: "completed", output: run.answer })}\n\n`);
+    res.end();
+    return;
+  }
+  const statusMatch = req.method === "GET" && req.url?.match(/^\/v1\/runs\/([^/]+)$/);
+  if (statusMatch) {
+    const run = hermesRuns.get(decodeURIComponent(statusMatch[1]));
+    if (!run) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ run_id: statusMatch[1], status: run.status, output: run.status === "completed" ? run.answer : undefined }));
     return;
   }
   if (req.url !== "/v1/chat/completions" || req.method !== "POST") {

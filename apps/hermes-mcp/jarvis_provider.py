@@ -1,7 +1,7 @@
-"""Jarvis Capability provider for the official Hermes MCP client.
+"""Jarvis capability provider for the Hermes Jarvis Agent.
 
-This process is intentionally small: Hermes owns the agent loop, while Jarvis
-remains the authority for state, permissions, views, and durable runs.
+Jarvis is a first-class Hermes Agent profile. This MCP server is only its
+Jarvis-kernel capability bridge; it is not the Agent identity.
 """
 
 from __future__ import annotations
@@ -48,7 +48,8 @@ def _call(tool: str, context_token: str, **arguments: object) -> str:
 server = MCPServer(
     "jarvis",
     instructions=(
-        "Jarvis authoritative capability provider. Hermes owns reasoning and the "
+        "Jarvis kernel capability provider for the first-class Jarvis Agent. "
+        "Hermes owns reasoning and the "
         "tool loop; use these tools for current Jarvis state, metrics, user runs, "
         "usage, and dashboard views. Every tool call requires the exact context_token "
         "from the Jarvis system message. Never invent one."

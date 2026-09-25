@@ -40,9 +40,10 @@ Node 通过 nvm 安装时不在 sudo 的默认 PATH 中，因此安装命令使�
 ### M3.1 内部 Hermes（可选）
 
 `deploy/k8s/hermes.yaml` 提供官方 Hermes Agent 容器、内部 Service、PVC 和健康检查。
-先生成并替换 `hermes-api` Secret，再将 `HERMES_ENABLED` 改为 `true`；Gateway 只通过
-Kubernetes Service 访问 Hermes，客户端不会直接接触 Hermes API。启用前应锁定镜像
-版本和 digest，并完成工具权限与会话隔离验收。
+先生成并替换 `hermes-api` Secret，再将 `HERMES_ENABLED` 改为 `true`；Jarvis 在 Hermes
+Gateway 中注册为原生 `jarvis` Agent Profile，客户端固定访问 `/p/jarvis`，不会落到
+默认 Agent。Gateway 只通过 Kubernetes Service 访问 Hermes，客户端不会直接接触 Hermes
+API。启用前应锁定镜像版本和 digest，并完成 Profile、Skills、MCP 和会话隔离验收。
 
 当前单节点通过 Tailscale 访问 Jarvis：
 
@@ -52,7 +53,8 @@ http://100.77.157.73:8080/home
 
 客户端和网页只访问 Jarvis 的 8080 端口。Hermes 使用 `hermes-core.jarvis.svc.cluster.local:8642`
 这个 ClusterIP Service，仅允许 `jarvis-server` Pod 访问；8642 不对 Tailnet 客户端开放。
-Jarvis Core 通过签名短期 context token 调用 Hermes 的 `mcp__jarvis__*` 工具，工具结果再回写
+Jarvis Core 通过签名短期 context token 调用 Jarvis Agent 已启用的 `mcp__jarvis__*` MCP 能力，
+Hermes 的原生 Skills、toolsets 和其他已配置 MCP 仍由该 Agent Profile 管理；工具结果再回写
 `conversation.*` 事件和 `view_id`。要从集群内检查 Hermes，用 `kubectl --kubeconfig .local/m2.kubeconfig
 -n jarvis` 查看 `hermes-core` Pod、Service 和日志；不要把 API key 或桥接密钥放进 URL。
 

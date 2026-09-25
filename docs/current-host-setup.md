@@ -1,6 +1,6 @@
 # 单机部署与 Android 安装
 
-需要 Linux、systemd、Docker 和 sudo。先按 README 构建 `jarvis-server:0.3.0-preview.1`，并拉取 `postgres:17-alpine`。从仓库根目录运行：
+需要 Linux、systemd、Docker 和 sudo。先按 README 构建 `jarvis-server:0.3.1`，并拉取 `postgres:17-alpine`。从仓库根目录运行：
 
 ```bash
 sudo --preserve-env=HTTP_PROXY,HTTPS_PROXY,NO_PROXY,http_proxy,https_proxy,no_proxy bash deploy/bootstrap-host.sh
