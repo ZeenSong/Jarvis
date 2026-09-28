@@ -4,6 +4,21 @@ import { MediaStore } from "../apps/server/src/media.js";
 import { buildApp } from "../apps/server/src/app.js";
 import { createPairingCode, pair } from "../apps/server/src/auth.js";
 import { randomUUID } from "node:crypto";
+import { assistantContentParts } from "../apps/web/src/assistant-ui-adapter.js";
+
+test("assistant media markers become authenticated image parts", () => {
+  const legacy = assistantContentParts("看这张图 MEDIA:/opt/data/media/tmp/photo.png");
+  assert.equal(legacy[0].type, "text");
+  assert.equal(legacy[1].type, "file");
+  assert.equal((legacy[1] as any).data, "/api/media/file?path=%2Fopt%2Fdata%2Fmedia%2Ftmp%2Fphoto.png");
+  assert.equal((legacy[1] as any).sourceType, "url");
+
+  const published = assistantContentParts("MEDIA:/api/media/media-token/thumbnail");
+  assert.equal(published.length, 1);
+  assert.equal(published[0].type, "file");
+  assert.equal((published[0] as any).data, "/api/media/media-token/thumbnail");
+});
+
 test("media grants isolate devices, expire and do not retain caller buffers",()=>{
   let now=0;const store=new MediaStore(()=>now);
   const data=Buffer.from([137,80,78,71,13,10,26,10]);

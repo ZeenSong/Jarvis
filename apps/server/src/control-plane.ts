@@ -4,7 +4,7 @@ import type { Database } from "./persistence.js";
 import { transaction } from "../../../packages/agent-manager/src/index.js";
 import { ownerUserId } from "./ownership.js";
 
-const approvalInput = z.object({ run_id: z.uuid().optional(), capability: z.string().trim().min(1).max(200), input: z.record(z.string(), z.unknown()).default({}) }).strict();
+const approvalInput = z.object({ run_id: z.uuid().optional(), turn_id: z.uuid().optional(), activity_id: z.uuid().optional(), capability: z.string().trim().min(1).max(200), input: z.record(z.string(), z.unknown()).default({}) }).strict();
 const scheduleInput = z.object({ prompt: z.string().trim().min(1).max(16000), cadence: z.enum(["once", "daily", "weekly"]), next_run_at: z.iso.datetime(), conversation_id: z.uuid().optional() }).strict();
 
 export class ControlPlane {
@@ -16,13 +16,20 @@ export class ControlPlane {
     const id = randomUUID(); const notificationId = randomUUID();
     const user = await ownerUserId(this.db, owner);
     if (p.run_id && !(await this.db.query("SELECT 1 FROM agent_runs WHERE id=$1 AND (requested_by=$2 OR requested_by_user_id=$3)", [p.run_id, owner, user ?? null])).rowCount) throw Error("not_found");
+    if (p.turn_id && !(await this.db.query("SELECT 1 FROM conversation_turns WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.turn_id, owner, user ?? null])).rowCount) throw Error("not_found");
+    if (p.activity_id && !(await this.db.query("SELECT 1 FROM conversation_activities WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.activity_id, owner, user ?? null])).rowCount) throw Error("not_found");
     const result = await transaction(this.db, async (c) => {
       if (p.run_id) {
         await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`approval:${user ?? owner}:${p.run_id}:${p.capability}`]);
         const existing = (await c.query("SELECT * FROM approvals WHERE (owner_device_id=$1 OR owner_user_id=$2) AND run_id=$3 AND capability=$4 AND status='pending' ORDER BY created_at DESC LIMIT 1", [owner, user ?? null, p.run_id, p.capability])).rows[0];
         if (existing) return { row: existing, created: false };
       }
-      const result = (await c.query("INSERT INTO approvals(id,owner_device_id,owner_user_id,run_id,capability,input) VALUES($1,$2,$3,$4,$5,$6) RETURNING *", [id, owner, user ?? null, p.run_id ?? null, p.capability, JSON.stringify(p.input)])).rows[0];
+      const result = (await c.query("INSERT INTO approvals(id,owner_device_id,owner_user_id,run_id,turn_id,activity_id,capability,input) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [id, owner, user ?? null, p.run_id ?? null, p.turn_id ?? null, p.activity_id ?? null, p.capability, JSON.stringify(p.input)])).rows[0];
+      if (p.turn_id) await c.query("UPDATE conversation_turns SET status='waiting_approval',updated_at=now() WHERE id=$1", [p.turn_id]);
+      if (p.activity_id) {
+        const activity = await c.query("UPDATE conversation_activities SET status='waiting_approval' WHERE id=$1 AND status IN ('queued','running','waiting_approval') RETURNING id", [p.activity_id]);
+        if (!activity.rowCount) throw Error("invalid_activity_transition");
+      }
       await c.query("INSERT INTO notifications(id,owner_device_id,owner_user_id,kind,title,body,reference_id) VALUES($1,$2,$3,'approval','需要审批',$4,$5)", [notificationId, owner, user ?? null, p.capability, id]);
       return { row: result, created: true };
     });
@@ -32,7 +39,10 @@ export class ControlPlane {
   async resolveApproval(owner: string, id: string, status: "approved" | "rejected") {
     const user = await ownerUserId(this.db, owner);
     const result = await this.db.query("UPDATE approvals SET status=$3,resolved_at=now() WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$4) AND status='pending' AND expires_at>now() RETURNING *", [z.uuid().parse(id), owner, status, user ?? null]);
-    if (!result.rowCount) throw Error("approval_not_pending"); this.emit("approval.resolved", { approval_id: id, status }); return result.rows[0];
+    if (!result.rowCount) throw Error("approval_not_pending");
+    if (result.rows[0].turn_id) await this.db.query("UPDATE conversation_turns SET status=$2,updated_at=now() WHERE id=$1", [result.rows[0].turn_id, status === "approved" ? "running" : "cancelled"]);
+    if (result.rows[0].activity_id) await this.db.query("UPDATE conversation_activities SET status=$2 WHERE id=$1", [result.rows[0].activity_id, status === "approved" ? "running" : "cancelled"]);
+    this.emit("approval.resolved", { approval_id: id, status }); return result.rows[0];
   }
   async notifications(owner: string) { const user = await ownerUserId(this.db, owner); return (await this.db.query("SELECT * FROM notifications WHERE owner_device_id=$1 OR owner_user_id=$2 ORDER BY created_at DESC LIMIT 100", [owner, user ?? null])).rows; }
   async markNotification(owner: string, id: string) { const user = await ownerUserId(this.db, owner); const r = await this.db.query("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3) RETURNING *", [z.uuid().parse(id), owner, user ?? null]); if (!r.rowCount) throw Error("not_found"); return r.rows[0]; }

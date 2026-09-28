@@ -232,6 +232,10 @@ td {
   background: transparent;
   text-align: left;
 }
+.conversation-row { display: flex; gap: 5px; min-width: 0; }
+.conversation-row .conversation-entry { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-delete { flex: 0 0 30px; padding: 8px 0; color: var(--muted); text-align: center !important; }
+.conversation-delete:hover { color: #ff9d9d; background: #442733; }
 .chat {
   display: flex;
   flex-direction: column;

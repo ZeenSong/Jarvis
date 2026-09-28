@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,16 +9,18 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
-    "pair": "tsx apps/server/src/pair.ts",
     "demo": "tsx examples/test-agent.ts",
     "test:android-e2e": "tsx tests/run-android-e2e.ts",
     "build:web": "vite build apps/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
     "dev:web": "vite apps/web",
     "test:web": "playwright test",
+    "smoke:m32": "node scripts/m32-live-smoke.mjs",
+    "smoke:m32:kernel": "tsx scripts/m32-real-kernel-smoke.ts",
     "test:android-m2": "tsx tests/run-android-m2.ts"
   },
   "dependencies": {
+    "@assistant-ui/react": "^0.15.22",
     "@fastify/websocket": "^11.2.0",
     "@node-rs/argon2": "^2.0.2",
     "echarts": "^6.1.0",

@@ -29,6 +29,26 @@ import { appDescriptorSchema, resolveAppLink } from "../../../packages/app-bridg
 import { ownerUserId } from "./ownership.js";
 import { capabilitySchema, mergeCapabilities, parseCapabilityCatalog, type Capability } from "../../../packages/capability-registry/src/index.js";
 import { IntegrationCredentialStore } from "./integration-credentials.js";
+import { householdIdForOwner } from "./households.js";
+
+/** Keep historical charts bounded; live status may contain verbose network data. */
+function compactMetricData(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const pick = (part: unknown, keys: string[]) => {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
+    const object = part as Record<string, unknown>;
+    return Object.fromEntries(keys.filter((key) => object[key] !== undefined).map((key) => [key, object[key]]));
+  };
+  return {
+    cpu: pick(source.cpu, ["usage_percent", "load_1m", "load_5m", "load_15m", "temperature_c"]),
+    gpu: pick(source.gpu, ["utilization_percent", "memory_used_bytes", "memory_total_bytes", "temperature_c"]),
+    memory: pick(source.memory, ["usage_percent", "used_bytes", "total_bytes", "available_bytes"]),
+    disks: Array.isArray(source.disks)
+      ? source.disks.map((disk) => pick(disk, ["mount", "usage_percent"])).filter(Boolean)
+      : [],
+  };
+}
 export const m2Topics = [
   "application.list",
   "integration.credential.list",
@@ -39,7 +59,10 @@ export const m2Topics = [
   "conversation.create",
   "conversation.list",
   "conversation.get",
+  "conversation.delete",
   "conversation.message",
+  "conversation.question.create",
+  "conversation.question.answer",
   "agent.definition.list",
   "agent.run.create",
   "agent.run.list",
@@ -82,6 +105,13 @@ export const m2Events = [
   "conversation.tool.started",
   "conversation.tool.completed",
   "conversation.tool.failed",
+  "conversation.activity.started",
+  "conversation.activity.waiting_approval",
+  "conversation.activity.completed",
+  "conversation.activity.failed",
+  "conversation.activity.cancelled",
+  "conversation.question.created",
+  "conversation.question.answered",
   "conversation.status",
   "task.created",
   "task.started",
@@ -113,6 +143,14 @@ const capabilityCatalog: Capability[] = [
   { id: "system.metrics.read", kind: "kernel", risk: "read", approval_required: false },
   { id: "agent.list", kind: "kernel", risk: "read", approval_required: false },
   { id: "agent.run.read", kind: "kernel", risk: "read", approval_required: false },
+  { id: "homeassistant.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
+  { id: "homeassistant.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
+  { id: "frigate.events.read", kind: "mcp", risk: "read", approval_required: false, provider: "frigate" },
+  { id: "frigate.event.snapshot.read", kind: "mcp", risk: "read", approval_required: false, provider: "frigate" },
+  { id: "immich.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
+  { id: "immich.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
+  { id: "schedule.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
+  { id: "conversation.question.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
   { id: "ui.view.show", kind: "kernel", risk: "write", approval_required: false },
   { id: "node.system.read", kind: "node", risk: "read", approval_required: false },
   { id: "node.file.read", kind: "node", risk: "read", approval_required: false },
@@ -169,7 +207,7 @@ export class M2 {
     for (const schedule of due) {
       try {
         let conversationId = schedule.conversation_id;
-        if (!conversationId) conversationId = (await this.db.query("INSERT INTO conversations(id,title,owner_device_id,owner_user_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3)) RETURNING id", [randomUUID(), `定时任务 · ${String(schedule.prompt).slice(0, 30)}`, schedule.owner_device_id])).rows[0].id;
+        if (!conversationId) conversationId = (await this.db.query("INSERT INTO conversations(id,title,owner_device_id,owner_user_id,household_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3),$4) RETURNING id", [randomUUID(), `定时任务 · ${String(schedule.prompt).slice(0, 30)}`, schedule.owner_device_id, await householdIdForOwner(this.db, schedule.owner_device_id)])).rows[0].id;
         await this.conversations.createScheduled(schedule.owner_device_id, conversationId, schedule.prompt, `schedule:${schedule.id}:${new Date(schedule.next_run_at).toISOString()}`);
         await this.db.query(schedule.cadence === "once" ? "UPDATE schedules SET enabled=false,conversation_id=$2,updated_at=now() WHERE id=$1" : "UPDATE schedules SET next_run_at=next_run_at + CASE cadence WHEN 'daily' THEN interval '1 day' ELSE interval '7 days' END,conversation_id=$2,updated_at=now() WHERE id=$1", [schedule.id, conversationId]);
       } catch { /* leave the due row for the next scheduler pass */ }
@@ -215,9 +253,17 @@ export class M2 {
       await this.db.query(
         "SELECT sampled_at,data FROM system_metrics WHERE sampled_at>now()-interval '24 hours' ORDER BY sampled_at DESC LIMIT 2880",
       )
-    ).rows.reverse();
+    ).rows.reverse().map((sample: any) => ({
+      sampled_at: sample.sampled_at,
+          data: compactMetricData(sample.data),
+        }));
+    const maxPoints = 240;
+    const stride = Math.max(1, Math.ceil(samples.length / maxPoints));
+    const bounded = samples.length > maxPoints
+      ? samples.filter((_, index) => index === 0 || index === samples.length - 1 || index % stride === 0)
+      : samples;
     const plotted: any[] = [];
-    for (const sample of samples) {
+    for (const sample of bounded) {
       const previous = plotted.at(-1);
       if (
         previous &&
@@ -238,11 +284,11 @@ export class M2 {
     return {
       samples: plotted,
       coverage: {
-        from: samples[0]?.sampled_at ?? null,
-        to: samples.at(-1)?.sampled_at ?? null,
+        from: bounded[0]?.sampled_at ?? null,
+        to: bounded.at(-1)?.sampled_at ?? null,
         missing: samples.length < 2880,
         expected_interval_seconds: 30,
-        note: "仅显示实际采样；未采集时段无数据",
+        note: "仅显示实际采样；未采集时段无数据；历史曲线已下采样",
       },
     };
   }
@@ -260,7 +306,7 @@ export class M2 {
     return next;
   }
   async sample(data: unknown) {
-    await this.db.query("INSERT INTO system_metrics(data) VALUES($1)", [data]);
+    await this.db.query("INSERT INTO system_metrics(data) VALUES($1)", [compactMetricData(data)]);
     await this.serialize("system/status", () =>
       this.publish("system/status", data),
     );
@@ -296,7 +342,13 @@ export class M2 {
         const revision = Number(new Date((data as any)?.run?.updated_at ?? (data as any)?.conversation?.updated_at ?? 0).getTime()) || Date.now();
         return { version: 1 as const, resource: name, revision, data };
       }
-      return this.publish(name, data);
+      const row = (
+        await this.db.query(
+          `INSERT INTO resources(resource,revision,data) VALUES($1,1,$2) ON CONFLICT(resource) DO UPDATE SET revision=resources.revision+1,data=excluded.data,updated_at=now() RETURNING revision`,
+          [name, data],
+        )
+      ).rows[0];
+      return { version: 1 as const, resource: name, revision: Number(row.revision), data };
     });
   }
   private async snapshot(name: string, owner?: string) {
@@ -383,8 +435,8 @@ export class M2 {
           .parse(p.title);
         const c = (
           await this.db.query(
-            "INSERT INTO conversations(id,title,owner_device_id,owner_user_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3)) RETURNING *",
-            [randomUUID(), title, device],
+            "INSERT INTO conversations(id,title,owner_device_id,owner_user_id,household_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3),$4) RETURNING *",
+            [randomUUID(), title, device, await householdIdForOwner(this.db, device)],
           )
         ).rows[0];
         this.push("conversation.updated", { conversation_id: c.id });
@@ -468,9 +520,23 @@ export class M2 {
       case "conversation.list":
         return this.conversations.list(device);
       case "conversation.get":
-        return this.conversations.get(z.uuid().parse(p.conversation_id), device);
+        {
+          const developer = p.developer === true;
+          if (developer) {
+            const user = await ownerUserId(this.db, device);
+            const role = user ? (await this.db.query("SELECT role FROM users WHERE id=$1", [user])).rows[0]?.role : undefined;
+            if (role !== "admin") throw Error("admin_required");
+          }
+          return this.conversations.get(z.uuid().parse(p.conversation_id), device, developer);
+        }
+      case "conversation.delete":
+        return this.conversations.delete(z.uuid().parse(p.conversation_id), device);
       case "conversation.message":
         return this.conversations.accept(device, p);
+      case "conversation.question.create":
+        return this.conversations.createQuestion(device, p);
+      case "conversation.question.answer":
+        return this.conversations.answerQuestion(device, z.uuid().parse(p.question_id), p.answer);
       case "agent.definition.list":
         return this.definitions(device);
       case "agent.claim": {

@@ -29,15 +29,6 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "conversation.tool.started", "conversation.tool.completed", "conversation.tool.failed", "conversation.status", "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated", "workspace.created", "workspace.updated", "workspace.opened", "workspace.artifact.updated", "approval.created", "approval.resolved", "notification.created", "schedule.created")
     private var topics = listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed")
 
-    suspend fun pair(server: String, code: String): Credentials = withContext(Dispatchers.IO) {
-        val base = normalizeServer(server)
-        val id = UUID.randomUUID().toString()
-        val body = buildJsonObject { put("device_id", id); put("code", code) }.toString()
-        http.newCall(Request.Builder().url("$base/api/v1/pair").post(body.toRequestBody("application/json".toMediaType())).build()).execute().use {
-            check(it.isSuccessful) { "配对失败 (${it.code})，请检查一次性配对码" }
-            Credentials(base, id, Json.parseToJsonElement(it.body!!.string()).jsonObject.getValue("token").jsonPrimitive.content)
-        }
-    }
     suspend fun login(server: String, username: String, password: String): Credentials = withContext(Dispatchers.IO) {
         val base = normalizeServer(server)
         val deviceId = UUID.randomUUID().toString()
@@ -123,7 +114,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     }
     suspend fun thumbnail(path:String):ByteArray = withContext(Dispatchers.IO) {
         require(cloud.jarvis.app.dynamicui.mediaPath.matches(path))
-        val auth=credentials ?: error("尚未配对")
+        val auth=credentials ?: error("尚未登录")
         val client=http.newBuilder().followRedirects(false).followSslRedirects(false).build()
         client.newCall(Request.Builder().url(auth.server+path).header("Authorization","Bearer ${auth.token}").build()).execute().use { response ->
             check(response.isSuccessful) { "图片暂不可用" }
@@ -137,7 +128,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
         }
     }
     suspend fun get(path: String): JsonElement = withContext(Dispatchers.IO) {
-        val auth = credentials ?: error("尚未配对")
+        val auth = credentials ?: error("尚未登录")
         http.newCall(Request.Builder().url(auth.server + path).header("Authorization", "Bearer ${auth.token}").build()).execute().use {
             check(it.isSuccessful) { "请求失败 (${it.code})" }; Json.parseToJsonElement(it.body!!.string())
         }

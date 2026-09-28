@@ -1,4 +1,13 @@
-# Reuse the official UI unchanged, from the same pinned engine version.
+# Reuse the official UI unchanged, from the same pinned engine version. The
+# second stage supplies the upstream open-source Immich MCP runtime; Jarvis
+# launches it per authorized call with the household credential.
+FROM ghcr.io/barryw/immichmcp:v0.4.0 AS immich-mcp
 FROM docker.io/nousresearch/hermes-agent@sha256:61b5b208cbda39186457116e4d267096bda7f503a135eef1572df3d8df216a7b
+COPY --from=immich-mcp /app /opt/immich-mcp
+COPY --from=immich-mcp /usr/share/dotnet /usr/share/dotnet
+COPY --from=immich-mcp /usr/bin/dotnet /usr/bin/dotnet
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV PATH="/usr/share/dotnet:${PATH}"
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 RUN cd /opt/hermes/web && npm run build
 CMD ["hermes", "dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open", "--skip-build"]

@@ -1,10 +1,64 @@
 export const m2Migration = `
-CREATE TABLE IF NOT EXISTS conversations (id UUID PRIMARY KEY,title TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS conversations (id UUID PRIMARY KEY,title TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),household_id UUID REFERENCES households(id) ON DELETE SET NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS household_id UUID REFERENCES households(id) ON DELETE SET NULL;
 UPDATE conversations c SET owner_user_id=d.user_id FROM devices d WHERE c.owner_device_id=d.id AND c.owner_user_id IS NULL AND d.user_id IS NOT NULL;
+UPDATE conversations c SET household_id=hm.household_id FROM household_members hm WHERE c.owner_user_id=hm.user_id AND c.household_id IS NULL;
 CREATE INDEX IF NOT EXISTS conversations_owner_updated ON conversations(owner_device_id,updated_at DESC);
 CREATE INDEX IF NOT EXISTS conversations_user_updated ON conversations(owner_user_id,updated_at DESC);
+-- Conversation V2 makes a turn and its activities durable first-class records.
+-- The legacy message rows remain as the transcript projection for clients that
+-- have not upgraded yet.
+CREATE TABLE IF NOT EXISTS conversation_turns (
+  id UUID PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+  owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  household_id UUID REFERENCES households(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','waiting_approval','waiting_question','completed','failed','cancelled')),
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS conversation_turns_conversation ON conversation_turns(conversation_id,created_at);
+CREATE INDEX IF NOT EXISTS conversation_turns_owner ON conversation_turns(owner_user_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS conversation_activities (
+  id UUID PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  turn_id UUID NOT NULL REFERENCES conversation_turns(id) ON DELETE CASCADE,
+  owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+  owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  tool_call_id TEXT,
+  capability TEXT NOT NULL,
+  group_key TEXT,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','waiting_approval','completed','failed','cancelled')),
+  input JSONB NOT NULL DEFAULT '{}',
+  output JSONB,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS conversation_activities_turn ON conversation_activities(turn_id,created_at);
+CREATE TABLE IF NOT EXISTS conversation_questions (
+  id UUID PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  turn_id UUID NOT NULL REFERENCES conversation_turns(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('boolean','single_choice')),
+  prompt TEXT NOT NULL,
+  options JSONB NOT NULL DEFAULT '[]',
+  answer JSONB,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','answered','expired','cancelled')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS conversation_questions_turn ON conversation_questions(turn_id,status);
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS turn_id UUID REFERENCES conversation_turns(id) ON DELETE SET NULL;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS activity_id UUID REFERENCES conversation_activities(id) ON DELETE SET NULL;
 CREATE TABLE IF NOT EXISTS agent_definitions (id TEXT PRIMARY KEY,name TEXT NOT NULL,tier TEXT NOT NULL CHECK(tier IN ('core','managed')),role TEXT NOT NULL,runtime_type TEXT NOT NULL,runtime_config JSONB NOT NULL DEFAULT '{}',lifecycle TEXT NOT NULL,enabled BOOLEAN NOT NULL DEFAULT true,description TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 INSERT INTO agent_definitions(id,name,tier,role,runtime_type,lifecycle) VALUES ('jarvis-core','Jarvis','core','coordinator','deepseek','long-lived'),('coding-agent','Coding Agent','managed','coding','codex','on-demand'),('ops-agent','Ops Agent','managed','ops','hermes','on-demand') ON CONFLICT DO NOTHING;
 UPDATE agent_definitions SET runtime_type='hermes',updated_at=now() WHERE (id='ops-agent' AND runtime_type='pydantic') OR (id='jarvis-core' AND runtime_type='deepseek');
@@ -85,7 +139,7 @@ UPDATE agent_runs r SET requested_by_user_id=d.user_id FROM devices d WHERE r.re
 CREATE INDEX IF NOT EXISTS run_parent ON agent_runs(parent_run_id);
 CREATE INDEX IF NOT EXISTS run_owner_user_created ON agent_runs(requested_by_user_id,created_at DESC);
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS last_event_sequence BIGINT NOT NULL DEFAULT 0;
-CREATE TABLE IF NOT EXISTS conversation_messages (id UUID PRIMARY KEY,conversation_id UUID NOT NULL REFERENCES conversations(id),owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,role TEXT NOT NULL CHECK(role IN ('user','jarvis','system')),content TEXT NOT NULL DEFAULT '',content_type TEXT NOT NULL DEFAULT 'text',status TEXT NOT NULL DEFAULT 'queued',run_id UUID REFERENCES agent_runs(id),view_id UUID,workspace_id UUID REFERENCES workspace_records(id) ON DELETE SET NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS conversation_messages (id UUID PRIMARY KEY,conversation_id UUID NOT NULL REFERENCES conversations(id),owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,role TEXT NOT NULL CHECK(role IN ('user','jarvis','system')),content TEXT NOT NULL DEFAULT '',content_type TEXT NOT NULL DEFAULT 'text',status TEXT NOT NULL DEFAULT 'queued',run_id UUID REFERENCES agent_runs(id),view_id UUID,workspace_id UUID REFERENCES workspace_records(id) ON DELETE SET NULL,turn_id UUID REFERENCES conversation_turns(id) ON DELETE SET NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL;
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspace_records(id) ON DELETE SET NULL;
@@ -93,6 +147,7 @@ UPDATE conversation_messages m SET owner_device_id=COALESCE(m.owner_device_id,c.
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS sequence BIGSERIAL;
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS hermes_run_id TEXT;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS turn_id UUID REFERENCES conversation_turns(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS message_conversation ON conversation_messages(conversation_id,created_at);
 CREATE INDEX IF NOT EXISTS message_owner_sequence ON conversation_messages(owner_user_id,conversation_id,sequence);
 CREATE TABLE IF NOT EXISTS run_events (id BIGSERIAL PRIMARY KEY,run_id UUID NOT NULL REFERENCES agent_runs(id),agent_id TEXT NOT NULL REFERENCES agent_definitions(id),type TEXT NOT NULL,payload JSONB NOT NULL,timestamp TIMESTAMPTZ NOT NULL DEFAULT now());

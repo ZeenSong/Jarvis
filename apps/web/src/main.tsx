@@ -1,7 +1,6 @@
-import { MarkdownContent } from "./markdown";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { Gateway } from "./gateway";
+import { Gateway, ensureSession } from "./gateway";
 import { randomUUID } from "./uuid";
 import { Blocks, labels } from "./blocks";
 import type {
@@ -17,6 +16,8 @@ import { DynamicView, webRenderer } from "./dynamic-v2";
 import { NavigationIcon } from "./icons";
 import { ProductTasks } from "./tasks";
 import { ControlPlanePanel } from "./control-plane-panel";
+import { AssistantUiProof } from "./assistant-ui-poc";
+import { SettingsPage } from "./settings";
 const gateway = new Gateway();
 const nav = [
   ["home", "首页"],
@@ -26,6 +27,7 @@ const nav = [
   ["jarvis", "Jarvis"],
   ["agents", "Hermes"],
   ["system", "系统"],
+  ["settings", "设置"],
 ];
 function restoredNavigation() {
   try {
@@ -34,8 +36,11 @@ function restoredNavigation() {
     const uuid = (v: unknown) => typeof v === "string" && /^[a-f0-9-]{36}$/.test(v) ? v : undefined;
     if (path[0] === "tasks" && uuid(path[1])) return { page: "run", runId: path[1], selected: uuid(value.selected) };
     if (nav.some(([key]) => key === path[0]) || path[0] === "workspace") return { page: path[0], runId: undefined, selected: uuid(value.selected) };
+    if (path[0] === "users") return { page: "settings", runId: undefined, selected: uuid(value.selected) };
     return {
-      page: [...nav.map((n) => n[0]), "run", "workspace"].includes(value.page)
+      page: value.page === "users"
+        ? "settings"
+        : [...nav.map((n) => n[0]), "run", "workspace"].includes(value.page)
         ? value.page
         : "home",
       selected: uuid(value.selected),
@@ -47,15 +52,16 @@ function restoredNavigation() {
 }
 function App() {
   const viewRequest = useRef(0);
+  const developerMode = new URLSearchParams(location.search).get("developer") === "1";
   const [theme, setTheme] = useState(() => localStorage.getItem("jarvis-theme") === "light" ? "light" : "dark");
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("jarvis-theme", theme); }, [theme]);
   const [paired, setPaired] = useState(false),
-    [code, setCode] = useState(""),
     [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
+    [passwordConfirmation, setPasswordConfirmation] = useState(""),
     [inviteToken, setInviteToken] = useState(""),
-    [loginMode, setLoginMode] = useState(false),
-    [inviteMode, setInviteMode] = useState(false),
+    [authMode, setAuthMode] = useState<"login" | "register" | "invite">("login"),
+    [registrationOpen, setRegistrationOpen] = useState(false),
     [error, setError] = useState(""),
     [connection, setConnection] = useState("连接中"),
     [page, setPage] = useState(() => restoredNavigation().page),
@@ -68,20 +74,49 @@ function App() {
     [semantic, setSemantic] = useState<any>(),
     [applications, setApplications] = useState<any>(),
     [resources, setResources] = useState(new Map<string, Resource>()),
-    [toolStates, setToolStates] = useState<Record<string, Record<string, { capability: string; status: "running" | "completed" | "failed" }>>>({}),
     [workspaceTarget, setWorkspaceTarget] = useState<string>(),
     [agents, setAgents] = useState<any>(),
     [text, setText] = useState(""),
-    [sending, setSending] = useState(false),
     [runId, setRunId] = useState<string | undefined>(
       () => restoredNavigation().runId,
     );
+  const fail = useCallback((e: any) => setError(e.message ?? String(e)), []);
+  const onAssistantConversationCreated = useCallback((id: string) => {
+    void Promise.all([
+      gateway.request("conversation.list"),
+      gateway.request("conversation.get", { conversation_id: id, developer: developerMode }),
+    ]).then(([list, detail]) => {
+      // Load the durable state before changing `selected`: changing the key
+      // remounts AssistantUiProof, so an empty detail here would temporarily
+      // replace the streamed reply with a blank thread.
+      setConversations(list);
+      setConversation(detail);
+      setSelected(id);
+      setPage("jarvis");
+    }).catch(fail);
+  }, [developerMode, fail]);
+  const deleteConversation = useCallback(async (id: string) => {
+    const target = conversations.find((item) => item.id === id);
+    if (!target || !window.confirm(`确定删除会话“${target.title}”吗？删除后无法恢复。`)) return;
+    await gateway.request("conversation.delete", { conversation_id: id });
+    setConversations((items) => items.filter((item) => item.id !== id));
+    if (selected === id) {
+      setSelected(undefined);
+      setConversation(undefined);
+      setWorkspaceTarget(undefined);
+      setPage("jarvis");
+    }
+  }, [conversations, selected]);
   useEffect(() => {
     sessionStorage.setItem(
       "jarvis-navigation",
       JSON.stringify({ page, selected, runId }),
     );
   }, [page, selected, runId]);
+  useEffect(() => {
+    if (paired) return;
+    void fetch("/api/v2/auth/registration", { credentials: "include" }).then((response) => response.ok ? response.json() : undefined).then((value) => setRegistrationOpen(value?.open === true)).catch(() => setRegistrationOpen(false));
+  }, [paired]);
   useEffect(() => {
     if (!paired) return;
     const path = page === "run" && runId ? `/tasks/${runId}` : `/${page}`;
@@ -92,7 +127,30 @@ function App() {
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
-  const fail = (e: any) => setError(e.message ?? String(e));
+  useEffect(() => {
+    if (!paired) return;
+    const renew = () => void ensureSession().then((valid) => {
+      if (valid) return;
+      gateway.close();
+      setPaired(false);
+      setConnection("未登录");
+    }).catch(fail);
+    const timer = setInterval(renew, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [fail, paired]);
+  const logout = useCallback(async () => {
+    await fetch("/api/v2/auth/logout", { method: "POST", credentials: "include" });
+    gateway.close();
+    setPaired(false);
+    setConnection("未登录");
+    setConversation(undefined);
+    setConversations([]);
+    setSelected(undefined);
+    setWorkspaceTarget(undefined);
+    setError("");
+    sessionStorage.removeItem("jarvis-navigation");
+    sessionStorage.removeItem("jarvis-view");
+  }, []);
   const openApp = useCallback(async (appId: string) => {
     const target = window.open("about:blank", "_blank");
     if (target) target.opener = null;
@@ -127,6 +185,11 @@ function App() {
       const request = ++viewRequest.current;
       setSemantic(undefined);
       const next = await gateway.request("view.v2.get", { intent: { type: "view.show", intent, resources: rs }, renderer: webRenderer }).catch(() => null);
+      if (request !== viewRequest.current) return;
+      if (next?.kind === "view") {
+        setSemantic(next.view);
+        return;
+      }
       const v = await gateway.request("view.show", {
         type: "view.show",
         intent,
@@ -134,7 +197,6 @@ function App() {
       });
       if (request !== viewRequest.current) return;
       await loadView(v.spec, request);
-      if (request === viewRequest.current && next?.kind === "view") setSemantic(next.view);
     },
     [loadView],
   );
@@ -147,6 +209,7 @@ function App() {
       setConversation(
         await gateway.request("conversation.get", {
           conversation_id: selected,
+          developer: developerMode,
         }),
       );
     if (runId) await show("agent_run_analysis", ["agent-run/" + runId]);
@@ -159,19 +222,9 @@ function App() {
       );
       if (saved.success) await loadView(saved.data);
     }
-  }, [selected, runId, page, show, loadView]);
+  }, [selected, runId, page, show, loadView, developerMode]);
   useEffect(() => {
-    const p = sessionStorage.getItem("jarvis-pending");
-    if (p) {
-      try {
-        const pending = JSON.parse(p);
-        setSelected(pending.conversation_id);
-        setText(pending.content);
-      } catch {
-        sessionStorage.removeItem("jarvis-pending");
-      }
-    }
-    fetch("/api/v2/session").then(async (r) => {
+    fetch("/api/v2/session", { credentials: "include" }).then(async (r) => {
       if (!r.ok) { const refreshed = await fetch("/api/v2/auth/refresh", { method: "POST", credentials: "include" }); if (!refreshed.ok) return; r = await fetch("/api/v2/session"); }
       if (r.ok) { setPaired(true); void gateway.open(true); }
     }).catch(fail);
@@ -184,11 +237,6 @@ function App() {
     };
     const disposers = [
       listen("auth-required", () => { setPaired(false); setConversation(undefined); setConversations([]); setSelected(undefined); setWorkspaceTarget(undefined); gateway.resources.clear(); setResources(new Map()); sessionStorage.removeItem("jarvis-navigation"); sessionStorage.removeItem("jarvis-view"); }),
-      listen("conversation.tool.failed", (e) => {
-        const p = e.detail;
-        if (!p?.conversation_id || !p?.tool_call_id) return;
-        setToolStates((old) => ({ ...old, [p.conversation_id]: { ...(old[p.conversation_id] ?? {}), [p.tool_call_id]: { capability: p.capability, status: "failed" } } }));
-      }),
       listen("connection", (e) => {
         setConnection(e.detail);
         // A reload can complete the WebSocket handshake before the snapshot
@@ -196,7 +244,6 @@ function App() {
         // performs an idempotent state refresh.
         if (e.detail === "已连接") void snapshot().catch(fail);
       }),
-      listen("snapshot", () => void snapshot().catch(fail)),
       listen("conversation.updated", () => {
         void (async () => {
           setConversations(await gateway.request("conversation.list"));
@@ -204,31 +251,21 @@ function App() {
             setConversation(
               await gateway.request("conversation.get", {
                 conversation_id: selected,
+                developer: developerMode,
               }),
             );
         })().catch(fail);
       }),
-      listen("conversation.tool.started", (e) => {
-        const p = e.detail;
-        if (!p?.conversation_id || !p?.tool_call_id) return;
-        setToolStates((old) => ({
-          ...old,
-          [p.conversation_id]: {
-            ...(old[p.conversation_id] ?? {}),
-            [p.tool_call_id]: { capability: String(p.capability ?? "tool"), status: "running" },
-          },
-        }));
-      }),
-      listen("conversation.tool.completed", (e) => {
-        const p = e.detail;
-        if (!p?.conversation_id || !p?.tool_call_id) return;
-        setToolStates((old) => ({
-          ...old,
-          [p.conversation_id]: {
-            ...(old[p.conversation_id] ?? {}),
-            [p.tool_call_id]: { capability: String(p.capability ?? "tool"), status: "completed" },
-          },
-        }));
+      listen("conversation.deleted", (e) => {
+        const id = e.detail?.conversation_id;
+        if (typeof id !== "string") return;
+        setConversations((items) => items.filter((item) => item.id !== id));
+        if (selected === id) {
+          setSelected(undefined);
+          setConversation(undefined);
+          setWorkspaceTarget(undefined);
+          setPage("jarvis");
+        }
       }),
       listen("conversation.message.delta", (e) => {
         if (e.detail.conversation_id === selected)
@@ -283,85 +320,59 @@ function App() {
       fail(e);
     }
   }
-  async function send() {
-    if (sending || !text.trim()) return;
-    setSending(true);
-    setError("");
-    const content = text;
-    try {
-      let id = selected;
-      if (!id) {
-        const c = await gateway.request("conversation.create", {
-          title: content.slice(0, 40),
-        });
-        id = c.id;
-        setSelected(id);
-      }
-      const existing = sessionStorage.getItem("jarvis-pending");
-      const pending = existing
-        ? JSON.parse(existing)
-        : {
-            conversation_id: id,
-            content,
-            idempotency_key: randomUUID(),
-          };
-      if (pending.conversation_id !== id || pending.content !== content)
-        throw Error("上一条提交未确认，请保持原消息重试");
-      sessionStorage.setItem("jarvis-pending", JSON.stringify(pending));
-      await gateway.request("conversation.message", pending);
-      sessionStorage.removeItem("jarvis-pending");
-      setText("");
-      setConversation(
-        await gateway.request("conversation.get", { conversation_id: id }),
-      );
-    } catch (e) {
-      fail(e);
-    } finally {
-      setSending(false);
-    }
-  }
-  if (!paired)
+  if (!paired) {
+    const inviteMode = authMode === "invite";
+    const registerMode = authMode === "register";
     return (
       <main className="pair">
         <div className="orb">J</div>
         <p className="eyebrow">YOUR PERSONAL CLOUD</p>
-        <h1>连接 Jarvis</h1>
-        <p className="muted">{inviteMode ? "使用管理员发放的一次性邀请加入。" : loginMode ? "使用 Jarvis 账户登录。" : "使用一次性配对码，连接你的私人云。"}</p>
+        <h1>{inviteMode ? "接受管理员邀请" : registerMode ? "注册 Jarvis" : "登录 Jarvis"}</h1>
+        <p className="muted">{inviteMode ? "管理员创建邀请后，把邀请令牌发给你；你在这里设置 Jarvis 密码。" : registerMode ? registrationOpen ? "这是 Jarvis 账户注册，不需要 Authentik 或配对码。第一个注册者自动成为管理员。" : "第一个 Jarvis 账户已经注册。请返回登录，或使用管理员发放的邀请加入。" : "使用 Jarvis 用户名和密码登录。"}</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            const endpoint = inviteMode ? "/api/v2/auth/invites/accept" : loginMode ? "/api/v2/auth/login" : "/api/v1/pair";
+            const endpoint = inviteMode ? "/api/v2/auth/invites/accept" : registerMode ? "/api/v2/auth/register" : "/api/v2/auth/login";
             const browserDeviceId = localStorage.getItem("jarvis-device-id") ?? randomUUID();
             localStorage.setItem("jarvis-device-id", browserDeviceId);
-            const body = inviteMode ? { token: inviteToken.trim(), password } : loginMode ? { username: username.trim(), password, device_id: browserDeviceId } : { device_id: randomUUID(), code: code.trim() };
+            const body = inviteMode ? { token: inviteToken.trim(), password } : registerMode ? { username: username.trim(), password, password_confirmation: passwordConfirmation, device_id: browserDeviceId } : { username: username.trim(), password, device_id: browserDeviceId };
+            if (registerMode && password !== passwordConfirmation) { setError("两次输入的密码不一致"); return; }
+            setError("");
             void fetch(endpoint, {
               method: "POST",
+              credentials: "include",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(body),
             })
               .then(async (r) => {
-                if (!r.ok) throw Error(inviteMode ? "邀请无效或已过期" : loginMode ? "登录失败，请检查用户名和密码" : "配对失败，请检查配对码");
+                if (!r.ok) {
+                  if (registerMode && r.status === 409) throw Error("首次注册已完成，请返回登录或使用管理员邀请");
+                  throw Error(inviteMode ? "邀请无效或已过期" : registerMode ? "注册失败，请检查用户名和密码" : "登录失败，请检查用户名和密码");
+                }
                 if (inviteMode) {
                   const accepted = await r.json();
-                  const loggedIn = await fetch("/api/v2/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: accepted.username, password, device_id: browserDeviceId }) });
+                  const loggedIn = await fetch("/api/v2/auth/login", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: accepted.username, password, device_id: browserDeviceId }) });
                   if (!loggedIn.ok) throw Error("成员已创建，但自动登录失败");
                 }
                 setPaired(true);
-                setCode("");
+                setPage("home");
+                setRunId(undefined);
                 setPassword("");
+                setPasswordConfirmation("");
                 setInviteToken("");
                 void gateway.open(true);
               })
               .catch(fail);
           }}
         >
-          {inviteMode ? <><input aria-label="邀请令牌" value={inviteToken} onChange={(e) => setInviteToken(e.target.value)} placeholder="一次性邀请令牌" /><input aria-label="设置密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="设置密码（至少 12 位）" /></> : loginMode ? <><input aria-label="用户名" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="用户名" /><input aria-label="密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码" /></> : <input aria-label="配对码" type="password" value={code} onChange={(e) => setCode(e.target.value)} placeholder="一次性配对码" />}
-          <button>{inviteMode ? "接受邀请并登录" : loginMode ? "登录" : "配对并连接"}</button>
+          {inviteMode ? <><input aria-label="邀请令牌" value={inviteToken} onChange={(e) => setInviteToken(e.target.value)} placeholder="管理员发来的邀请令牌" /><input aria-label="设置密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="设置密码（至少 8 位）" autoComplete="new-password" /></> : <><input aria-label="用户名" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="用户名" autoComplete="username" /><input aria-label="密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码（至少 8 位）" autoComplete={registerMode ? "new-password" : "current-password"} />{registerMode && <input aria-label="确认密码" type="password" value={passwordConfirmation} onChange={(e) => setPasswordConfirmation(e.target.value)} placeholder="再次输入密码" autoComplete="new-password" />}</>}
+          <button disabled={registerMode && !registrationOpen}>{inviteMode ? "接受邀请并登录" : registerMode ? "注册并登录" : "登录"}</button>
         </form>
-        <div className="auth-switches"><button className="quiet" onClick={() => { setLoginMode(!loginMode); setInviteMode(false); }}>{loginMode ? "使用配对码" : "使用用户名密码"}</button><button className="quiet" onClick={() => { setInviteMode(!inviteMode); setLoginMode(false); }}>{inviteMode ? "返回登录" : "接受成员邀请"}</button></div>
+        <div className="auth-switches"><button className="quiet" type="button" onClick={() => { setAuthMode("login"); setError(""); }}>{authMode === "login" ? "当前：用户名密码登录" : "返回用户名密码登录"}</button><button className="quiet" type="button" onClick={() => { setAuthMode("register"); setError(""); }}>{authMode === "register" ? "首次注册入口" : "首次注册 Jarvis 账户"}</button><button className="quiet" type="button" onClick={() => { setAuthMode("invite"); setError(""); }}>{authMode === "invite" ? "接受管理员邀请" : "我有管理员邀请"}</button></div>
         {error && <p role="alert">{error}</p>}
       </main>
     );
+  }
   return (
     <div className={`shell page-${page}`}>
       <aside>
@@ -398,9 +409,7 @@ function App() {
               {page === "run" ? "任务详情" : page === "workspace" ? "动态工作空间" : page === "home" ? "我的私人云" : nav.find(([k]) => k === page)?.[1]}
             </h1>
           </div>
-          <button className="quiet" onClick={() => void snapshot().catch(fail)}>
-            刷新
-          </button>
+          <div className="header-actions"><button className="quiet" onClick={() => void snapshot().catch(fail)}>刷新</button><button className="quiet" onClick={() => void logout()}>退出登录</button></div>
           <ControlPlanePanel gateway={gateway} onError={fail} />
         </header>
         {error && (
@@ -414,7 +423,7 @@ function App() {
           ask={(prompt) => { setText(prompt); setRunId(undefined); setPage("jarvis"); }} />
         : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} openApp={openApp} /><Empty title="选择你想探索的空间" text="照片与家庭使用原应用完整界面；其他空间将在接入后开放。" /></>
         : page === "apps" ? <ApplicationList value={applications} onCasaosLogin={reconnectCasaos} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
-        : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} />
+        : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} gateway={gateway} onError={fail} />
         : page === "jarvis" || page === "workspace" ? (
           <div className={`conversation-layout ${page === "workspace" ? "with-workspace" : ""}`}>
             <div className="conversation-list">
@@ -428,77 +437,19 @@ function App() {
                 ＋ 新会话
               </button>
               {conversations.map((c) => (
-                <button
-                  className={c.id === selected ? "selected" : ""}
-                  key={c.id}
-                  onClick={() => { setWorkspaceTarget(undefined); if (selected !== c.id) setConversation(undefined); setSelected(c.id); }}
-                >
-                  {c.title}
-                </button>
+                <div className="conversation-row" key={c.id}>
+                  <button
+                    className={`conversation-entry ${c.id === selected ? "selected" : ""}`}
+                    onClick={() => { setWorkspaceTarget(undefined); if (selected !== c.id) setConversation(undefined); setSelected(c.id); }}
+                  >
+                    {c.title}
+                  </button>
+                  <button className="conversation-delete" aria-label={`删除会话 ${c.title}`} title="删除会话" onClick={() => void deleteConversation(c.id).catch(fail)}>×</button>
+                </div>
               ))}
             </div>
             <div className="chat">
-              <div className="messages">
-                {!conversation && (
-                  <div className="welcome">
-                    <div className="orb">J</div>
-                    <h2>今天需要我做什么？</h2>
-                    <p>查看服务器状态，分析用量，或委派代码任务。</p>
-                  </div>
-                )}
-                {conversation?.messages.map((m: any) => (
-                  <article className={"message " + m.role} key={m.id}>
-                    <small>
-                      {m.role === "user" ? "你" : "Jarvis"} ·{" "}
-                      {labels[m.status] ?? m.status}
-                    </small>
-                    <div className="prose">{m.content ? <MarkdownContent value={m.content} /> : "正在处理…"}</div>
-                    {m.role === "jarvis" && selected && Object.values(toolStates[selected] ?? {}).length > 0 && <div className="rich-card tool-status-card"><strong>执行状态</strong>{Object.values(toolStates[selected]).map((tool) => <span key={tool.capability} className={tool.status}>{tool.capability} · {tool.status === "running" ? "运行中" : tool.status === "failed" ? "失败" : "已完成"}</span>)}</div>}
-                    {m.run_id && (
-                      <button
-                        onClick={() =>
-                          action({ type: "run.open", target: m.run_id })
-                        }
-                      >
-                        查看任务 →
-                      </button>
-                    )}
-                    {m.view_id && (
-                      <button
-                        onClick={() =>
-                          void gateway
-                            .request("view.get", { view_id: m.view_id })
-                            .then((v) => {
-                              setPage("workspace");
-                              return loadView(v.spec);
-                            })
-                            .catch(fail)
-                        }
-                      >
-                        查看图表
-                      </button>
-                    )}
-                    {m.workspace_id && <button onClick={() => { setWorkspaceTarget(m.workspace_id); setPage("workspace"); }}>打开工作区 →</button>}
-                  </article>
-                ))}
-              </div>
-              <form
-                className="composer"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void send();
-                }}
-              >
-                <textarea
-                  aria-label="消息"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="向 Jarvis 发送消息…"
-                />
-                <button disabled={sending || connection !== "已连接"}>
-                  {sending ? "提交中…" : "发送 ↑"}
-                </button>
-              </form>
+              <AssistantUiProof key={selected ?? "new"} gateway={gateway} conversationId={selected} developer={developerMode} prompt={text} onPromptApplied={() => setText("")} onConversationCreated={onAssistantConversationCreated} onWorkspaceOpen={(id) => { setWorkspaceTarget(id); setPage("workspace"); }} messages={(conversation?.messages ?? []).filter((m: any) => m.role === "user" || m.role === "jarvis").map((m: any) => ({ role: m.role === "jarvis" ? "assistant" : "user", content: m.content }))} />
             </div>
             {page === "workspace" && <aside className="workspace-side">
               <div className="toolbar">
@@ -509,7 +460,8 @@ function App() {
               <WorkspacePanel gateway={gateway} conversationId={selected} workspaceId={workspaceTarget} fallbackView={semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view ? <Blocks view={view} resources={resources} action={action} /> : undefined} onError={fail} />
             </aside>}
           </div>
-        ) : page === "agents" ? (
+        ) : page === "settings" || page === "users" ? <SettingsPage gateway={gateway} onError={fail} />
+        : page === "agents" ? (
           <>
             <section className="agent-tier">
               <p className="eyebrow">CORE</p>

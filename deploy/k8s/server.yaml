@@ -17,6 +17,7 @@ spec:
       # Read host interfaces and bind only its Tailscale IP (supplied by Secret).
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      supplementalGroups: [10000]
       # Single-node service IPs: host proxy intercepts DNS even to CoreDNS.
       # Re-resolve from `kubectl -n jarvis get svc` if these Services are recreated.
       hostAliases:
@@ -29,9 +30,20 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+      initContainers:
+        - name: prepare-hermes-media
+          image: jarvis-server:0.3.2-mcp-20260928-r5
+          imagePullPolicy: IfNotPresent
+          command: [node, -e]
+          args:
+            - "const fs=require('node:fs');fs.mkdirSync('/hermes-data/media/tmp',{recursive:true});fs.chownSync('/hermes-data/media',10000,10000);fs.chownSync('/hermes-data/media/tmp',10000,10000);fs.chmodSync('/hermes-data/media',0o770);fs.chmodSync('/hermes-data/media/tmp',0o770)"
+          securityContext: { runAsNonRoot: false, runAsUser: 0, runAsGroup: 0 }
+          volumeMounts:
+            - name: hermes-data
+              mountPath: /hermes-data
       containers:
         - name: server
-          image: jarvis-server:0.3.1
+          image: jarvis-server:0.3.2-mcp-20260928-r5
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
@@ -42,6 +54,14 @@ spec:
                 secretKeyRef: { name: jarvis-secrets, key: tailscale-ip }
             - name: HOST_ROOT
               value: /host
+            - name: AUTHENTIK_ISSUER
+              value: http://100.77.157.73:9000/application/o/jarvis/
+            - name: AUTHENTIK_CLIENT_ID
+              value: jarvis-web
+            - name: AUTHENTIK_REDIRECT_URI
+              value: http://100.77.157.73:8080/api/v2/auth/oidc/callback
+            - name: AUTHENTIK_OIDC_SCOPES
+              value: openid profile email
             - name: PRICES_FILE
               value: /config/prices.json
             - name: HERMES_URL
@@ -56,6 +76,8 @@ spec:
               valueFrom: { secretKeyRef: { name: hermes-api, key: DASHBOARD_USERNAME } }
             - name: HERMES_DASHBOARD_PROXY_PASSWORD
               valueFrom: { secretKeyRef: { name: hermes-api, key: DASHBOARD_PASSWORD } }
+            - name: HERMES_MEDIA_ROOT
+              value: /hermes-media
             - name: HERMES_ENABLED
               value: "1"
             - name: CORE_MODEL
@@ -66,8 +88,25 @@ spec:
               value: http://100.77.157.73
             - name: HOME_ASSISTANT_URL
               value: http://100.77.157.73:8123
+            - name: HOME_ASSISTANT_TOKEN
+              valueFrom:
+                secretKeyRef: { name: jarvis-integrations, key: home-assistant-token, optional: true }
+            - name: FRIGATE_URL
+              value: https://100.77.157.73:8971
+            - name: FRIGATE_TOKEN
+              valueFrom:
+                secretKeyRef: { name: jarvis-integrations, key: frigate-token, optional: true }
+            - name: FRIGATE_USERNAME
+              valueFrom:
+                secretKeyRef: { name: jarvis-integrations, key: frigate-username, optional: true }
+            - name: FRIGATE_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: jarvis-integrations, key: frigate-password, optional: true }
             - name: IMMICH_URL
               value: http://100.77.157.73:2283
+            - name: IMMICH_API_KEY
+              valueFrom:
+                secretKeyRef: { name: jarvis-integrations, key: immich-api-key, optional: true }
             - name: HERMES_API_KEY
               valueFrom:
                 secretKeyRef: { name: hermes-api, key: API_SERVER_KEY, optional: true }
@@ -115,6 +154,10 @@ spec:
             - name: prices
               mountPath: /config
               readOnly: true
+            - name: hermes-data
+              mountPath: /hermes-media
+              subPath: media
+              readOnly: true
       volumes:
         - name: casaos-session
           hostPath:
@@ -127,3 +170,19 @@ spec:
         - name: prices
           configMap:
             name: jarvis-prices
+        - name: hermes-data
+          persistentVolumeClaim:
+            claimName: hermes-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jarvis-server
+  namespace: jarvis
+spec:
+  selector:
+    app: jarvis-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

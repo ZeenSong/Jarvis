@@ -15,7 +15,17 @@ export type HermesRun = {
 };
 export type HermesRunEvent = { event?: string; run_id?: string; delta?: string; output?: string; error?: string; [key: string]: unknown };
 
-type HermesContext = { owner: string; session: string; exp: number };
+export type HermesContext = {
+  /** Legacy owner is retained as the physical device/session owner. */
+  owner: string;
+  /** Human actor and household are the stable Jarvis execution principals. */
+  actor: string;
+  household: string;
+  session: string;
+  run?: string;
+  scopes?: string[];
+  exp: number;
+};
 
 function encoded(value: string) {
   return Buffer.from(value, "utf8").toString("base64url");
@@ -46,9 +56,25 @@ function endpoint(baseUrl: string, path: string) {
 }
 
 /** Short lived, signed context passed to the MCP capability provider. */
-export function createHermesContextToken(key: string, owner: string, session: string, ttlSeconds = 600) {
+export function createHermesContextToken(
+  key: string,
+  owner: string,
+  session: string,
+  ttlSecondsOrContext: number | { actor?: string; household?: string; run?: string; scopes?: string[] } = 600,
+  context: { actor?: string; household?: string; run?: string; scopes?: string[] } = {},
+) {
   if (!key || !owner || !session) throw Error("hermes_context_missing");
-  const payload = encoded(JSON.stringify({ owner, session, exp: Math.floor(Date.now() / 1000) + ttlSeconds } satisfies HermesContext));
+  const ttlSeconds = typeof ttlSecondsOrContext === "number" ? ttlSecondsOrContext : 600;
+  const resolvedContext = typeof ttlSecondsOrContext === "number" ? context : ttlSecondsOrContext;
+  const payload = encoded(JSON.stringify({
+    owner,
+    actor: resolvedContext.actor ?? owner,
+    household: resolvedContext.household ?? "default-household",
+    session,
+    ...(resolvedContext.run ? { run: resolvedContext.run } : {}),
+    ...(resolvedContext.scopes?.length ? { scopes: [...new Set(resolvedContext.scopes)].sort() } : {}),
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+  } satisfies HermesContext));
   const signature = createHmac("sha256", key).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
@@ -60,11 +86,19 @@ export function verifyHermesContextToken(key: string, token: string): HermesCont
     const expected = createHmac("sha256", key).update(payload).digest("base64url");
     const a = Buffer.from(signature), b = Buffer.from(expected);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined;
-    const context = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as HermesContext;
-    return context.owner && context.session && Number(context.exp) >= Math.floor(Date.now() / 1000) ? context : undefined;
+    const context = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Partial<HermesContext>;
+    if (!context.owner || !context.actor || !context.household || !context.session || Number(context.exp) < Math.floor(Date.now() / 1000)) return undefined;
+    if (context.scopes !== undefined && (!Array.isArray(context.scopes) || context.scopes.some((scope) => typeof scope !== "string"))) return undefined;
+    return context as HermesContext;
   } catch {
     return undefined;
   }
+}
+
+export function contextAllows(context: HermesContext, scope: string) {
+  // Tokens issued before scoped contexts existed remain valid for the legacy
+  // internal bridge; all new scoped tokens must explicitly carry the scope.
+  return !context.scopes || context.scopes.includes("*") || context.scopes.includes(scope);
 }
 
 /** Small, authenticated adapter for Hermes' OpenAI-compatible internal API. */

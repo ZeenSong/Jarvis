@@ -65,12 +65,12 @@ private fun localized(value: String) = uiLabels[value] ?: value
     val paired by repo.paired.collectAsStateWithLifecycle(); val connection by repo.gateway.state.collectAsStateWithLifecycle()
     val error by repo.error.collectAsStateWithLifecycle(); val saved by repo.savedAt.collectAsStateWithLifecycle()
     var settings by remember { mutableStateOf(false) }
-    if (!paired || settings || connection == ConnectionState.unauthorized) { PairScreen(error, paired, { server, code -> repo.pair(server, code); settings = false }, { server, user, password -> repo.login(server, user, password); settings = false }, { settings = false }); return }
+    if (!paired || settings || connection == ConnectionState.unauthorized) { LoginScreen(error, paired, { server, user, password -> repo.login(server, user, password); settings = false }, { settings = false }); return }
     val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"; val workspaceRoute = route == "workspace"
     LaunchedEffect(route) { repo.selectPage(route) }
     Scaffold(topBar = { if (!workspaceRoute) Column(Modifier.statusBarsPadding().padding(20.dp)) {
         TextButton(onClick=toggleTheme) { Text(if(light) "切换深色主题" else "切换浅色主题") }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新配对" }) } }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新登录" }) } }
         if (connection != ConnectionState.online) Text("显示最近缓存 · ${saved?.let { Instant.ofEpochMilli(it) } ?: "尚无数据"}", style = MaterialTheme.typography.bodySmall)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     } }, bottomBar = { if (!workspaceRoute) NavigationBar(containerColor=MaterialTheme.colorScheme.background) { listOf("home" to "首页", "spaces" to "空间", "jarvis" to "Jarvis", "tasks" to "任务", "apps" to "应用").forEach { (path, label) -> NavigationBarItem(selected = route == path || (path == "tasks" && route.startsWith("run/")), onClick = { nav.navigate(path) { popUpTo("home"); launchSingleTop = true } }, icon = { if(path=="jarvis") JarvisOrb(30.dp) else Icon(painterResource(when(path){"home"->R.drawable.nav_home;"spaces"->R.drawable.nav_spaces;"tasks"->R.drawable.nav_tasks;else->R.drawable.nav_apps}),contentDescription=null) }, label = { Text(label) }) } } }) { padding ->
@@ -90,16 +90,15 @@ private fun localized(value: String) = uiLabels[value] ?: value
         }
     }
 }
-@Composable private fun PairScreen(error: String?, canBack: Boolean, pair: (String, String) -> Unit, login: (String, String, String) -> Unit, back: () -> Unit) {
-    var server by remember { mutableStateOf("") }; var code by remember { mutableStateOf("") }; var user by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var loginMode by remember { mutableStateOf(false) }
+@Composable private fun LoginScreen(error: String?, canBack: Boolean, login: (String, String, String) -> Unit, back: () -> Unit) {
+    var server by remember { mutableStateOf("") }; var user by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
     Screen("连接你的私人云") {
-        Text(if(loginMode) "使用 Jarvis 账户登录。" else "手机与服务器加入同一个 Tailscale 网络，然后输入服务器地址和一次性配对码。")
+        Text("手机与服务器加入同一个 Tailscale 网络，然后使用 Jarvis 用户名和密码登录。首次注册请打开网页版登录页。")
         OutlinedTextField(server, { server = it }, label = { Text("http://100.x.x.x:8080") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        if(loginMode) { OutlinedTextField(user, { user = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth()); OutlinedTextField(password, { password = it }, label = { Text("密码") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth()) }
-        else OutlinedTextField(code, { code = it }, label = { Text("配对码") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(user, { user = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(password, { password = it }, label = { Text("密码") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = { if(loginMode) login(server, user, password) else pair(server, code) }, enabled = server.isNotBlank() && if(loginMode) user.isNotBlank() && password.isNotBlank() else code.isNotBlank()) { Text(if(loginMode) "登录" else "配对并连接") }
-        TextButton(onClick = { loginMode = !loginMode }) { Text(if(loginMode) "使用配对码" else "使用用户名密码") }
+        Button(onClick = { login(server, user, password) }, enabled = server.isNotBlank() && user.isNotBlank() && password.isNotBlank()) { Text("登录") }
         if (canBack) TextButton(onClick = back) { Text("返回") }
     }
 }

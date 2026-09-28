@@ -5,6 +5,7 @@ export async function eventAudience(db: Database, topic: string, value: unknown)
   const p = value as any;
   if (topic === 'system.status.changed' || topic === 'network.public_ipv6.changed' ||
       (topic === 'resource.updated' && /^system\/(status|metrics|network)$/.test(p?.resource))) return { shared: true };
+  if (topic === 'conversation.deleted' && p?.owner_device_id) return { device: p.owner_device_id, user: p.owner_user_id };
   let table: string | undefined, id: string | undefined, device = 'owner_device_id', user = 'owner_user_id';
   if (topic.startsWith('conversation.')) { table = 'conversations'; id = p?.conversation_id; }
   else if (topic.startsWith('workspace.')) { table = 'workspace_records'; id = p?.workspace_id; }

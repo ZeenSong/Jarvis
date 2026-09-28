@@ -1,6 +1,6 @@
 # M1 HTTP / WebSocket 协议
 
-所有 `/api/v1/*`（health、pair 除外）及 `/ws` 握手要求 `Authorization: Bearer <token>`。M1 为单用户共享读取，agent 角色仅能修改自己拥有的 Agent。禁止 Token 放 URL。
+所有受保护的 `/api/v1/*` 及 `/ws` 握手要求 `Authorization: Bearer <token>`。用户网页登录使用 HttpOnly 会话 Cookie；禁止 Token 放 URL。一次性配对接口已停用。
 
 ## HTTP
 
@@ -8,7 +8,10 @@
 | --- | --- |
 | GET /health、/health/live | 进程存活 |
 | GET /health/ready、/api/v1/health | PostgreSQL / System Monitor / Scheduler；异常 503 |
-| POST /api/v1/pair | `{device_id: UUID, code: string}` → `{device_id,token}` |
+| GET /api/v2/auth/registration | 返回首次注册是否开放 |
+| POST /api/v2/auth/register | 首次注册 Jarvis 账户；第一个账户自动成为管理员 |
+| POST /api/v2/auth/login | 用户名密码登录 |
+| POST /api/v2/auth/logout | 注销当前会话 |
 | GET /api/v1/system/status | server/cpu/memory/disks/gpu/network/jarvis 完整快照 |
 | GET /api/v1/agents | Agent 数组 |
 | GET /api/v1/agents/:id | Agent + session_start，缺失 404 |

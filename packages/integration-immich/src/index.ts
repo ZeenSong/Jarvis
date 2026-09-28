@@ -32,7 +32,10 @@ export class ImmichClient {
     try {
       const r = await fetch(new URL(`/api${path}`, this.base), {
         method: body === undefined ? "GET" : "POST", redirect: "error",
-        headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+        // Immich API keys are sent through its dedicated header. Authorization:
+        // Bearer is reserved for Immich's user/session authentication and is
+        // rejected by current server versions for service API keys.
+        headers: { "x-api-key": token, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(this.config.timeoutMs ?? 20000),
       });
       if (!r.ok) {

@@ -51,17 +51,13 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
             credentials.load()?.let { paired.value = true; gateway.connect(it) }
             backgroundEnabled.value = credentials.backgroundEnabled()
             if (foreground && backgroundEnabled.value && paired.value) startBackground()
-        }.onFailure { error.value = "无法恢复本地凭据，请重新配对" } }
+        }.onFailure { error.value = "无法恢复本地凭据，请重新登录" } }
     }
     private fun startBackground() { runCatching { app.startForegroundService(Intent(app, ConnectionService::class.java)) }.onFailure { error.value = "无法启动后台连接：${it.message}" } }
     fun setBackground(enabled: Boolean) { scope.launch { runCatching { credentials.setBackground(enabled); backgroundEnabled.value = enabled; val service = Intent(app, ConnectionService::class.java); if (enabled) startBackground() else app.stopService(service) }.onFailure { error.value = it.message } } }
     override fun onStart(owner: LifecycleOwner) { foreground = true; gateway.subscribe(page in listOf("home", "server")); gateway.networkChanged(); if (backgroundEnabled.value && paired.value) startBackground() }
     override fun onStop(owner: LifecycleOwner) { foreground = false; gateway.subscribe(false) }
     fun selectPage(value: String) { page = value; gateway.subscribe(foreground && value in listOf("home", "server")) }
-    fun pair(server: String, code: String) { scope.launch {
-        error.value = null
-        runCatching { val auth = gateway.pair(server.trim(), code.trim()); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
-    } }
     fun login(server: String, username: String, password: String) { scope.launch {
         error.value = null
         runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }

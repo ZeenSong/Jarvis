@@ -13,14 +13,33 @@ data:
     # Expose named Hermes Agent profiles below /p/<profile>/ on this gateway.
     gateway:
       multiplex_profiles: true
-    # Jarvis is a Hermes Agent profile. Do not set platform_toolsets.api_server
-    # here: an explicit whitelist would hide Hermes' native Skills, toolsets and
-    # any MCP servers enabled for the Jarvis Agent.
+    # Hermes native Skills, toolsets and configured MCP servers are available to
+    # the Jarvis Agent profile.
     mcp_servers:
       jarvis:
         command: /opt/hermes/.venv/bin/python
         args: ["/opt/jarvis-mcp/jarvis_provider.py"]
         env:
+          JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+          JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+      homeassistant:
+        command: /opt/hermes/.venv/bin/python
+        args: ["/opt/jarvis-mcp/upstream_provider.py"]
+        env:
+          MCP_PROVIDER: "homeassistant"
+          JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+          JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+      frigate:
+        command: /opt/hermes/.venv/bin/python
+        args: ["/opt/jarvis-mcp/frigate_provider.py"]
+        env:
+          JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+          JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+      immich:
+        command: /opt/hermes/.venv/bin/python
+        args: ["/opt/jarvis-mcp/upstream_provider.py"]
+        env:
+          MCP_PROVIDER: "immich"
           JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
           JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
   jarvis_provider.py: |
@@ -36,10 +55,14 @@ data:
     import json
     import os
     import sys
+    from contextlib import asynccontextmanager
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError
     from typing import Literal
 
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+    from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
     from mcp.server import MCPServer
 
 
@@ -71,13 +94,104 @@ data:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
+    def _call_json(tool: str, context_token: str, **arguments: object) -> dict:
+        value = json.loads(_call(tool, context_token, **arguments))
+        if not isinstance(value, dict):
+            raise RuntimeError("jarvis_bridge_invalid_response")
+        if value.get("error"):
+            raise RuntimeError(str(value["error"]))
+        return value
+
+
+    def _dump(value: object) -> str:
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+        return json.dumps(value, ensure_ascii=False, default=str)
+
+
+    async def _authorize(context_token: str, provider: str, tool_name: str, read_only: bool) -> dict:
+        return await asyncio.to_thread(
+            _call_json,
+            "mcp_authorize",
+            context_token,
+            provider=provider,
+            tool_name=tool_name,
+            read_only=read_only,
+        )
+
+
+    @asynccontextmanager
+    async def _upstream(provider: str, config: dict):
+        """Open the real upstream MCP server with the household credential.
+
+        This is a transport gateway, not a Home Assistant or Immich adapter. The
+        upstream server owns the tool names, schemas and results; Jarvis only
+        supplies the household credential after its member policy has approved the
+        request.
+        """
+        if provider == "homeassistant":
+            async with create_mcp_http_client(headers={"Authorization": f"Bearer {config['token']}"}) as client:
+                async with streamable_http_client(config["endpoint"], http_client=client) as streams:
+                    async with ClientSession(*streams) as session:
+                        await session.initialize()
+                        yield session
+            return
+        if provider == "immich":
+            env = {
+                "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+                "LANG": os.environ.get("LANG", "C.UTF-8"),
+                "DOTNET_ROOT": os.environ.get("DOTNET_ROOT", "/usr/share/dotnet"),
+                "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": os.environ.get("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "1"),
+                "IMMICH_BASE_URL": str(config["base_url"]),
+                "IMMICH_API_KEY": str(config["token"]),
+            }
+            params = StdioServerParameters(
+                command=os.environ.get("IMMICH_MCP_COMMAND", "/usr/share/dotnet/dotnet"),
+                args=[os.environ.get("IMMICH_MCP_DLL", "/opt/immich-mcp/ImmichMCP.dll"), "--stdio"],
+                env=env,
+            )
+            async with stdio_client(params) as streams:
+                async with ClientSession(*streams) as session:
+                    await session.initialize()
+                    yield session
+            return
+        raise RuntimeError("mcp_provider_invalid")
+
+
+    async def _mcp_tools(provider: str, context_token: str) -> str:
+        config = await _authorize(context_token, provider, "__tools_list__", True)
+        async with _upstream(provider, config) as session:
+            return _dump(await session.list_tools())
+
+
+    async def _mcp_call(provider: str, context_token: str, tool_name: str, arguments: dict[str, object]) -> str:
+        # The schema and annotations come from the upstream server. We do not trust
+        # a model-supplied read_only flag to authorize a write operation.
+        read_config = await _authorize(context_token, provider, "__tools_list__", True)
+        async with _upstream(provider, read_config) as session:
+            tools = await session.list_tools()
+            selected = next((tool for tool in tools.tools if tool.name == tool_name), None)
+            if selected is None:
+                raise RuntimeError("mcp_tool_not_found")
+            annotations = getattr(selected, "annotations", None)
+            read_only = bool(getattr(annotations, "read_only_hint", False)) if annotations is not None else False
+            if read_only:
+                return _dump(await session.call_tool(tool_name, arguments))
+
+        # A write tool requires a separate explicit write permission. Re-open the
+        # upstream only after Jarvis approves it, so a member can never bypass the
+        # policy by claiming that a tool is read-only.
+        write_config = await _authorize(context_token, provider, tool_name, False)
+        async with _upstream(provider, write_config) as session:
+            return _dump(await session.call_tool(tool_name, arguments))
+
+
     server = MCPServer(
         "jarvis",
         instructions=(
             "Jarvis kernel capability provider for the first-class Jarvis Agent. "
-            "Hermes owns reasoning and the "
-            "tool loop; use these tools for current Jarvis state, metrics, user runs, "
-            "usage, and dashboard views. Every tool call requires the exact context_token "
+            "Hermes owns reasoning and the tool loop; use these tools for current Jarvis state, metrics, user runs, "
+            "usage, dashboard views, household service summaries, and scheduling. Every tool call requires the exact context_token "
             "from the Jarvis system message. Never invent one."
         ),
     )
@@ -131,6 +245,21 @@ data:
         return _call("task_cancel", context_token, run_id=run_id)
 
 
+    @server.tool()
+    def schedule_create(context_token: str, prompt: str, cadence: Literal["once", "daily", "weekly"], next_run_at: str | None = None) -> str:
+        """按用户指令创建定时任务。必须先确认执行时间和时区，next_run_at 为未来 ISO 8601 时间（含时区）；用户只说早上等模糊时间时先调用 conversation_question_create，禁止自行设为立即执行。"""
+        arguments: dict[str, object] = {"prompt": prompt, "cadence": cadence}
+        if next_run_at is not None:
+            arguments["next_run_at"] = next_run_at
+        return _call("schedule_create", context_token, **arguments)
+
+
+    @server.tool()
+    def conversation_question_create(context_token: str, kind: Literal["boolean", "single_choice"], prompt: str, options: list[dict[str, str]] = []) -> str:
+        """当 Jarvis 需要用户确认或选择时，在当前 Conversation 创建结构化问题。"""
+        return _call("conversation_question_create", context_token, kind=kind, prompt=prompt, options=options)
+
+
     async def main() -> None:
         if not BRIDGE_KEY:
             print("JARVIS_BRIDGE_KEY is required", file=sys.stderr)
@@ -140,7 +269,191 @@ data:
 
     if __name__ == "__main__":
         asyncio.run(main())
+  media_janitor.py: |
+    """Bounded cleanup for temporary images produced during Jarvis conversations."""
 
+    from __future__ import annotations
+
+    import os
+    import time
+    from pathlib import Path
+
+
+    MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+    def prune(root: Path, now: float | None = None, ttl_seconds: int = 12 * 60 * 60, max_files: int = 256, max_bytes: int = 512 * 1024 * 1024) -> dict[str, int]:
+        now = time.time() if now is None else now
+        root.mkdir(parents=True, exist_ok=True)
+        files = [path for path in root.iterdir() if path.is_file() and path.suffix.lower() in MEDIA_SUFFIXES]
+        removed = 0
+        for path in files[:]:
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                files.remove(path)
+                continue
+            if now - stat.st_mtime > ttl_seconds or stat.st_size > 16 * 1024 * 1024:
+                path.unlink(missing_ok=True)
+                files.remove(path)
+                removed += 1
+        files.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+        total = sum(path.stat().st_size for path in files if path.exists())
+        for path in files[max_files:]:
+            if path.exists():
+                total -= path.stat().st_size
+                path.unlink(missing_ok=True)
+                removed += 1
+        files = [path for path in files[:max_files] if path.exists()]
+        for path in sorted(files, key=lambda candidate: candidate.stat().st_mtime):
+            if total <= max_bytes:
+                break
+            total -= path.stat().st_size
+            path.unlink(missing_ok=True)
+            removed += 1
+        return {"files": len([path for path in root.iterdir() if path.is_file()]), "bytes": total, "removed": removed}
+
+
+    def main() -> None:
+        root = Path(os.environ.get("MEDIA_ROOT", "/opt/data/media/tmp"))
+        ttl = int(os.environ.get("MEDIA_TTL_SECONDS", str(12 * 60 * 60)))
+        max_files = int(os.environ.get("MEDIA_MAX_FILES", "256"))
+        max_bytes = int(os.environ.get("MEDIA_MAX_BYTES", str(512 * 1024 * 1024)))
+        interval = int(os.environ.get("MEDIA_INTERVAL_SECONDS", "300"))
+        while True:
+            try:
+                result = prune(root, ttl_seconds=ttl, max_files=max_files, max_bytes=max_bytes)
+                print(f"media_janitor files={result['files']} bytes={result['bytes']} removed={result['removed']}", flush=True)
+            except Exception as error:
+                print(f"media_janitor error={error}", flush=True)
+            time.sleep(interval)
+
+
+    if __name__ == "__main__":
+        main()
+  frigate_provider.py: |
+    """Policy-gated Frigate MCP entry point.
+
+    Frigate is an external household service, not a Jarvis-kernel capability.
+    """
+
+    from __future__ import annotations
+
+    import asyncio
+    import os
+    import sys
+
+    from mcp.server import MCPServer
+
+    from jarvis_provider import _call, _call_json
+
+
+    PROVIDER = "frigate"
+
+
+    server = MCPServer(
+        PROVIDER,
+        instructions=(
+            "Jarvis policy-gated Frigate MCP. Every call requires the exact context_token "
+            "from the Jarvis system message. Jarvis checks the current household member "
+            "capability before reading camera events or snapshots."
+        ),
+    )
+
+
+    async def _authorize(context_token: str, tool_name: str) -> None:
+        await asyncio.to_thread(
+            _call_json,
+            "mcp_authorize",
+            context_token,
+            provider=PROVIDER,
+            tool_name=tool_name,
+            read_only=True,
+        )
+
+
+    @server.tool()
+    async def frigate_events_read(context_token: str, after: float | None = None, before: float | None = None, limit: int = 40) -> str:
+        """读取 Frigate 事件摘要。"""
+        await _authorize(context_token, "frigate_events_read")
+        arguments: dict[str, object] = {"limit": limit}
+        if after is not None:
+            arguments["after"] = after
+        if before is not None:
+            arguments["before"] = before
+        return await asyncio.to_thread(_call, "frigate_events_read", context_token, **arguments)
+
+
+    @server.tool()
+    async def frigate_event_snapshot_read(context_token: str, event_id: str) -> str:
+        """读取 Frigate 事件截图。"""
+        await _authorize(context_token, "frigate_event_snapshot_read")
+        return await asyncio.to_thread(_call, "frigate_event_snapshot_read", context_token, event_id=event_id)
+
+
+    async def main() -> None:
+        if not os.environ.get("JARVIS_BRIDGE_KEY"):
+            print("JARVIS_BRIDGE_KEY is required", file=sys.stderr)
+            raise SystemExit(2)
+        await server.run_stdio_async()
+
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+  upstream_provider.py: |
+    """Policy-gated MCP entry point for one household upstream service."""
+
+    from __future__ import annotations
+
+    import asyncio
+    import json
+    import os
+    import sys
+
+    from mcp.server import MCPServer
+
+    from jarvis_provider import _mcp_call, _mcp_tools
+
+
+    PROVIDER = os.environ.get("MCP_PROVIDER", "").strip()
+    if PROVIDER not in {"homeassistant", "immich"}:
+        raise RuntimeError("MCP_PROVIDER must be homeassistant or immich")
+
+
+    server = MCPServer(
+        PROVIDER,
+        instructions=(
+            f"Jarvis policy-gated {PROVIDER} MCP. Every call requires the exact context_token "
+            "from the Jarvis system message. Call mcp_tools_list first, then mcp_tool_call "
+            "with the exact upstream tool name and arguments. Jarvis checks the current "
+            "household member capability before forwarding."
+        ),
+    )
+
+
+    @server.tool()
+    async def mcp_tools_list(context_token: str) -> str:
+        """读取该上游 MCP 的完整工具清单和参数 schema。"""
+        return await _mcp_tools(PROVIDER, context_token)
+
+
+    @server.tool()
+    async def mcp_tool_call(context_token: str, tool_name: str, arguments: dict[str, object] = {}) -> str:
+        """调用该上游 MCP 的原始工具；工具名、参数和返回值由上游 MCP 定义。"""
+        if not tool_name.strip() or len(tool_name) > 200:
+            return json.dumps({"error": "mcp_tool_invalid"}, ensure_ascii=False)
+        return await _mcp_call(PROVIDER, context_token, tool_name, arguments)
+
+
+    async def main() -> None:
+        if not os.environ.get("JARVIS_BRIDGE_KEY"):
+            print("JARVIS_BRIDGE_KEY is required", file=sys.stderr)
+            raise SystemExit(2)
+        await server.run_stdio_async()
+
+
+    if __name__ == "__main__":
+        asyncio.run(main())
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -166,7 +479,7 @@ spec:
     metadata:
       labels: { app: hermes-core }
       annotations:
-        config-version: hermes-agent-profile-20260921-r2
+        config-version: hermes-agent-profile-20260928-mcp7
     spec:
       automountServiceAccountToken: false
       initContainers:
@@ -179,7 +492,8 @@ spec:
               export HERMES_HOME=/opt/data
               cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml
               python - <<'PY'
-              import base64, hashlib, hmac, os, subprocess, yaml
+              import base64, hashlib, hmac, os, shutil, subprocess, yaml
+              from pathlib import Path
               from dotenv import set_key
               base = os.environ["API_SERVER_KEY"]
               profile = os.environ.get("JARVIS_PROFILE_API_KEY") or base64.urlsafe_b64encode(hmac.new(base.encode(), b"hermes-profile:jarvis", hashlib.sha256).digest()).rstrip(b"=").decode()
@@ -191,14 +505,28 @@ spec:
                   subprocess.run(["hermes", "profile", "create", "jarvis", "--clone", "--description", "Jarvis personal cloud coordinator"], check=True)
               elif not os.path.exists(os.path.join(profile_dir, "config.yaml")):
                   raise RuntimeError("Jarvis Hermes profile exists but is incomplete")
+              profile_config_path = os.path.join(profile_dir, "config.yaml")
+              with open(profile_config_path, encoding="utf-8") as profile_config_file:
+                  profile_config = yaml.safe_load(profile_config_file) or {}
+              if not isinstance(profile_config, dict):
+                  raise RuntimeError("Jarvis Hermes profile config is not a mapping")
+              media_tmp = Path("/opt/data/media/tmp")
+              media_tmp.mkdir(parents=True, exist_ok=True)
+              for candidate in Path("/opt/data").iterdir():
+                  if candidate.is_file() and candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                      target = media_tmp / candidate.name
+                      if not target.exists():
+                          shutil.copy2(candidate, target)
+                      candidate.unlink()
               profile_env = os.path.join(profile_dir, ".env")
               if os.path.exists(profile_env):
                   os.chmod(profile_env, 0o644)
               set_key(profile_env, "API_SERVER_KEY", profile)
+              set_key(profile_env, "JARVIS_INTERNAL_URL", os.environ["JARVIS_INTERNAL_URL"])
+              set_key(profile_env, "JARVIS_BRIDGE_KEY", os.environ["JARVIS_BRIDGE_KEY"])
               soul_path = os.path.join(profile_dir, "SOUL.md")
-              if not os.path.exists(soul_path):
-                  with open(soul_path, "w", encoding="utf-8") as soul:
-                      soul.write("You are Jarvis, the user's personal cloud coordinator. Use your configured Hermes Skills, MCP servers, and tools. Use the Jarvis MCP server for authoritative Jarvis state, permissions, UI views, and durable tasks. Be concise, truthful, and never invent unavailable state.\n")
+              with open(soul_path, "w", encoding="utf-8") as soul:
+                  soul.write("You are Jarvis, the user's personal cloud coordinator. Use your configured Hermes Skills, MCP servers, and tools. Use the Jarvis MCP server for authoritative Jarvis state, permissions, UI views, and durable tasks. When temporarily saving a returned image, use /opt/data/media/tmp and return it with the exact MEDIA:/opt/data/media/tmp/<filename> marker. Never accumulate media in /opt/data root. Be concise, truthful, and never invent unavailable state.\n")
               meta_path = os.path.join(profile_dir, "profile.yaml")
               try:
                   with open(meta_path, encoding="utf-8") as meta_file:
@@ -207,6 +535,13 @@ spec:
                   meta = {}
               if not isinstance(meta, dict):
                   raise RuntimeError("Jarvis Hermes profile metadata is not a mapping")
+              with open("/opt/data/config.yaml", encoding="utf-8") as base_config_file:
+                  base_config = yaml.safe_load(base_config_file) or {}
+              if not isinstance(base_config, dict) or not isinstance(base_config.get("mcp_servers"), dict):
+                  raise RuntimeError("Jarvis Hermes base config has no MCP servers")
+              profile_config["mcp_servers"] = base_config["mcp_servers"]
+              with open(profile_config_path, "w", encoding="utf-8") as profile_config_file:
+                  yaml.safe_dump(profile_config, profile_config_file, sort_keys=False, allow_unicode=True)
               meta["description"] = "Jarvis personal cloud coordinator"
               ui_meta = meta.get("ui_meta") if isinstance(meta.get("ui_meta"), dict) else {}
               bot_meta = ui_meta.get("hermes-bots") if isinstance(ui_meta.get("hermes-bots"), dict) else {}
@@ -219,18 +554,24 @@ spec:
               PY
               chmod 600 /opt/data/.env /opt/data/profiles/jarvis/.env
               chown -R 10000:10000 /opt/data
+              chmod 750 /opt/data
+              chmod 770 /opt/data/media /opt/data/media/tmp
           env:
             - name: API_SERVER_KEY
               valueFrom: { secretKeyRef: { name: hermes-api, key: API_SERVER_KEY } }
             - name: JARVIS_PROFILE_API_KEY
               valueFrom: { secretKeyRef: { name: hermes-api, key: JARVIS_API_SERVER_KEY, optional: true } }
+            - name: JARVIS_INTERNAL_URL
+              value: http://10.43.191.204:8080
+            - name: JARVIS_BRIDGE_KEY
+              valueFrom: { secretKeyRef: { name: hermes-bridge, key: bridge-key } }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
           volumeMounts:
             - { name: data, mountPath: /opt/data }
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
       containers:
         - name: hermes
-          image: jarvis-hermes-dashboard:20260920
+          image: jarvis-hermes-dashboard:20260928-mcp2
           imagePullPolicy: IfNotPresent
           resources:
             requests: { cpu: 100m, memory: 512Mi }
@@ -257,7 +598,7 @@ spec:
             - name: DEEPSEEK_API_KEY
               valueFrom: { secretKeyRef: { name: hermes-provider, key: DEEPSEEK_API_KEY } }
             - name: JARVIS_INTERNAL_URL
-              value: http://100.77.157.73:8080
+              value: http://10.43.191.204:8080
             - name: JARVIS_BRIDGE_KEY
               valueFrom: { secretKeyRef: { name: hermes-bridge, key: bridge-key } }
             # Hermes native Skills, toolsets and configured MCP servers are
@@ -271,6 +612,23 @@ spec:
           startupProbe: { httpGet: { path: /health, port: http }, failureThreshold: 60, periodSeconds: 10, timeoutSeconds: 10 }
           readinessProbe: { httpGet: { path: /health, port: http }, failureThreshold: 12, periodSeconds: 10, timeoutSeconds: 10 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 120, failureThreshold: 6, periodSeconds: 30, timeoutSeconds: 10 }
+          volumeMounts:
+            - { name: data, mountPath: /opt/data }
+            - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
+        - name: media-janitor
+          image: jarvis-hermes-dashboard:20260928-mcp2
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/hermes/.venv/bin/python", "/opt/jarvis-mcp/media_janitor.py"]
+          env:
+            - { name: MEDIA_ROOT, value: "/opt/data/media/tmp" }
+            - { name: MEDIA_TTL_SECONDS, value: "43200" }
+            - { name: MEDIA_MAX_FILES, value: "256" }
+            - { name: MEDIA_MAX_BYTES, value: "536870912" }
+            - { name: MEDIA_INTERVAL_SECONDS, value: "300" }
+          securityContext: { runAsUser: 0, runAsGroup: 0 }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }
           volumeMounts:
             - { name: data, mountPath: /opt/data }
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }

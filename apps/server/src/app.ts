@@ -1,18 +1,17 @@
 import { eventAudience } from "./event-audience.js";
 import { M2, m2Topics, m2Events } from "./m2.js";
 import { permitted } from "./permissions.js";
-import { hash } from "./auth.js";
 import { timingSafeEqual, randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import type { RuntimeRegistry } from "../../../packages/agent-runtime/src/index.js";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import WebSocket, { type RawData } from "ws";
 import { z } from "zod";
 import { database, migrate } from "./persistence.js";
-import { authenticate, pair } from "./auth.js";
-import { bootstrapUser, loginUser, refreshUserSession, authenticateUserAccess, listUserSessions, revokeUserSession, createInvite, acceptInvite } from "./identity.js";
+import { authenticate } from "./auth.js";
+import { registerFirstUser, registrationStatus, loginUser, refreshUserSession, authenticateUserAccess, listUserSessions, listUsers, updateUserRole, revokeUserSession, revokeUserSessionByRefresh, createInvite, acceptInvite } from "./identity.js";
 import { MediaStore } from "./media.js";
 import {
   envelopeSchema,
@@ -25,9 +24,13 @@ import {
   type Prices,
 } from "../../../packages/llm-usage/src/index.js";
 import { ownerUserId } from "./ownership.js";
-import { verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
+import { contextAllows, verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
+import { householdIdForOwner } from "./households.js";
 import { installedApplications, casaosLogin, casaosAccount } from "./applications.js";
-const SERVER_VERSION = "0.3.1";
+import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
+import { frigateEventSnapshot, frigateEvents, homeAssistantState, immichSearch } from "./hermes-integrations.js";
+import { canUseMcpTool, setUserCapability, userCapabilities, type McpProvider } from "./mcp-access.js";
+const SERVER_VERSION = "0.3.2";
 export async function buildApp(options: {
   databaseUrl: string;
   runtimes?: RuntimeRegistry;
@@ -57,6 +60,23 @@ export async function buildApp(options: {
   await app.register(websocket, { options: { maxPayload: 65536 } });
   await migrate(db);
   const media = new MediaStore();
+  const mediaFileRoot = resolve(process.env.HERMES_MEDIA_ROOT?.trim() || process.env.HERMES_DATA_ROOT?.trim() || resolve(options.hostRoot || "/", "opt/data"));
+  const readPublishedMediaFile = async (requestPath: unknown) => {
+    if (typeof requestPath !== "string") return undefined;
+    const match = /^\/opt\/data\/(?:media\/tmp\/)?([A-Za-z0-9._-]+\.(?:png|jpe?g|webp))$/i.exec(requestPath);
+    if (!match) return undefined;
+    const filePath = resolve(mediaFileRoot, "tmp", match[1]);
+    if (!filePath.startsWith(`${mediaFileRoot}${sep}`)) return undefined;
+    const contentType = ({ ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" } as Record<string, string>)[extname(filePath).toLowerCase()];
+    if (!contentType) return undefined;
+    try {
+      const metadata = await stat(filePath);
+      if (!metadata.isFile() || metadata.size > 16 * 1024 * 1024) return undefined;
+      return { data: await readFile(filePath), contentType };
+    } catch {
+      return undefined;
+    }
+  };
   const monitor = new SystemMonitor(options.hostRoot, options.networkInterface);
   const sockets = new Map<WebSocket, { topics: Set<string>; alive: boolean; sessionId?: string; device: string; user?: string; events: Promise<void> }>();
   const nodeSockets = new Map<string, WebSocket>();
@@ -122,25 +142,79 @@ export async function buildApp(options: {
     if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey)
       return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
     let toolEvent: { conversation_id: string; tool_call_id: string; capability: string } | undefined;
+    let turnId: string | undefined;
+    let contextOwner: string | undefined;
     try {
       const input = hermesCapabilityInput.parse(req.body);
       const context = verifyHermesContextToken(hermesBridgeKey, input.context_token);
       if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
+      contextOwner = context.owner;
       const args = input.arguments;
+      const mcpProvider = input.tool === "mcp_authorize" && (input.arguments.provider === "homeassistant" || input.arguments.provider === "frigate" || input.arguments.provider === "immich")
+        ? input.arguments.provider as McpProvider : undefined;
+      const mcpReadOnly = mcpProvider ? input.arguments.read_only === true : undefined;
+      const mcpToolName = mcpProvider && typeof args.tool_name === "string" ? args.tool_name : "";
+      const mcpListing = Boolean(mcpProvider && mcpToolName === "__tools_list__");
+      const requiredScope = input.tool === "mcp_authorize" && mcpProvider && !mcpListing ? `mcp.${mcpProvider}.${mcpReadOnly ? "read" : "write"}`
+        : input.tool === "task_create" || input.tool === "schedule_create" || input.tool === "conversation_question_create" ? "conversation.write"
+        : input.tool === "ui_view_show" ? "conversation.write"
+            : input.tool === "home_assistant_state" ? "home.read"
+            : input.tool === "frigate_events_read" || input.tool === "frigate_event_snapshot_read" ? "mcp.frigate.read"
+              : input.tool === "immich_photo_search" ? "photo.read"
+          : input.tool.startsWith("system_") || input.tool === "agent_list" || input.tool === "agent_run_status" ? "system.read"
+            : input.tool.startsWith("schedule_") ? "schedule.write" : undefined;
+      const mcpListingAllowed = !mcpListing || contextAllows(context, `mcp.${mcpProvider}.read`) || contextAllows(context, `mcp.${mcpProvider}.write`);
+      if ((requiredScope && !contextAllows(context, requiredScope)) || !mcpListingAllowed) return reply.code(403).send({ error: "hermes_scope_forbidden" });
       const toolCallId = `mcp-${randomBytes(12).toString("hex")}`;
-      const contextUser = await ownerUserId(db, context.owner);
+      const actorUser = z.uuid().safeParse(context.actor).success
+        ? (await db.query("SELECT id FROM users WHERE id=$1", [context.actor])).rows[0]?.id as string | undefined
+        : undefined;
+      // The signed actor is the member Jarvis is speaking with.  The physical
+      // owner/device remains a compatibility fallback for older sessions.
+      const contextUser = actorUser ?? await ownerUserId(db, context.owner);
+      const contextHousehold = await householdIdForOwner(db, context.owner);
+      if (context.household !== "default-household" && contextHousehold && context.household !== contextHousehold) return reply.code(403).send({ error: "hermes_household_forbidden" });
       const conversationId = z.uuid().safeParse(context.session).success && (await db.query(
         "SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)",
         [context.session, context.owner, contextUser ?? null])).rowCount ? context.session : undefined;
-      if (conversationId) toolEvent = { conversation_id: conversationId, tool_call_id: toolCallId, capability: input.tool };
+      if (conversationId) {
+        toolEvent = { conversation_id: conversationId, tool_call_id: toolCallId, capability: input.tool };
+        turnId = (await db.query("SELECT turn_id FROM conversation_messages WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' ORDER BY sequence DESC LIMIT 1", [conversationId])).rows[0]?.turn_id;
+        if (turnId) await m2.conversations.recordActivity(context.owner, turnId, "started", { tool_call_id: toolCallId, capability: input.tool, input: args });
+      }
       if (conversationId) push("conversation.tool.started", {
         conversation_id: conversationId,
         tool_call_id: toolCallId,
         capability: input.tool,
-        arguments: args,
       });
       let result: unknown;
       switch (input.tool) {
+        case "mcp_authorize": {
+          if (!mcpProvider || typeof args.tool_name !== "string" || !args.tool_name) throw Error("mcp_tool_invalid");
+          if (!contextUser || !contextHousehold) throw Error("user_login_required");
+          if (!(await canUseMcpTool(db, contextUser, contextHousehold, mcpProvider, args.read_only === true)))
+            throw Error("mcp_capability_forbidden");
+          const credentialProvider = mcpProvider === "homeassistant" ? "home-assistant" : mcpProvider;
+          const token = process.env.INTEGRATION_CREDENTIAL_KEY
+            ? await m2.integrationCredentials.readProviderSecret(context.owner, credentialProvider)
+            : mcpProvider === "homeassistant" ? process.env.HOME_ASSISTANT_TOKEN : mcpProvider === "immich" ? process.env.IMMICH_API_KEY : process.env.FRIGATE_TOKEN;
+          if (!token) throw Error(`${mcpProvider}_not_configured`);
+          if (mcpProvider === "homeassistant") {
+            const base = process.env.HOME_ASSISTANT_URL?.replace(/\/$/, "");
+            if (!base) throw Error("home_assistant_not_configured");
+            result = { provider: mcpProvider, endpoint: `${base}/api/mcp`, token };
+          } else if (mcpProvider === "immich") {
+            const base = process.env.IMMICH_URL?.replace(/\/$/, "");
+            if (!base) throw Error("immich_not_configured");
+            result = { provider: mcpProvider, base_url: base, token };
+          } else {
+            const base = process.env.FRIGATE_URL?.replace(/\/$/, "");
+            if (!base) throw Error("frigate_not_configured");
+            if (!token && !(process.env.FRIGATE_USERNAME && process.env.FRIGATE_PASSWORD)) throw Error("frigate_not_configured");
+            result = { provider: mcpProvider, base_url: base };
+          }
+          break;
+        }
         case "system_status_read":
           result = await m2.readForAgent("system.status.read", undefined, context.owner);
           break;
@@ -152,6 +226,31 @@ export async function buildApp(options: {
           break;
         case "llm_usage_read":
           result = await m2.readForAgent("llm.usage.read", undefined, context.owner);
+          break;
+        case "home_assistant_state":
+          result = await homeAssistantState({ token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "home-assistant") : undefined });
+          break;
+        case "frigate_events_read":
+          result = await frigateEvents(args as { after?: number; before?: number; limit?: number }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "frigate") : undefined });
+          break;
+        case "frigate_event_snapshot_read": {
+          const snapshot = await frigateEventSnapshot(args as { event_id: string }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "frigate") : undefined });
+          result = { provider: snapshot.provider, event_id: snapshot.event_id, thumbnail: media.publish(context.owner, { data: snapshot.data, contentType: snapshot.contentType }) };
+          break;
+        }
+        case "immich_photo_search":
+          result = await immichSearch(args as { query?: string; from?: string; to?: string; page?: number; size?: number }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "immich") : undefined });
+          break;
+        case "schedule_create":
+          if (!conversationId) throw Error("conversation_required");
+          if (typeof args.next_run_at !== "string" || !Number.isFinite(Date.parse(args.next_run_at)) || Date.parse(args.next_run_at) <= Date.now()) {
+            throw Error("schedule_time_required: 请先通过 conversation_question_create 确认用户希望的执行时间和时区，再提供未来的 ISO 8601 next_run_at；任务尚未创建。");
+          }
+          result = await m2.control.createSchedule(context.owner, { ...args, conversation_id: conversationId });
+          break;
+        case "conversation_question_create":
+          if (!turnId) throw Error("conversation_required");
+          result = await m2.conversations.createQuestion(context.owner, { ...args, turn_id: turnId });
           break;
         case "agent_run_status":
           result = await m2.readForAgent("agent.run.read", args, context.owner);
@@ -200,14 +299,31 @@ export async function buildApp(options: {
         conversation_id: conversationId,
         tool_call_id: toolCallId,
         capability: input.tool,
-        result,
       });
+      const activityResult = input.tool === "mcp_authorize" ? { provider: args.provider, tool_name: args.tool_name, authorized: true } : result;
+      if (turnId && contextOwner) await m2.conversations.recordActivity(contextOwner, turnId, "completed", { tool_call_id: toolCallId, capability: input.tool, result: activityResult });
       return result;
     } catch (error) {
       if (toolEvent) push("conversation.tool.failed", { ...toolEvent, error: error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "tool_failed" });
+      if (turnId && toolEvent && contextOwner) await m2.conversations.recordActivity(contextOwner, turnId, "failed", { tool_call_id: toolEvent.tool_call_id, capability: toolEvent.capability, error: error instanceof Error ? error.message : "tool_failed" });
       // The MCP provider receives the HTTP error body and Hermes can report it
       // as a failed capability call without exposing bridge credentials.
-      return reply.code(400).send({ error: error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "hermes_capability_invalid", ...(error instanceof z.ZodError ? { issues: error.issues } : {}) });
+      const message = error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "hermes_capability_invalid";
+      return reply.code(message === "mcp_capability_forbidden" || message === "hermes_scope_forbidden" ? 403 : 400).send({ error: message, ...(error instanceof z.ZodError ? { issues: error.issues } : {}) });
+    }
+  });
+  app.post<{ Body: { context_token?: string; content_type?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {
+    if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey) return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
+    const input = z.object({ context_token: z.string().min(20).max(2000), content_type: z.enum(["image/png", "image/jpeg", "image/webp"]), data: z.string().min(1).max(2_800_000) }).strict().safeParse(req.body);
+    if (!input.success) return reply.code(400).send({ error: "media_validation_error" });
+    const context = verifyHermesContextToken(hermesBridgeKey, input.data.context_token);
+    if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
+    let data: Buffer;
+    try { data = Buffer.from(input.data.data, "base64"); } catch { return reply.code(400).send({ error: "media_invalid_base64" }); }
+    try {
+      return { path: media.publish(context.owner, { data, contentType: input.data.content_type }) };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "media_invalid" });
     }
   });
   await m2.start();
@@ -319,7 +435,7 @@ export async function buildApp(options: {
     if (req.headers.origin && !validOrigin(req))
       return reply.code(403).send({ error: "origin_forbidden" });
   });
-  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
+  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/users", "/settings", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
     try {
       return reply
         .type("text/html")
@@ -384,7 +500,6 @@ export async function buildApp(options: {
         .send(await readFile(resolve("apps/web/dist/app-icons", req.params.name)));
     } catch { return reply.code(404).send(); }
   });
-  const attempts = new Map<string, { count: number; until: number }>();
   const cookieValue = (req: any, name: string) => {
     const prefix = `${name}=`;
     return req.headers.cookie?.split(";").map((v: string) => v.trim()).find((v: string) => v.startsWith(prefix))?.slice(prefix.length);
@@ -392,33 +507,62 @@ export async function buildApp(options: {
   const userIdentity = async (req: any) => {
     const value = cookieValue(req, "jarvis_access");
     const bearer = req.headers.authorization ?? (value ? `Bearer ${value}` : undefined);
-    const user = await authenticateUserAccess(db, bearer);
-    if (user) return user;
-    const session = cookieValue(req, "jarvis_session");
-    if (!session) return undefined;
-    const device = (await db.query("SELECT d.id AS device_id,d.user_id,u.username,u.role FROM web_sessions s JOIN devices d ON d.id=s.device_id LEFT JOIN users u ON u.id=d.user_id WHERE s.token_hash=$1 AND s.expires_at>now()", [hash(session)])).rows[0];
-    return device ? { user_id: device.user_id, username: device.username, role: device.role ?? "device", device_id: device.device_id, session_id: undefined } : undefined;
+    return authenticateUserAccess(db, bearer);
+  };
+  const hermesUserIdentity = async (req: any, reply: any) => {
+    const current = await userIdentity(req);
+    if (current) return current;
+    const refresh = cookieValue(req, "jarvis_refresh");
+    if (!refresh) return undefined;
+    try {
+      const result = await refreshUserSession(db, refresh);
+      const secure = req.protocol === "https" ? "; Secure" : "";
+      reply.header("Set-Cookie", [
+        `jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${secure}`,
+        `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${secure}`,
+      ]);
+      return authenticateUserAccess(db, `Bearer ${result.access_token}`);
+    } catch {
+      return undefined;
+    }
   };
   const hermesDashboardUrl = process.env.HERMES_DASHBOARD_URL ?? "";
   let hermesDashboardCookie = "";
   let hermesDashboardLogin: Promise<string> | undefined;
-  const ensureHermesDashboardCookie = async () => {
+  const mergeHermesDashboardCookies = (response: Response) => {
+    const values = response.headers.getSetCookie?.() ?? [];
+    if (!values.length) return;
+    const cookies = new Map<string, string>();
+    for (const value of hermesDashboardCookie.split(";")) {
+      const separator = value.indexOf("=");
+      if (separator > 0) cookies.set(value.slice(0, separator).trim(), value.slice(separator + 1).trim());
+    }
+    for (const value of values) {
+      const separator = value.indexOf(";");
+      const pair = (separator === -1 ? value : value.slice(0, separator)).trim();
+      const equals = pair.indexOf("=");
+      if (equals > 0) cookies.set(pair.slice(0, equals).trim(), pair.slice(equals + 1).trim());
+    }
+    hermesDashboardCookie = [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+  };
+  const ensureHermesDashboardCookie = async (force = false) => {
+    if (force) hermesDashboardCookie = "";
     if (hermesDashboardCookie) {
-      // /api/status is intentionally public, so it cannot prove that the
-      // cached dashboard session cookie is still valid. Check a protected
-      // page instead; an expired cookie otherwise causes the upstream 302 to
-      // /login to be surfaced as hermes_dashboard_unavailable.
-      const check = await fetch(new URL("/chat", hermesDashboardUrl), { headers: { Cookie: hermesDashboardCookie }, redirect: "manual", signal: AbortSignal.timeout(10000) }).catch(() => undefined);
-      if (check?.ok && !check.headers.get("location")) return hermesDashboardCookie;
+      // A frontend page can still return HTML with status 200 when logged out.
+      // Check the protected identity endpoint so an expired cached cookie is
+      // renewed before the Dashboard starts returning a stream of 401s.
+      const check = await fetch(new URL("/api/auth/me", hermesDashboardUrl), { headers: { Cookie: hermesDashboardCookie }, redirect: "manual", signal: AbortSignal.timeout(10000) }).catch(() => undefined);
+      if (check?.ok) return hermesDashboardCookie;
       hermesDashboardCookie = "";
     }
     if (!hermesDashboardLogin) hermesDashboardLogin = (async () => {
       const response = await fetch(new URL("/auth/password-login", hermesDashboardUrl), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: "basic", username: process.env.HERMES_DASHBOARD_PROXY_USERNAME, password: process.env.HERMES_DASHBOARD_PROXY_PASSWORD, next: "/" }),
+        redirect: "manual",
         signal: AbortSignal.timeout(15000),
       });
-      if (!response.ok) throw Error("hermes_dashboard_login_failed");
+      if (response.status < 200 || response.status >= 400) throw Error("hermes_dashboard_login_failed");
       const values = response.headers.getSetCookie?.() ?? [];
       const cookies = values.map((value) => value.split(";", 1)[0]).filter(Boolean);
       if (!cookies.length) throw Error("hermes_dashboard_cookie_missing");
@@ -447,7 +591,7 @@ export async function buildApp(options: {
     client.on("close", close); upstream.on("close", close); client.on("error", close); upstream.on("error", close);
   };
   const hermesProxy = async (req: any, reply: any) => {
-    const identity = await userIdentity(req);
+    const identity = await hermesUserIdentity(req, reply);
     if (!identity) return reply.code(401).send({ error: "unauthorized" });
     if (!hermesDashboardUrl) return reply.code(503).send({ error: "hermes_dashboard_unavailable" });
     const suffix = req.params["*"] ? `/${req.params["*"]}` : "/";
@@ -456,14 +600,20 @@ export async function buildApp(options: {
     for (const name of ["accept", "content-type", "x-hermes-session-token", "if-none-match", "if-modified-since"]) {
       const value = req.headers[name]; if (typeof value === "string") headers[name] = value;
     }
-    const dashboardCookie = await ensureHermesDashboardCookie().catch(() => "");
-    if (!dashboardCookie) return reply.code(503).send({ error: "hermes_dashboard_unavailable" });
-    headers.cookie = dashboardCookie;
     const method = req.method.toUpperCase();
     const body = method === "GET" || method === "HEAD" ? undefined : (typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}));
-    let upstream: Response;
-    try { upstream = await fetch(target, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(30000) }); }
-    catch { return reply.code(503).send({ error: "hermes_dashboard_unavailable" }); }
+    let upstream: Response | undefined;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const dashboardCookie = await ensureHermesDashboardCookie(attempt === 1).catch(() => "");
+      if (!dashboardCookie) return reply.code(503).send({ error: "hermes_dashboard_unavailable" });
+      headers.cookie = dashboardCookie;
+      try { upstream = await fetch(target, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(30000) }); }
+      catch { return reply.code(503).send({ error: "hermes_dashboard_unavailable" }); }
+      if (![401, 403].includes(upstream.status) || attempt === 1) break;
+      hermesDashboardCookie = "";
+    }
+    if (!upstream) return reply.code(503).send({ error: "hermes_dashboard_unavailable" });
+    mergeHermesDashboardCookies(upstream);
     const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
     let payload = Buffer.from(await upstream.arrayBuffer());
     if (contentType.includes("text/html")) {
@@ -503,62 +653,54 @@ export async function buildApp(options: {
     });
   }
   app.all(`${hermesPrefix}/*`, hermesProxy);
-  app.post("/api/v1/pair", async (req, reply) => {
-    const now = Date.now();
-    for (const [ip, a] of attempts) if (a.until < now) attempts.delete(ip);
-    const a = attempts.get(req.ip) ?? { count: 0, until: now + 60000 };
-    attempts.set(req.ip, a);
-    if (++a.count > 10)
-      return reply.code(429).send({ error: "pairing_rate_limited" });
-    const p = z
-      .object({ device_id: z.uuid(), code: z.string().min(1).max(128) })
-      .parse(req.body);
+  // One-time pairing was the old bootstrap mechanism. Keep an explicit
+  // response for stale clients so they receive a useful migration hint and
+  // cannot create a legacy web session anymore.
+  app.post("/api/v1/pair", async (_req, reply) => reply.code(410).send({ error: "pairing_disabled", message: "请使用 Jarvis 用户名和密码登录" }));
+  app.post("/api/v2/auth/bootstrap", async (_req, reply) => reply.code(410).send({ error: "bootstrap_disabled", message: "请从登录页完成首次注册" }));
+  app.get("/api/v2/auth/registration", async () => registrationStatus(db));
+  app.post("/api/v2/auth/register", async (req, reply) => {
     try {
-      const result = await pair(db, p.device_id, p.code);
-      if (req.headers.origin) {
-        if (!validOrigin(req))
-          return reply.code(403).send({ error: "origin_forbidden" });
-        const identity = await authenticate(db, `Bearer ${result.token}`);
-        if (identity?.role !== "device")
-          return reply.code(403).send({ error: "device_required" });
-        const session = randomBytes(32).toString("base64url");
-        await db.query(
-          "INSERT INTO web_sessions(token_hash,device_id,expires_at) VALUES($1,$2,now()+interval '30 days')",
-          [hash(session), result.device_id],
-        );
-        reply.header(
-          "Set-Cookie",
-          `jarvis_session=${session}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`,
-        );
-        return { device_id: result.device_id };
-      }
+      const body = z.object({ username: z.string().trim().min(3).max(80).regex(/^[a-zA-Z0-9._-]+$/), password: z.string().min(8).max(256), password_confirmation: z.string().min(8).max(256), device_id: z.uuid().optional() }).strict().parse(req.body);
+      if (body.password !== body.password_confirmation) return reply.code(400).send({ error: "password_mismatch" });
+      const result = await registerFirstUser(db, { username: body.username, password: body.password, device_id: body.device_id });
+      reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
       return result;
-    } catch {
-      return reply.code(401).send({ error: "pairing_failed" });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "registration_failed";
+      return reply.code(error === "registration_closed" ? 409 : 400).send({ error });
     }
-  });
-  app.post("/api/v2/auth/bootstrap", async (req, reply) => {
-    let identity = await authenticate(db, req.headers.authorization);
-    if (!identity) {
-      const session = req.headers.cookie?.split(";").map((v) => v.trim()).find((v) => v.startsWith("jarvis_session="))?.slice(15);
-      if (session) identity = (await db.query("SELECT d.id,d.role FROM web_sessions s JOIN devices d ON d.id=s.device_id WHERE s.token_hash=$1 AND s.expires_at>now()", [hash(session)])).rows[0];
-    }
-    if (!identity || identity.role !== "device") return reply.code(401).send({ error: "device_required" });
-    try { return await bootstrapUser(db, identity.id, req.body); }
-    catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "bootstrap_failed" }); }
   });
   app.post("/api/v2/auth/login", async (req, reply) => {
     try {
       const device = await authenticate(db, req.headers.authorization);
       let deviceId = device?.role === "device" ? device.id : undefined;
-      if (!deviceId) {
-        const session = req.headers.cookie?.split(";").map((v) => v.trim()).find((v) => v.startsWith("jarvis_session="))?.slice(15);
-        if (session) deviceId = (await db.query("SELECT d.id FROM web_sessions s JOIN devices d ON d.id=s.device_id WHERE s.token_hash=$1 AND s.expires_at>now() AND d.role='device'", [hash(session)])).rows[0]?.id;
-      }
       const result = await loginUser(db, req.body, deviceId);
-      reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/api/v2/auth; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
+      reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
       return result;
     } catch (e) { return reply.code(401).send({ error: e instanceof Error ? e.message : "invalid_credentials" }); }
+  });
+  app.get("/api/v2/auth/oidc/status", async () => ({ configured: oidcConfigured() }));
+  app.get("/api/v2/auth/oidc/start", async (req, reply) => {
+    try {
+      const authorization = await oidcAuthorizationUrl();
+      if (!authorization) return reply.code(404).send({ error: "oidc_not_configured" });
+      reply.header("Cache-Control", "no-store").header("Set-Cookie", `jarvis_oidc_state=${authorization.state}; Path=/api/v2/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=600${req.protocol === "https" ? "; Secure" : ""}`);
+      return reply.redirect(authorization.url);
+    } catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : "oidc_unavailable" }); }
+  });
+  app.get<{ Querystring: { code?: string; state?: string; error?: string } }>("/api/v2/auth/oidc/callback", async (req, reply) => {
+    const browserState = req.headers.cookie?.split(";").map((value) => value.trim()).find((value) => value.startsWith("jarvis_oidc_state="))?.slice("jarvis_oidc_state=".length);
+    const clearState = `jarvis_oidc_state=; Path=/api/v2/auth/oidc; HttpOnly; SameSite=Lax; Max-Age=0${req.protocol === "https" ? "; Secure" : ""}`;
+    reply.header("Cache-Control", "no-store").header("Set-Cookie", clearState);
+    if (!browserState || browserState !== req.query.state) return reply.code(401).send({ error: "oidc_invalid_browser_state" });
+    if (req.query.error) return reply.code(401).send({ error: req.query.error });
+    if (!req.query.code || !req.query.state) return reply.code(400).send({ error: "oidc_callback_invalid" });
+    try {
+      const result = await completeOidcLogin(db, req.query.state, req.query.code);
+      reply.header("Cache-Control", "no-store").header("Set-Cookie", [clearState, `jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
+      return reply.redirect("/");
+    } catch (error) { return reply.code(401).send({ error: error instanceof Error ? error.message : "oidc_login_failed" }); }
   });
   app.get("/api/v2/integrations/casaos", async (req, reply) => {
     const identity = await userIdentity(req); if (!identity) return reply.code(401).send({ error: "unauthorized" });
@@ -582,7 +724,7 @@ export async function buildApp(options: {
         : cookieValue(req, "jarvis_refresh");
       if (!body) throw Error("invalid_session");
       const result = await refreshUserSession(db, body);
-      reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/api/v2/auth; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
+      reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
       return result;
     }
     catch { return reply.code(401).send({ error: "invalid_session" }); }
@@ -591,12 +733,41 @@ export async function buildApp(options: {
     const identity = await userIdentity(req); if (!identity || identity.role !== "admin") return reply.code(403).send({ error: "admin_required" });
     try { return await createInvite(db, identity.user_id, req.body); } catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "invite_failed" }); }
   });
+  app.get("/api/v2/auth/users", async (req, reply) => {
+    const identity = await userIdentity(req); if (!identity || identity.role !== "admin") return reply.code(403).send({ error: "admin_required" });
+    return listUsers(db);
+  });
+  app.get<{ Params: { id: string } }>("/api/v2/auth/users/:id/capabilities", async (req, reply) => {
+    const identity = await userIdentity(req); if (!identity || identity.role !== "admin") return reply.code(403).send({ error: "admin_required" });
+    try { return await userCapabilities(db, z.uuid().parse(req.params.id)); }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : "capability_read_failed" }); }
+  });
+  app.patch<{ Params: { id: string } }>("/api/v2/auth/users/:id/capabilities", async (req, reply) => {
+    const identity = await userIdentity(req); if (!identity || identity.role !== "admin") return reply.code(403).send({ error: "admin_required" });
+    try {
+      const body = z.object({ capability: z.string().min(3).max(160), allowed: z.boolean() }).strict().parse(req.body);
+      return await setUserCapability(db, identity.user_id, z.uuid().parse(req.params.id), body.capability, body.allowed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "capability_update_failed";
+      return reply.code(message === "user_not_in_household" ? 404 : 400).send({ error: message });
+    }
+  });
+  app.patch<{ Params: { id: string } }>("/api/v2/auth/users/:id", async (req, reply) => {
+    const identity = await userIdentity(req); if (!identity || identity.role !== "admin") return reply.code(403).send({ error: "admin_required" });
+    try {
+      const body = z.object({ role: z.enum(["admin", "member"]) }).strict().parse(req.body);
+      return await updateUserRole(db, identity.user_id, z.uuid().parse(req.params.id), body.role);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "user_update_failed";
+      return reply.code(error === "user_not_found" ? 404 : 400).send({ error });
+    }
+  });
   app.post("/api/v2/auth/invites/accept", async (req, reply) => {
     try { return await acceptInvite(db, req.body); } catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "invite_invalid" }); }
   });
   app.get("/api/v2/auth/me", async (req, reply) => {
     const identity = await userIdentity(req); if (!identity) return reply.code(401).send({ error: "unauthorized" });
-    return { user: { id: identity.user_id, username: identity.username, role: identity.role }, session_id: identity.session_id, device_id: identity.device_id, sessions: await listUserSessions(db, identity.user_id) };
+    return { user: { id: identity.user_id, username: identity.username, role: identity.role }, household_id: (identity as any).household_id ?? (await householdIdForOwner(db, identity.device_id)), session_id: identity.session_id, device_id: identity.device_id, sessions: await listUserSessions(db, identity.user_id) };
   });
   app.get("/api/v2/auth/sessions", async (req, reply) => {
     const identity = await userIdentity(req); if (!identity) return reply.code(401).send({ error: "unauthorized" }); return listUserSessions(db, identity.user_id);
@@ -606,8 +777,11 @@ export async function buildApp(options: {
     if (identity) {
       await revokeUserSession(db, identity.user_id, identity.session_id);
       for (const [ws, state] of sockets) if (state.sessionId === identity.session_id) ws.close(4001, "session_revoked");
+    } else {
+      const refresh = cookieValue(req, "jarvis_refresh");
+      if (refresh) await revokeUserSessionByRefresh(db, refresh);
     }
-    reply.header("Set-Cookie", ["jarvis_access=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict", "jarvis_refresh=; Path=/api/v2/auth; Max-Age=0; HttpOnly; SameSite=Strict"]); return { logged_out: true };
+    reply.header("Set-Cookie", ["jarvis_access=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict", "jarvis_refresh=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict", "jarvis_refresh=; Path=/api/v2/auth; Max-Age=0; HttpOnly; SameSite=Strict"]); return { logged_out: true };
   });
   app.delete<{ Params: { id: string } }>("/api/v2/auth/sessions/:id", async (req, reply) => {
     const identity = await userIdentity(req); if (!identity) return reply.code(401).send({ error: "unauthorized" });
@@ -647,7 +821,7 @@ export async function buildApp(options: {
     // websocket plugin captures the child error boundary before the root
     // handler is installed, otherwise ordinary HTTP RPC errors become 500s.
     api.setErrorHandler((error, _req, reply) => {
-      if (error instanceof Error && /^(id_reused|invalid_parent|delegation_depth|invalid_run_state)/.test(error.message))
+      if (error instanceof Error && /^(id_reused|invalid_parent|delegation_depth|invalid_run_state|invalid_activity_transition)/.test(error.message))
         return reply.code(409).send({ error: error.message });
       if (error instanceof Error && error.message === "not_found")
         return reply.code(404).send({ error: error.message });
@@ -655,6 +829,8 @@ export async function buildApp(options: {
         return reply.code(403).send({ error: error.message });
       if (error instanceof Error && error.message === "user_login_required")
         return reply.code(401).send({ error: error.message });
+      if (error instanceof Error && error.message === "admin_required")
+        return reply.code(403).send({ error: error.message });
       if (error instanceof Error && /^(integration_credentials_key_)/.test(error.message))
         return reply.code(503).send({ error: error.message });
       if (error instanceof z.ZodError)
@@ -686,24 +862,7 @@ export async function buildApp(options: {
         if (userIdentity) identity = { id: userIdentity.device_id ?? `user-${userIdentity.user_id}`, role: "device", session_id: userIdentity.session_id };
       }
       if (!identity) {
-        const token = cookieValue(req, "jarvis_session");
-        if (token)
-          identity = (
-            await db.query(
-              "SELECT d.id,d.role FROM web_sessions s JOIN devices d ON d.id=s.device_id WHERE s.token_hash=$1 AND s.expires_at>now()",
-              [hash(token)],
-            )
-          ).rows[0];
-        // Sliding renewal keeps an actively used browser session alive across
-        // server restarts without issuing an immortal access credential.
-        if (identity && token)
-          await db.query("UPDATE web_sessions SET expires_at=now()+interval '30 days' WHERE token_hash=$1", [hash(token)]);
-        if (
-          identity &&
-          ((req.url === "/ws" && !validOrigin(req)) ||
-            (req.method !== "GET" && !validOrigin(req)))
-        )
-          return reply.code(403).send({ error: "origin_forbidden" });
+        return reply.code(401).send({ error: "unauthorized" });
       }
       if (!identity) return reply.code(401).send({ error: "unauthorized" });
       if (
@@ -713,6 +872,23 @@ export async function buildApp(options: {
       )
         return reply.code(403).send({ error: "device_required" });
       (req as any).identity = identity;
+    });
+    api.post<{ Params: { id: string } }>("/api/v2/integration/credentials/:id/test", async (req, reply) => {
+      const identity = (req as any).identity;
+      if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      try {
+        const credential = await m2.integrationCredentials.readCredential(identity.id, req.params.id);
+        if (credential.provider === "home-assistant") await homeAssistantState({ token: credential.secret });
+        else if (credential.provider === "frigate") await frigateEvents({}, { token: credential.secret });
+        else if (credential.provider === "immich") await immichSearch({}, { token: credential.secret });
+        else return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
+        return { credential_id: credential.id, provider: credential.provider, connected: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "integration_unavailable";
+        if (message === "not_found") return reply.code(404).send({ error: "not_found" });
+        const errorCode = message === "integration_http_401" || message === "integration_http_403" ? "invalid_credentials" : "service_unavailable";
+        return { credential_id: req.params.id, connected: false, error: errorCode };
+      }
     });
     api.post<{ Params: { topic: string } }>(
       "/api/v2/:topic",
@@ -738,6 +914,13 @@ export async function buildApp(options: {
       const item = /^[a-zA-Z0-9_-]{1,100}$/.test(req.params.id) ? media.read(req.params.id, identity.id) : undefined;
       if (!item) return reply.code(404).send({ error: "media_not_found" });
       return reply.type(item.contentType).send(item.data);
+    });
+    api.get<{ Querystring: { path?: string } }>("/api/media/file", async (req, reply) => {
+      const identity = (req as any).identity;
+      if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      const item = await readPublishedMediaFile(req.query.path);
+      if (!item) return reply.code(404).send({ error: "media_not_found" });
+      return reply.type(item.contentType).header("Cache-Control", "private, max-age=60").header("X-Content-Type-Options", "nosniff").send(item.data);
     });
     api.get("/api/v1/system/status", systemStatus);
     api.get("/api/v1/agents", (req) => agents.list((req as any).identity.role === "device" ? (req as any).identity.id : undefined));
@@ -944,7 +1127,7 @@ export async function buildApp(options: {
   app.setErrorHandler((error, _req, reply) => {
     if (
       error instanceof Error &&
-      /^(id_reused|invalid_parent|delegation_depth|invalid_run_state)/.test(
+      /^(id_reused|invalid_parent|delegation_depth|invalid_run_state|invalid_activity_transition)/.test(
         error.message,
       )
     )
@@ -958,6 +1141,8 @@ export async function buildApp(options: {
       return reply.code(403).send({ error: error.message });
     if (error instanceof Error && error.message === "user_login_required")
       return reply.code(401).send({ error: error.message });
+    if (error instanceof Error && error.message === "admin_required")
+      return reply.code(403).send({ error: error.message });
     if (error instanceof Error && /^(integration_credentials_key_)/.test(error.message))
       return reply.code(503).send({ error: error.message });
     if (error instanceof z.ZodError)

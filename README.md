@@ -25,21 +25,13 @@ npm start
 
 默认只监听 `127.0.0.1:8080`。从 Android 访问时设置 `HOST=<服务器 Tailscale IPv4>`，并确认手机、服务器在同一 Tailnet。应用不依赖公网 IPv6。Node 不自动读取 `.env`，请由 shell 或服务管理器传入环境变量；配置项见 [.env.example](.env.example)。
 
-创建 10 分钟有效的一次性设备配对码：
+首次启动后打开 `http://<服务器地址>:8080`。在登录页选择“首次注册 Jarvis 账户”创建第一个账户；第一个注册账户自动成为管理员。之后使用 Jarvis 用户名和密码登录，管理员在“用户”页面邀请其他成员。Android 同样只使用服务器地址、用户名和密码登录。
 
-```bash
-npm run pair
-```
-
-Android 首次输入 `http://100.x.x.x:8080` 和该码。生成的是 device 角色，只允许监控读取。不要在公网直接暴露明文 HTTP/WS 端口；Tailnet 内传输由 Tailscale 加密。
+一次性配对码、网页登录配对会话和 Authentik 登录入口已停用。不要在公网直接暴露明文 HTTP/WS 端口；Tailnet 内传输由 Tailscale 加密。
 
 ## 测试 Agent 与 LLM
 
-```bash
-npm run pair -- --agent
-```
-
-使用该码调用 `POST /api/v1/pair`，JSON 为 `{"device_id":"<新 UUID>","code":"<一次性码>"}`，返回 Token。将 Token 仅配置给 Agent：
+将预先配置的 Agent Token 仅配置给 Agent：
 
 ```bash
 export JARVIS_URL=http://127.0.0.1:8080

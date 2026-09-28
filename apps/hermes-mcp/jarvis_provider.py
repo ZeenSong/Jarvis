@@ -7,13 +7,18 @@ Jarvis-kernel capability bridge; it is not the Agent identity.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from typing import Literal
 
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.server import MCPServer
 
 
@@ -45,13 +50,154 @@ def _call(tool: str, context_token: str, **arguments: object) -> str:
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
+def _call_json(tool: str, context_token: str, **arguments: object) -> dict:
+    value = json.loads(_call(tool, context_token, **arguments))
+    if not isinstance(value, dict):
+        raise RuntimeError("jarvis_bridge_invalid_response")
+    if value.get("error"):
+        raise RuntimeError(str(value["error"]))
+    return value
+
+
+def _dump(value: object) -> str:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _publish_media(context_token: str, data: bytes, content_type: str) -> str:
+    body = json.dumps({
+        "context_token": context_token,
+        "content_type": content_type,
+        "data": base64.b64encode(data).decode("ascii"),
+    }).encode("utf-8")
+    request = Request(
+        f"{BASE_URL}/internal/hermes/media",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Jarvis-Bridge-Key": BRIDGE_KEY,
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        value = json.load(response)
+    if not isinstance(value, dict) or not isinstance(value.get("path"), str):
+        raise RuntimeError("jarvis_media_publish_invalid_response")
+    return value["path"]
+
+
+async def _dump_tool_result(value: object, context_token: str) -> str:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if isinstance(value, dict) and isinstance(value.get("content"), list):
+        content = value["content"]
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            image_data = item.get("data") if item.get("type") == "image" else None
+            image_type = item.get("mimeType") if item.get("type") == "image" else None
+            resource = item.get("resource") if item.get("type") == "resource" else None
+            if isinstance(resource, dict) and isinstance(resource.get("blob"), str):
+                image_data = resource["blob"]
+                image_type = resource.get("mimeType")
+            if not isinstance(image_data, str) or not isinstance(image_type, str) or not image_type.startswith("image/"):
+                continue
+            try:
+                raw = base64.b64decode(image_data, validate=True)
+                if not raw or len(raw) > 2 * 1024 * 1024:
+                    continue
+                path = await asyncio.to_thread(_publish_media, context_token, raw, image_type)
+                item.clear()
+                item.update({"type": "text", "text": f"MEDIA:{path}"})
+            except Exception:
+                continue
+    return _dump(value)
+
+
+async def _authorize(context_token: str, provider: str, tool_name: str, read_only: bool) -> dict:
+    return await asyncio.to_thread(
+        _call_json,
+        "mcp_authorize",
+        context_token,
+        provider=provider,
+        tool_name=tool_name,
+        read_only=read_only,
+    )
+
+
+@asynccontextmanager
+async def _upstream(provider: str, config: dict):
+    """Open the real upstream MCP server with the household credential.
+
+    This is a transport gateway, not a Home Assistant or Immich adapter. The
+    upstream server owns the tool names, schemas and results; Jarvis only
+    supplies the household credential after its member policy has approved the
+    request.
+    """
+    if provider == "homeassistant":
+        async with create_mcp_http_client(headers={"Authorization": f"Bearer {config['token']}"}) as client:
+            async with streamable_http_client(config["endpoint"], http_client=client) as streams:
+                async with ClientSession(*streams) as session:
+                    await session.initialize()
+                    yield session
+        return
+    if provider == "immich":
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "DOTNET_ROOT": os.environ.get("DOTNET_ROOT", "/usr/share/dotnet"),
+            "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": os.environ.get("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "1"),
+            "IMMICH_BASE_URL": str(config["base_url"]),
+            "IMMICH_API_KEY": str(config["token"]),
+        }
+        params = StdioServerParameters(
+            command=os.environ.get("IMMICH_MCP_COMMAND", "/usr/share/dotnet/dotnet"),
+            args=[os.environ.get("IMMICH_MCP_DLL", "/opt/immich-mcp/ImmichMCP.dll"), "--stdio"],
+            env=env,
+        )
+        async with stdio_client(params) as streams:
+            async with ClientSession(*streams) as session:
+                await session.initialize()
+                yield session
+        return
+    raise RuntimeError("mcp_provider_invalid")
+
+
+async def _mcp_tools(provider: str, context_token: str) -> str:
+    config = await _authorize(context_token, provider, "__tools_list__", True)
+    async with _upstream(provider, config) as session:
+        return _dump(await session.list_tools())
+
+
+async def _mcp_call(provider: str, context_token: str, tool_name: str, arguments: dict[str, object]) -> str:
+    # The schema and annotations come from the upstream server. We do not trust
+    # a model-supplied read_only flag to authorize a write operation.
+    read_config = await _authorize(context_token, provider, "__tools_list__", True)
+    async with _upstream(provider, read_config) as session:
+        tools = await session.list_tools()
+        selected = next((tool for tool in tools.tools if tool.name == tool_name), None)
+        if selected is None:
+            raise RuntimeError("mcp_tool_not_found")
+        annotations = getattr(selected, "annotations", None)
+        read_only = bool(getattr(annotations, "read_only_hint", False)) if annotations is not None else False
+        if read_only:
+            return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token)
+
+    # A write tool requires a separate explicit write permission. Re-open the
+    # upstream only after Jarvis approves it, so a member can never bypass the
+    # policy by claiming that a tool is read-only.
+    write_config = await _authorize(context_token, provider, tool_name, False)
+    async with _upstream(provider, write_config) as session:
+        return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token)
+
+
 server = MCPServer(
     "jarvis",
     instructions=(
         "Jarvis kernel capability provider for the first-class Jarvis Agent. "
-        "Hermes owns reasoning and the "
-        "tool loop; use these tools for current Jarvis state, metrics, user runs, "
-        "usage, and dashboard views. Every tool call requires the exact context_token "
+        "Hermes owns reasoning and the tool loop; use these tools for current Jarvis state, metrics, user runs, "
+        "usage, dashboard views, household service summaries, and scheduling. Every tool call requires the exact context_token "
         "from the Jarvis system message. Never invent one."
     ),
 )
@@ -103,6 +249,21 @@ def task_create(context_token: str, goal: str, idempotency_key: str) -> str:
 def task_cancel(context_token: str, run_id: str) -> str:
     """仅在用户要求停止任务时取消当前用户的指定任务。"""
     return _call("task_cancel", context_token, run_id=run_id)
+
+
+@server.tool()
+def schedule_create(context_token: str, prompt: str, cadence: Literal["once", "daily", "weekly"], next_run_at: str | None = None) -> str:
+    """按用户指令创建定时任务。必须先确认执行时间和时区，next_run_at 为未来 ISO 8601 时间（含时区）；用户只说早上等模糊时间时先调用 conversation_question_create，禁止自行设为立即执行。"""
+    arguments: dict[str, object] = {"prompt": prompt, "cadence": cadence}
+    if next_run_at is not None:
+        arguments["next_run_at"] = next_run_at
+    return _call("schedule_create", context_token, **arguments)
+
+
+@server.tool()
+def conversation_question_create(context_token: str, kind: Literal["boolean", "single_choice"], prompt: str, options: list[dict[str, str]] = []) -> str:
+    """当 Jarvis 需要用户确认或选择时，在当前 Conversation 创建结构化问题。"""
+    return _call("conversation_question_create", context_token, kind=kind, prompt=prompt, options=options)
 
 
 async def main() -> None:
