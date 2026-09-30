@@ -13,6 +13,9 @@ import { database, migrate } from "./persistence.js";
 import { authenticate } from "./auth.js";
 import { registerFirstUser, registrationStatus, loginUser, refreshUserSession, authenticateUserAccess, listUserSessions, listUsers, updateUserRole, revokeUserSession, revokeUserSessionByRefresh, createInvite, acceptInvite } from "./identity.js";
 import { MediaStore } from "./media.js";
+import { MediaResources } from "./media-resources.js";
+import { ConversationResults } from "../../../packages/conversation/src/results.js";
+import { viewSpecSchema, componentTypes } from "../../../packages/ui-protocol-v2/src/index.js";
 import {
   envelopeSchema,
   message,
@@ -60,6 +63,7 @@ export async function buildApp(options: {
   await app.register(websocket, { options: { maxPayload: 65536 } });
   await migrate(db);
   const media = new MediaStore();
+  const mediaResources = new MediaResources(db);
   const mediaFileRoot = resolve(process.env.HERMES_MEDIA_ROOT?.trim() || process.env.HERMES_DATA_ROOT?.trim() || resolve(options.hostRoot || "/", "opt/data"));
   const readPublishedMediaFile = async (requestPath: unknown) => {
     if (typeof requestPath !== "string") return undefined;
@@ -235,7 +239,8 @@ export async function buildApp(options: {
           break;
         case "frigate_event_snapshot_read": {
           const snapshot = await frigateEventSnapshot(args as { event_id: string }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "frigate") : undefined });
-          result = { provider: snapshot.provider, event_id: snapshot.event_id, thumbnail: media.publish(context.owner, { data: snapshot.data, contentType: snapshot.contentType }) };
+          const resource = await mediaResources.publish(context.owner, context.session, { data: snapshot.data, contentType: snapshot.contentType, source: "frigate", filename: `frigate-${snapshot.event_id}.jpg`, metadata: { event_id: snapshot.event_id } });
+          result = { provider: snapshot.provider, event_id: snapshot.event_id, media_resource: resource };
           break;
         }
         case "immich_photo_search":
@@ -267,29 +272,22 @@ export async function buildApp(options: {
           break;
         case "ui_view_show":
           {
-            const view = await m2.show({ type: "view.show", ...args }, context.owner);
-            let workspace = conversationId
-              ? (await m2.workspaces.list(context.owner, conversationId))[0]
-              : undefined;
-            if (conversationId && !workspace)
-              workspace = await m2.workspaces.create(context.owner, {
-                conversation_id: conversationId,
-                type: "native",
-                title: "Jarvis 工作区",
-              });
-            if (workspace) {
-              await m2.workspaces.upsertArtifact(context.owner, { workspace_id: workspace.id, artifact_id: workspace.artifact_id ?? undefined,
-                type: "native", media_type: "application/vnd.jarvis.view+json", source: JSON.stringify(view.spec), status: "ready" });
-              for (const block of view.spec.blocks) if (block.resource) await m2.workspaces.bind(context.owner, workspace.id, block.resource, 0);
-            }
-            if (conversationId) {
-              await db.query(
-                "UPDATE conversation_messages SET view_id=$2,workspace_id=$3,content_type='rich' WHERE id=(SELECT id FROM conversation_messages WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' ORDER BY sequence DESC LIMIT 1)",
-                [conversationId, view.id, workspace?.id ?? null],
-              );
-              push("conversation.updated", { conversation_id: conversationId });
-            }
-            result = { ...view, workspace_id: workspace?.id };
+            if (!turnId) throw Error("conversation_required");
+            const params = z.object({ intent: z.string().min(1).max(120), resources: z.array(z.string()).max(60).default([]), target: z.enum(["inline", "workspace"]).optional(), view: viewSpecSchema.optional() }).strict().parse(args);
+            const target = params.intent === "cat_photos" ? "inline" : ["usage_analysis", "cat_activity"].includes(params.intent) ? "workspace" : params.target ?? "workspace";
+            const title = params.view?.title ?? ({ usage_analysis: "今日 Token 使用分析", cat_activity: "今日猫咪活动", cat_photos: "猫咪照片精选" } as Record<string, string>)[params.intent] ?? "分析结果";
+            const results = new ConversationResults(db, m2.workspaces, push);
+            const pending = await results.begin(context.owner, turnId, params.intent, title, target);
+            try {
+              let spec = params.view;
+              if (!spec) {
+                const generated = await m2.handle("view.v2.get", { intent: { type: "view.show", intent: params.intent, resources: params.resources }, renderer: { platform: "web", supports: { min: "2.0", max: "2.0" }, components: componentTypes.map((name) => `${name}@2`), features: ["charts", "gallery", "actions"] } }, context.owner) as any;
+                spec = viewSpecSchema.parse(generated.view);
+              }
+              // Resolve every named source under this user before publishing it.
+              for (const source of new Set(spec.sections.flatMap((section) => section.source ? [section.source] : []))) await m2.resource(source, context.owner);
+              result = await results.complete(context.owner, pending, spec);
+            } catch (error) { await results.fail(pending); throw error; }
             break;
           }
         default:
@@ -312,16 +310,16 @@ export async function buildApp(options: {
       return reply.code(message === "mcp_capability_forbidden" || message === "hermes_scope_forbidden" ? 403 : 400).send({ error: message, ...(error instanceof z.ZodError ? { issues: error.issues } : {}) });
     }
   });
-  app.post<{ Body: { context_token?: string; content_type?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {
+  app.post<{ Body: { context_token?: string; content_type?: string; source?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {
     if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey) return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
-    const input = z.object({ context_token: z.string().min(20).max(2000), content_type: z.enum(["image/png", "image/jpeg", "image/webp"]), data: z.string().min(1).max(2_800_000) }).strict().safeParse(req.body);
+    const input = z.object({ context_token: z.string().min(20).max(2000), content_type: z.enum(["image/png", "image/jpeg", "image/webp"]), source: z.enum(["homeassistant", "frigate", "immich", "hermes"]).default("hermes"), data: z.string().min(1).max(2_800_000) }).strict().safeParse(req.body);
     if (!input.success) return reply.code(400).send({ error: "media_validation_error" });
     const context = verifyHermesContextToken(hermesBridgeKey, input.data.context_token);
     if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
     let data: Buffer;
     try { data = Buffer.from(input.data.data, "base64"); } catch { return reply.code(400).send({ error: "media_invalid_base64" }); }
     try {
-      return { path: media.publish(context.owner, { data, contentType: input.data.content_type }) };
+      return await mediaResources.publish(context.owner, context.session, { data, contentType: input.data.content_type, source: input.data.source });
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : "media_invalid" });
     }
@@ -855,6 +853,9 @@ export async function buildApp(options: {
       return reply.code(500).send({ error: "request_failed" });
     });
     api.addHook("preValidation", async (req, reply) => {
+      const cookieAuthenticated = Boolean(cookieValue(req, "jarvis_access")) && !req.headers.authorization;
+      if (cookieAuthenticated && !["GET", "HEAD", "OPTIONS"].includes(req.method) && !validOrigin(req))
+        return reply.code(403).send({ error: "origin_forbidden" });
       let identity: { id: string; role: "agent" | "device"; session_id?: string } | undefined = (await authenticate(db, req.headers.authorization)) ?? undefined;
       if (!identity) {
         const access = cookieValue(req, "jarvis_access");
@@ -911,9 +912,18 @@ export async function buildApp(options: {
       reply.header("Cache-Control", "private, no-store").header("X-Content-Type-Options", "nosniff");
       const identity = (req as any).identity;
       if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
-      const item = /^[a-zA-Z0-9_-]{1,100}$/.test(req.params.id) ? media.read(req.params.id, identity.id) : undefined;
+      const item = await mediaResources.read(req.params.id, identity.id);
+      const legacy = !item && /^[a-zA-Z0-9_-]{1,100}$/.test(req.params.id) ? media.read(req.params.id, identity.id) : undefined;
+      if (!item && !legacy) return reply.code(404).send({ error: "media_not_found" });
+      return reply.type(item?.mime_type ?? legacy!.contentType).send(item?.data ?? legacy!.data);
+    });
+    api.get<{ Params: { id: string } }>("/api/media/:id/content", async (req, reply) => {
+      reply.header("Cache-Control", "private, no-store").header("X-Content-Type-Options", "nosniff");
+      const identity = (req as any).identity;
+      if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      const item = await mediaResources.read(req.params.id, identity.id);
       if (!item) return reply.code(404).send({ error: "media_not_found" });
-      return reply.type(item.contentType).send(item.data);
+      return reply.type(item.mime_type).send(item.data);
     });
     api.get<{ Querystring: { path?: string } }>("/api/media/file", async (req, reply) => {
       const identity = (req as any).identity;
@@ -1182,5 +1192,5 @@ export async function buildApp(options: {
     await m2.close();
     await db.end();
   });
-  return { app, db, monitor, agents, usage, m2, media };
+  return { app, db, monitor, agents, usage, m2, media, mediaResources };
 }

@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../apps/server/src/app.js";
-import { createPairingCode } from "../apps/server/src/auth.js";
+import { createPairingCode, pair } from "../apps/server/src/auth.js";
+import { hashPassword } from "../apps/server/src/identity.js";
 import {
   canTransition,
   childDepth,
@@ -168,13 +169,23 @@ test(
     try {
       const code = await createPairingCode(ctx.db);
       device = randomUUID();
-      const pair = await ctx.app.inject({
+      const legacyPair = await ctx.app.inject({
         method: "POST",
         url: "/api/v1/pair",
         payload: { device_id: device, code },
       });
-      token = pair.json().token;
-      const headers = { authorization: "Bearer " + token };
+      assert.equal(legacyPair.statusCode, 410);
+      const pairedDevice = await pair(ctx.db, device, code);
+      assert.equal(pairedDevice.device_id, device);
+      const username = `m2-${randomUUID()}`;
+      const password = "isolated-m2-user-password";
+      const userId = randomUUID();
+      await ctx.db.query("INSERT INTO users(id,username,role) VALUES($1,$2,'member')", [userId, username]);
+      await ctx.db.query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)", [userId, await hashPassword(password)]);
+      const loggedIn = await ctx.app.inject({ method: "POST", url: "/api/v2/auth/login", payload: { username, password, device_id: device } });
+      assert.equal(loggedIn.statusCode, 200, loggedIn.body);
+      token = loggedIn.json().access_token;
+      const headers = { authorization: "Bearer " + token, origin: "http://localhost:80" };
       const rpc = async (topic: string, payload: any = {}) => {
         const r = await ctx.app.inject({
           method: "POST",
@@ -391,33 +402,28 @@ test(
         "completed",
       );
       const agentCode = await createPairingCode(ctx.db, "agent");
-      const agent = await ctx.app.inject({
-        method: "POST",
-        url: "/api/v1/pair",
-        payload: { device_id: randomUUID(), code: agentCode },
-      });
+      const agent = await pair(ctx.db, randomUUID(), agentCode);
       assert.equal(
         (
           await ctx.app.inject({
             method: "POST",
             url: "/api/v2/conversation.list",
-            headers: { authorization: "Bearer " + agent.json().token },
+            headers: { authorization: "Bearer " + agent.token, origin: "http://localhost:80" },
             payload: {},
           })
         ).statusCode,
         403,
       );
       const webCode = await createPairingCode(ctx.db);
-      const paired = await ctx.app.inject({
+      const disabledPair = await ctx.app.inject({
         method: "POST",
         url: "/api/v1/pair",
         headers: { origin: "http://localhost:80" },
         payload: { device_id: randomUUID(), code: webCode },
       });
-      assert.equal(paired.statusCode, 200);
-      assert.equal(paired.json().token, undefined);
-      const cookie = String(paired.headers["set-cookie"]).split(";")[0];
-      assert.match(String(paired.headers["set-cookie"]), /HttpOnly/);
+      assert.equal(disabledPair.statusCode, 410);
+      const cookie = String(loggedIn.headers["set-cookie"]).split(";")[0];
+      assert.match(String(loggedIn.headers["set-cookie"]), /HttpOnly/);
       assert.equal(
         (await ctx.app.inject({ url: "/api/v2/session", headers: { cookie } }))
           .statusCode,

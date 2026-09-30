@@ -16,7 +16,7 @@ import { DynamicView, webRenderer } from "./dynamic-v2";
 import { NavigationIcon } from "./icons";
 import { ProductTasks } from "./tasks";
 import { ControlPlanePanel } from "./control-plane-panel";
-import { AssistantUiProof } from "./assistant-ui-poc";
+import { JarvisConversation } from "./jarvis-conversation";
 import { SettingsPage } from "./settings";
 const gateway = new Gateway();
 const nav = [
@@ -75,6 +75,8 @@ function App() {
     [applications, setApplications] = useState<any>(),
     [resources, setResources] = useState(new Map<string, Resource>()),
     [workspaceTarget, setWorkspaceTarget] = useState<string>(),
+    [workspaceConversation, setWorkspaceConversation] = useState<string>(),
+    [historyOpen, setHistoryOpen] = useState(false),
     [agents, setAgents] = useState<any>(),
     [text, setText] = useState(""),
     [runId, setRunId] = useState<string | undefined>(
@@ -87,7 +89,7 @@ function App() {
       gateway.request("conversation.get", { conversation_id: id, developer: developerMode }),
     ]).then(([list, detail]) => {
       // Load the durable state before changing `selected`: changing the key
-      // remounts AssistantUiProof, so an empty detail here would temporarily
+      // remounts JarvisConversation, so an empty detail here would temporarily
       // replace the streamed reply with a blank thread.
       setConversations(list);
       setConversation(detail);
@@ -244,16 +246,17 @@ function App() {
         // performs an idempotent state refresh.
         if (e.detail === "已连接") void snapshot().catch(fail);
       }),
-      listen("conversation.updated", () => {
+      listen("conversation.updated", (event) => {
         void (async () => {
           setConversations(await gateway.request("conversation.list"));
-          if (selected)
-            setConversation(
-              await gateway.request("conversation.get", {
-                conversation_id: selected,
-                developer: developerMode,
-              }),
-            );
+          if (selected === event.detail.conversation_id) setConversation((old: any) => {
+            if (!old) return old;
+            const conversation = typeof event.detail.title === "string" ? { ...old.conversation, title: event.detail.title } : old.conversation;
+            if (!Array.isArray(event.detail.messages)) return { ...old, conversation };
+            const messages = new Map(old.messages.map((message: any) => [message.id, message]));
+            for (const message of event.detail.messages) messages.set(message.id, message);
+            return { ...old, conversation, messages: [...messages.values()].sort((a: any, b: any) => Number(a.sequence) - Number(b.sequence)) };
+          });
         })().catch(fail);
       }),
       listen("conversation.deleted", (e) => {
@@ -286,6 +289,12 @@ function App() {
                 }
               : old,
           );
+      }),
+      listen("conversation.status", (e) => {
+        if (e.detail.conversation_id === selected) setConversation((old: any) => old ? { ...old, messages: old.messages.map((message: any) => message.id === e.detail.message_id ? { ...message, status: e.detail.status } : message) } : old);
+      }),
+      listen("conversation.result.updated", (e) => {
+        if (e.detail.conversation_id === selected) setConversation((old: any) => old ? { ...old, results: [...(old.results ?? []).filter((result: any) => result.id !== e.detail.id), e.detail] } : old);
       }),
       listen("resource.updated", () =>
         setResources(new Map(gateway.resources)),
@@ -374,14 +383,14 @@ function App() {
     );
   }
   return (
-    <div className={`shell page-${page}`}>
+    <div className={`shell page-${page}${workspaceTarget ? " workspace-open" : ""}`}>
       <aside>
         <a className="brand" onClick={() => setPage("home")}>
           ◈ JARVIS
         </a>
         <p className="eyebrow">Your Personal AI Cloud</p>
         <nav>
-          {nav.map(([key, label]) => (
+          {nav.filter(([key]) => developerMode || !["agents", "system"].includes(key)).map(([key, label]) => (
             <button
               className={page === key || (page === "run" && key === "tasks") ? "selected" : ""}
               aria-current={page === key || (page === "run" && key === "tasks") ? "page" : undefined}
@@ -395,6 +404,16 @@ function App() {
             </button>
           ))}
         </nav>
+        {(page === "jarvis" || page === "workspace") && <section className={`sidebar-history ${historyOpen ? "open" : ""}`}>
+          <button className="history-toggle" aria-expanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)}>对话记录 <span>⌄</span></button>
+          <div className="conversation-list">
+            <button onClick={() => { setWorkspaceTarget(undefined); setWorkspaceConversation(undefined); setSelected(undefined); setConversation(undefined); setHistoryOpen(false); setPage("jarvis"); }}>＋ 新会话</button>
+            {conversations.map((c) => <div className="conversation-row" key={c.id}>
+              <button className={`conversation-entry ${c.id === selected ? "selected" : ""}`} onClick={() => { setWorkspaceTarget(undefined); setWorkspaceConversation(undefined); if (selected !== c.id) setConversation(undefined); setSelected(c.id); setHistoryOpen(false); setPage("jarvis"); }}>{c.title}</button>
+              <button className="conversation-delete" aria-label={`删除会话 ${c.title}`} title="删除会话" onClick={() => void deleteConversation(c.id).catch(fail)}>×</button>
+            </div>)}
+          </div>
+        </section>}
         <div className="connection">
           <i />
           {connection}
@@ -425,39 +444,15 @@ function App() {
         : page === "apps" ? <ApplicationList value={applications} onCasaosLogin={reconnectCasaos} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
         : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} gateway={gateway} onError={fail} />
         : page === "jarvis" || page === "workspace" ? (
-          <div className={`conversation-layout ${page === "workspace" ? "with-workspace" : ""}`}>
-            <div className="conversation-list">
-              <button
-                onClick={() => {
-                  setWorkspaceTarget(undefined);
-                  setSelected(undefined);
-                  setConversation(undefined);
-                }}
-              >
-                ＋ 新会话
-              </button>
-              {conversations.map((c) => (
-                <div className="conversation-row" key={c.id}>
-                  <button
-                    className={`conversation-entry ${c.id === selected ? "selected" : ""}`}
-                    onClick={() => { setWorkspaceTarget(undefined); if (selected !== c.id) setConversation(undefined); setSelected(c.id); }}
-                  >
-                    {c.title}
-                  </button>
-                  <button className="conversation-delete" aria-label={`删除会话 ${c.title}`} title="删除会话" onClick={() => void deleteConversation(c.id).catch(fail)}>×</button>
-                </div>
-              ))}
-            </div>
+          <div className={`conversation-layout ${workspaceTarget || page === "workspace" ? "with-workspace" : ""}`}>
             <div className="chat">
-              <AssistantUiProof key={selected ?? "new"} gateway={gateway} conversationId={selected} developer={developerMode} prompt={text} onPromptApplied={() => setText("")} onConversationCreated={onAssistantConversationCreated} onWorkspaceOpen={(id) => { setWorkspaceTarget(id); setPage("workspace"); }} messages={(conversation?.messages ?? []).filter((m: any) => m.role === "user" || m.role === "jarvis").map((m: any) => ({ role: m.role === "jarvis" ? "assistant" : "user", content: m.content }))} />
+              <JarvisConversation key={selected ?? "new"} gateway={gateway} conversationId={selected} developer={developerMode} prompt={text} onPromptApplied={() => setText("")} onConversationCreated={onAssistantConversationCreated} onWorkspaceOpen={(id, owner) => { setWorkspaceTarget(id); setWorkspaceConversation(owner ?? selected); }} snapshot={conversation} action={action} />
             </div>
-            {page === "workspace" && <aside className="workspace-side">
+            {(workspaceTarget || page === "workspace") && <aside className="workspace-side">
               <div className="toolbar">
-                <button onClick={() => void show("usage_analysis").catch(fail)}>用量分析</button>
-                <button onClick={() => void show("network_overview").catch(fail)}>服务器网络</button>
-                <button onClick={() => void show("system_overview").catch(fail)}>系统趋势</button>
+                <h2>工作区</h2><button aria-label="关闭工作区" onClick={() => { setWorkspaceTarget(undefined); setPage("jarvis"); }}>×</button>
               </div>
-              <WorkspacePanel gateway={gateway} conversationId={selected} workspaceId={workspaceTarget} fallbackView={semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view ? <Blocks view={view} resources={resources} action={action} /> : undefined} onError={fail} />
+              <WorkspacePanel gateway={gateway} conversationId={workspaceConversation ?? selected} workspaceId={workspaceTarget} developer={developerMode} action={action} fallbackView={semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view ? <Blocks view={view} resources={resources} action={action} /> : undefined} onError={fail} />
             </aside>}
           </div>
         ) : page === "settings" || page === "users" ? <SettingsPage gateway={gateway} onError={fail} />

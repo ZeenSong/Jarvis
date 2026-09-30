@@ -60,7 +60,9 @@ export const m2Topics = [
   "conversation.list",
   "conversation.get",
   "conversation.delete",
+  "conversation.composer.options",
   "conversation.message",
+  "conversation.stop",
   "conversation.question.create",
   "conversation.question.answer",
   "agent.definition.list",
@@ -101,6 +103,8 @@ export const m2Topics = [
   "runtime.health",
 ] as const;
 export const m2Events = [
+  "conversation.execution.updated",
+  "conversation.result.updated",
   "conversation.message.delta",
   "conversation.tool.started",
   "conversation.tool.completed",
@@ -112,6 +116,7 @@ export const m2Events = [
   "conversation.activity.cancelled",
   "conversation.question.created",
   "conversation.question.answered",
+  "conversation.question.cancelled",
   "conversation.status",
   "task.created",
   "task.started",
@@ -531,8 +536,12 @@ export class M2 {
         }
       case "conversation.delete":
         return this.conversations.delete(z.uuid().parse(p.conversation_id), device);
+      case "conversation.composer.options":
+        return this.conversations.composerOptions();
       case "conversation.message":
         return this.conversations.accept(device, p);
+      case "conversation.stop":
+        return this.conversations.stop(device, z.uuid().parse(p.turn_id));
       case "conversation.question.create":
         return this.conversations.createQuestion(device, p);
       case "conversation.question.answer":
@@ -696,6 +705,7 @@ export class M2 {
   }
   async cleanup() {
     await this.db.query("DELETE FROM artifacts WHERE expires_at<now()");
+    await this.db.query("DELETE FROM media_resources WHERE expires_at<now()");
     await this.db.query(
       "DELETE FROM run_events WHERE timestamp<now()-$1*interval '1 day' AND run_id IN (SELECT id FROM agent_runs WHERE finished_at IS NOT NULL)",
       [Number(process.env.EVENT_RETENTION_DAYS ?? 30)],

@@ -3,11 +3,29 @@ import { readPath, type ViewSpec, type Resource } from "../../ui-protocol/src/in
 
 /** Compose semantic sections from existing, real server resources during the v1 migration. */
 export function semanticView(id: string, view: ViewSpec, resources: Map<string, Resource>) {
+  const usage = resources.get("llm/usage/today")?.data as { top_conversations?: unknown } | undefined;
+  const leader = id === "usage_analysis" && Array.isArray(usage?.top_conversations)
+    ? usage.top_conversations[0] as Record<string, unknown> | undefined
+    : undefined;
+  const usageInsight = typeof leader?.title === "string" && Number.isFinite(Number(leader.tokens))
+    ? [{
+        id: "usage-highest-conversation", role: "summary" as const, component: "metric", component_version: 2,
+        title: `最高消耗会话 · ${leader.title}`,
+        data: `${new Intl.NumberFormat("zh-CN").format(Number(leader.tokens))} Token`,
+        fallback: "今天暂无会话用量记录。", actions: [], priority: 100,
+      }, {
+        id: "usage-highest-share", role: "summary" as const, component: "metric_group", component_version: 2,
+        title: "占今日总用量", data: {
+          "占比": `${Number(leader.share_percent ?? 0).toFixed(1)}%`,
+          "请求数": Number(leader.requests ?? 0),
+        }, fallback: "今天暂无会话用量记录。", actions: [], priority: 100,
+      }]
+    : [];
   return viewSpecSchema.parse({
     ui_protocol: "2.0", id, revision: Math.max(0, ...[...resources.values()].map((r) => Number(r.revision))),
     intent: id === "agent_run_analysis" ? "review_task" : "overview", title: view.title,
     layout: { type: "workspace" }, fallback: "此视图暂时无法显示，请刷新或更新客户端。",
-    sections: [...view.blocks.flatMap((block, index) => {
+    sections: [...usageInsight, ...view.blocks.flatMap((block, index) => {
       if (id === "agent_run_analysis") {
         const resource = block.resource ?? (block.action?.target ? `agent-run/${block.action.target}` : undefined);
         const status = resource ? readPath(resources.get(resource)?.data, "run.status") : undefined;

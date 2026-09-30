@@ -106,13 +106,27 @@ export class UsageCollector {
       "FROM llm_requests WHERE started_at >= $1 AND started_at < $2 AND ($3::text IS NULL OR COALESCE(logical_agent_id,agent_id)=$3)" +
       (owner ? " AND (EXISTS (SELECT 1 FROM conversations c JOIN devices d ON d.id=c.owner_device_id WHERE c.id=llm_requests.conversation_id AND (d.id=$4 OR d.user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END)) OR EXISTS (SELECT 1 FROM agent_runs ar JOIN devices d ON d.id=ar.requested_by WHERE ar.id=llm_requests.run_id AND (d.id=$4 OR d.user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END)) OR EXISTS (SELECT 1 FROM agents a JOIN devices d ON d.id=a.owner_device_id WHERE a.id=COALESCE(llm_requests.logical_agent_id,llm_requests.agent_id) AND (a.owner_user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END OR d.id=$4 OR d.user_id::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END)))" : "");
     const params = owner ? [q.from, q.to, q.agent_id ?? null, owner] : [q.from, q.to, q.agent_id ?? null];
-    const [total, groups] = await Promise.all([
+    const [total, groups, conversations] = await Promise.all([
       this.db.query(`SELECT ${fields} ${where}`, params),
       this.db.query(
         `SELECT ${group}${q.group_by === "agent" ? " AS agent_id" : ""},${fields} ${where} GROUP BY ${group} ORDER BY requests DESC`,
         params,
       ),
+      this.db.query(`SELECT c.title,
+        SUM(l.input_tokens+l.output_tokens)::float8 AS tokens,
+        SUM(l.input_tokens)::float8 AS input_tokens,
+        SUM(l.output_tokens)::float8 AS output_tokens,
+        COUNT(*)::int AS requests
+        FROM llm_requests l
+        LEFT JOIN agent_runs ar ON ar.id=l.run_id
+        JOIN conversations c ON c.id=COALESCE(l.conversation_id,ar.conversation_id)
+        LEFT JOIN devices d ON d.id=c.owner_device_id
+        WHERE l.started_at >= $1 AND l.started_at < $2
+          AND ($3::text IS NULL OR COALESCE(l.logical_agent_id,l.agent_id)=$3)
+          ${owner ? "AND (c.owner_device_id=$4 OR COALESCE(c.owner_user_id,d.user_id)::text=CASE WHEN $4 LIKE 'user-%' THEN substring($4 from 6) ELSE (SELECT user_id::text FROM devices WHERE id=$4) END)" : ""}
+        GROUP BY c.id,c.title ORDER BY tokens DESC LIMIT 10`, params),
     ]);
+    const totalTokens = Number(total.rows[0]?.input_tokens ?? 0) + Number(total.rows[0]?.output_tokens ?? 0);
     return {
       range: q.range,
       group_by: q.group_by,
@@ -121,6 +135,10 @@ export class UsageCollector {
       to: q.to,
       total: total.rows[0],
       groups: groups.rows,
+      top_conversations: conversations.rows.map((conversation: any) => ({
+        ...conversation,
+        share_percent: totalTokens > 0 ? Math.round(Number(conversation.tokens) / totalTokens * 1000) / 10 : 0,
+      })),
       ...(q.group_by === "provider" ? { providers: groups.rows } : {}),
     };
   }

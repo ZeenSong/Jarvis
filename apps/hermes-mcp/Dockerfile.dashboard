@@ -6,8 +6,14 @@ FROM docker.io/nousresearch/hermes-agent@sha256:61b5b208cbda39186457116e4d267096
 COPY --from=immich-mcp /app /opt/immich-mcp
 COPY --from=immich-mcp /usr/share/dotnet /usr/share/dotnet
 COPY --from=immich-mcp /usr/bin/dotnet /usr/bin/dotnet
+COPY jarvis_provider.py /opt/jarvis-source/jarvis_provider.py
+COPY patches/apply-skills-per-turn.py /opt/jarvis/apply-skills-per-turn.py
+COPY patches/apply-reasoning-stream.py /opt/jarvis/apply-reasoning-stream.py
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="/usr/share/dotnet:${PATH}"
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
-RUN cd /opt/hermes/web && npm run build
+RUN python /opt/jarvis/apply-skills-per-turn.py \
+    && python /opt/jarvis/apply-reasoning-stream.py \
+    && python -m py_compile /opt/hermes/gateway/request_skills.py /opt/hermes/gateway/platforms/api_server.py /opt/hermes/gateway/platforms/api_server_runs.py /opt/hermes/agent/agent_init.py /opt/hermes/agent/prompt_builder.py /opt/hermes/agent/system_prompt.py /opt/hermes/agent/turn_response_intake.py /opt/hermes/run_agent.py /opt/hermes/tools/skills_tool.py \
+    && cd /opt/hermes/web && npm run build
 CMD ["hermes", "dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open", "--skip-build"]

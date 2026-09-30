@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hashPassword } from "../apps/server/src/identity.js";
 import { buildApp } from "../apps/server/src/app.js";
-import { createPairingCode } from "../apps/server/src/auth.js";
 import { controlledRegistry, seedControlRuns } from "./controlled-runtime.js";
 import { createServer } from "node:http";
 
@@ -54,7 +53,14 @@ const hermesStub = createServer((req, res) => {
   let body = "";
   req.on("data", (chunk) => (body += chunk));
   req.on("end", () => {
-    const text = JSON.parse(body).messages?.at(-1)?.content ?? "";
+    const request = JSON.parse(body);
+    const text = request.messages?.at(-1)?.content ?? "";
+    if (request.stream === false) {
+      const title = String(text).includes("CPU") ? "CPU 使用率查询" : "家庭助手对话";
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: title } }] }));
+      return;
+    }
     const answer = String(text).includes("CPU")
       ? "当前 CPU 使用率为 0%，这是测试环境的 Hermes 流式回复。"
       : "测试环境的 Hermes 流式回复已完成。";
@@ -82,16 +88,18 @@ const ctx = await buildApp({
   runtimes: controlledRegistry(),
 });
 const runs = await seedControlRuns(ctx);
-const login = {username: `web-${randomUUID()}`, password: "isolated-browser-regression-2026"};
-const userId = randomUUID();
-await ctx.db.query("INSERT INTO users(id,username,role) VALUES($1,$2,'member')", [userId,login.username]);
-await ctx.db.query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)", [userId,await hashPassword(login.password)]);
-// Explicitly bind only the first paired test device to the seeded task owner.
-// Other devices remain isolated; production pairing does not inherit ownership.
-let firstPair = true;
+const logins = [0, 1].map(() => ({username: `web-${randomUUID()}`, password: "isolated-browser-regression-2026"}));
+for (const login of logins) {
+  const userId = randomUUID();
+  await ctx.db.query("INSERT INTO users(id,username,role) VALUES($1,$2,'member')", [userId,login.username]);
+  await ctx.db.query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)", [userId,await hashPassword(login.password)]);
+}
+// Bind the first browser account to the seeded task owner so the task
+// regression exercises the same owner-scoped identity as the current UI.
+let boundRuns = false;
 ctx.app.addHook("onSend", async (request, reply, payload) => {
-  if (request.url === "/api/v1/pair" && reply.statusCode === 200 && firstPair) {
-    firstPair = false;
+  if (request.url === "/api/v2/auth/login" && reply.statusCode === 200 && !boundRuns && (request.body as any)?.username === logins[0].username) {
+    boundRuns = true;
     const device = (request.body as any).device_id;
     await ctx.db.query("UPDATE agent_runs SET requested_by=$1 WHERE requested_by=$2", [device, runs.owner]);
   }
@@ -100,8 +108,7 @@ ctx.app.addHook("onSend", async (request, reply, payload) => {
 await ctx.app.listen({ host: "127.0.0.1", port: 0 });
 process.send?.({
   base: `http://127.0.0.1:${(ctx.app.server.address() as any).port}`,
-  codes: [await createPairingCode(ctx.db), await createPairingCode(ctx.db)],
-  runs, login,
+  runs, login: logins[0], otherLogin: logins[1], logins,
 });
 process.on("message", () => void ctx.app.close().then(() => process.exit(0)));
 process.on("SIGTERM", () => void ctx.app.close().then(() => hermesStub.close(() => process.exit(0))));

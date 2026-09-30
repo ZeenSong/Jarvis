@@ -1,22 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import * as echarts from "echarts/core";
-import { LineChart, BarChart, PieChart, GaugeChart } from "echarts/charts";
-import {
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-} from "echarts/components";
-import { CanvasRenderer } from "echarts/renderers";
-echarts.use([
-  LineChart,
-  BarChart,
-  PieChart,
-  GaugeChart,
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-  CanvasRenderer,
-]);
+import { lazy, Suspense } from "react";
 import {
   readPath,
   type ViewSpec,
@@ -41,6 +23,9 @@ export const labels: Record<string, string> = {
   unpriced_requests: "未定价请求",
   cached_input_tokens: "缓存 Token",
   reasoning_tokens: "推理 Token",
+  title: "会话",
+  tokens: "Token 总量",
+  share_percent: "日用量占比（%）",
   healthy: "正常",
   server_status: "服务状态",
   db_status: "数据库",
@@ -51,92 +36,10 @@ const format = (v: unknown): string =>
     ? "暂无数据"
     : typeof v === "object"
       ? JSON.stringify(v)
-      : (labels[String(v)] ?? String(v));
-function Chart({ type, data }: { type: string; data: any }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [light, setLight] = useState(() => document.documentElement.dataset.theme === "light");
-  useEffect(() => {
-    const observer = new MutationObserver(() => setLight(document.documentElement.dataset.theme === "light"));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
-  }, []);
-  useEffect(() => {
-    if (!ref.current) return;
-    const chart = echarts.init(ref.current, light ? undefined : "dark");
-    const rows = Array.isArray(data) ? data : [];
-    const series = rows.map((r: any) => ({
-      name: format(r.label ?? r.provider ?? r.agent_id ?? r.sampled_at),
-      value: Number(r.value ?? (r.input_tokens ?? 0) + (r.output_tokens ?? 0)),
-    }));
-    let option: any = {
-      backgroundColor: "transparent",
-      tooltip: { trigger: "axis" },
-      grid: { left: 48, right: 24, bottom: 40, top: 30 },
-      xAxis: { type: "category", data: series.map((r) => r.name) },
-      yAxis: { type: "value" },
-      series: [
-        {
-          type: type === "bar_chart" ? "bar" : "line",
-          data: series.map((r) => r.value),
-          smooth: false,
-          areaStyle: type === "sparkline" ? {} : undefined,
-          itemStyle: { color: "#79d9c2" },
-        },
-      ],
-    };
-    if (type === "donut")
-      option = {
-        backgroundColor: "transparent",
-        tooltip: { trigger: "item" },
-        legend: { bottom: 0 },
-        series: [{ type: "pie", radius: ["48%", "72%"], data: series }],
-      };
-    if (type === "gauge")
-      option = {
-        backgroundColor: "transparent",
-        series: [
-          {
-            type: "gauge",
-            startAngle: 210,
-            endAngle: -30,
-            radius: "86%",
-            progress: { show: true, roundCap: true, itemStyle: { color: "#62c8ff" } },
-            axisLine: { roundCap: true, lineStyle: { width: 8, color: [[1, "#20364f"]] } },
-            axisLabel: { show: false },
-            axisTick: { show: false },
-            splitLine: { show: false },
-            pointer: { show: false },
-            detail: { formatter: "{value}%", fontSize: 26, color: light ? "#172b42" : "#eef5ff", offsetCenter: [0, "10%"] },
-            data: [{ value: Number(data ?? 0).toFixed(1) }],
-          },
-        ],
-      };
-    if (rows[0]?.data) {
-      option.legend = { data: ["CPU", "GPU"] };
-      option.xAxis.data = rows.map((r: any) =>
-        new Date(r.sampled_at).toLocaleTimeString(),
-      );
-      option.series = ["cpu", "gpu"].map((key, i) => ({
-        name: i ? "GPU" : "CPU",
-        type: "line",
-        connectNulls: false,
-        showSymbol: false,
-        data: rows.map(
-          (r: any) =>
-            r.data[key]?.[i ? "utilization_percent" : "usage_percent"] ?? null,
-        ),
-      }));
-    }
-    chart.setOption(option);
-    const resize = new ResizeObserver(() => chart.resize());
-    resize.observe(ref.current);
-    return () => {
-      resize.disconnect();
-      chart.dispose();
-    };
-  }, [type, data, light]);
-  return <div className="chart" ref={ref} role="img" aria-label="数据图表" />;
-}
+      : typeof v === "number"
+        ? new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(v)
+        : (labels[String(v)] ?? String(v));
+const Chart = lazy(() => import("./chart"));
 function RunGraph({
   data,
   onOpen,
@@ -229,7 +132,15 @@ export function Blocks({
               data == null || (Array.isArray(data) && !data.length) ? (
                 <p className="muted">暂无数据 · 未采集时段保留缺口</p>
               ) : (
-                <Chart type={b.type} data={data} />
+                <Suspense
+                  fallback={
+                    <div className="chart chart-loading" role="status">
+                      正在准备图表…
+                    </div>
+                  }
+                >
+                  <Chart type={b.type} data={data} format={format} />
+                </Suspense>
               );
             break;
           case "progress":

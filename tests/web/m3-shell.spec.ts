@@ -2,24 +2,27 @@ import { test, expect } from "@playwright/test";
 import { fork, type ChildProcess } from "node:child_process";
 let child: ChildProcess;
 let base: string;
-let codes: string[];
+let login: { username: string; password: string };
 test.beforeAll(async () => {
   child = fork("tests/web-server.ts", [], { execArgv: ["--import", "tsx"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
   const data: any = await new Promise((resolve, reject) => {
     child.once("message", resolve); child.once("exit", (c) => reject(Error(`Server exited ${c}`)));
     child.stderr?.on("data", (d) => process.stderr.write(d));
   });
-  base = data.base; codes = data.codes;
+  base = data.base; login = data.login;
 });
 test.afterAll(async () => { if(child?.connected) { child.send("stop"); await new Promise((r) => child.once("exit", r)); } });
-test("personal cloud home, navigation, command handoff and semantic workspace", async ({ page }) => {
+test("personal cloud home, ordinary navigation, and command handoff", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.goto(base);
-  await page.getByLabel("配对码").fill(codes.shift()!);
-  await page.getByRole("button", { name: "配对并连接" }).click();
+  await page.getByLabel("用户名", { exact: true }).fill(login.username);
+  await page.getByLabel("密码", { exact: true }).fill(login.password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByRole("heading", { name: "让科技，回归生活。" })).toBeVisible();
-  for (const name of ["首页", "空间", "应用", "任务", "Jarvis", "系统"]) await expect(page.locator("nav").getByRole("button", { name, exact: true })).toBeVisible();
-  await expect(page.locator(".metric-tile").first().locator("strong")).toContainText("%");
+  for (const name of ["首页", "空间", "应用", "任务", "Jarvis", "设置"]) await expect(page.locator("nav").getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(page.locator("nav").getByRole("button", { name: "系统", exact: true })).toHaveCount(0);
+  await expect(page.locator("nav").getByRole("button", { name: "Hermes", exact: true })).toHaveCount(0);
+  await expect(page.locator(".metric-tile").first().locator("strong")).toHaveText("—");
   for (const name of ["alpine-dusk", "files", "knowledge", "family", "media", "development"]) {
     const response = await page.request.get(`${base}/artwork/${name}-v1.png`);
     expect(response.status()).toBe(200);
@@ -56,14 +59,14 @@ test("personal cloud home, navigation, command handoff and semantic workspace", 
     await page.locator("nav").getByRole("button", { name: "首页", exact: true }).click();
     await expect(page.locator(".application-card")).toHaveCount(2);
   }
-  await expect(page.locator(".metric-tile").first().locator("strong")).toContainText("%");
+  await expect(page.locator(".metric-tile").first().locator("strong")).toHaveText("—");
   await expect(page.locator('nav button[aria-current="page"]')).toHaveText("首页");
   await page.screenshot({ path: ".local/evidence/m3-web-home.png", fullPage: true });
   await page.getByRole("button", { name: "切换浅色主题" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(page.locator(".metric-tile").first().locator("strong")).toContainText("%");
+  await expect(page.locator(".metric-tile").first().locator("strong")).toHaveText("—");
   await page.screenshot({ path: ".local/evidence/m3-web-home-light.png", fullPage: true });
   await page.getByRole("button", { name: "切换深色主题" }).click();
   await page.context().route(/http:\/\/127\.0\.0\.1:(2283|8123)\//, route => route.fulfill({body:"Domain application test fixture"}));
@@ -77,16 +80,11 @@ test("personal cloud home, navigation, command handoff and semantic workspace", 
   }
   await page.getByLabel("问 Jarvis", { exact: true }).fill("CPU 现在多少？");
   await page.getByRole("button", { name: "发送给 Jarvis", exact: true }).click();
-  await expect(page.getByLabel("消息", { exact: true })).toHaveValue("CPU 现在多少？");
-  await page.getByRole("button", { name: "发送 ↑" }).click();
-  await expect(page.locator(".message.jarvis")).toContainText("当前 CPU 使用率");
-  await page.locator("nav").getByRole("button", { name: "系统", exact: true }).click();
-  await expect(page.locator(".semantic-workspace")).toBeVisible();
-  await expect(page.locator('[data-component="gauge"]').first()).toBeVisible();
-  await expect(page).toHaveURL(/\/system$/);
-  await page.reload();
-  await expect(page.locator(".semantic-workspace")).toBeVisible();
-  await page.screenshot({ path: ".local/evidence/m3-web-workspace.png", fullPage: true });
+  await expect(page.getByLabel("消息内容", { exact: true })).toHaveValue("CPU 现在多少？");
+  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(page.locator(".jarvis-turn")).toContainText("当前 CPU 使用率");
+  await expect(page.locator(".workspace-side")).toHaveCount(0);
+  await page.screenshot({ path: ".local/evidence/m3-web-conversation-handoff.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator("nav").getByRole("button", { name: "首页", exact: true }).click();
   await expect(page.getByLabel("问 Jarvis", { exact: true })).toBeVisible();

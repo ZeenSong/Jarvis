@@ -29,6 +29,43 @@ export class Gateway extends EventTarget {
   private openingGeneration?: number;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   resources = new Map<string, Resource>();
+  /** Subscribe to the existing socket event bus; disposal never closes the socket. */
+  subscribe<T = any>(topic: string, listener: (payload: T) => void): () => void {
+    const receive = (event: Event) => listener((event as CustomEvent<T>).detail);
+    this.addEventListener(topic, receive);
+    return () => this.removeEventListener(topic, receive);
+  }
+
+  /** Attach immediately so events arriving before an RPC reply are not lost. */
+  stream(topics: readonly string[], signal: AbortSignal): AsyncIterable<{ topic: string; payload: any }> {
+    const queue: { topic: string; payload: any }[] = [];
+    let wake: (() => void) | undefined;
+    let disposed = false;
+    const disposers = topics.map((topic) => this.subscribe(topic, (payload) => {
+      queue.push({ topic, payload });
+      wake?.();
+    }));
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      disposers.forEach((off) => off());
+      signal.removeEventListener("abort", dispose);
+      wake?.();
+    };
+    signal.addEventListener("abort", dispose, { once: true });
+    if (signal.aborted) dispose();
+    return {
+      async *[Symbol.asyncIterator]() {
+        try {
+          while (!disposed) {
+            if (!queue.length) await new Promise<void>((resolve) => { wake = resolve; });
+            wake = undefined;
+            while (!disposed && queue.length) yield queue.shift()!;
+          }
+        } finally { dispose(); }
+      },
+    };
+  }
   async open(restart = false) {
     if (restart) this.closed = false;
     if (this.socket && (this.socket.readyState === WebSocket.CONNECTING || this.socket.readyState === WebSocket.OPEN)) return;

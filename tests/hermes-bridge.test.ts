@@ -29,6 +29,64 @@ test("Hermes Agent config targets the named Jarvis profile", () => {
   });
 });
 
+test("Hermes model options are read from the authenticated active profile", async () => {
+  let request: Request | undefined;
+  const client = new HermesClient("http://hermes:8642/p/jarvis", "secret", async (input, init) => {
+    request = new Request(input, init);
+    return Response.json({ provider: "openai", model: "gpt-5", providers: [] });
+  });
+  const options = await client.modelOptions();
+  assert.equal(options.model, "gpt-5");
+  assert.equal(new URL(request!.url).pathname, "/p/jarvis/api/model/options");
+  assert.equal(request?.headers.get("authorization"), "Bearer secret");
+});
+
+test("Hermes Skills discovery is gated by the active image's per-run enforcement capability", async () => {
+  const paths: string[] = [];
+  const client = new HermesClient("http://hermes:8642/p/jarvis", "secret", async (input, init) => {
+    const request = new Request(input, init); paths.push(new URL(request.url).pathname);
+    assert.equal(request.headers.get("authorization"), "Bearer secret");
+    return paths.length === 1
+      ? Response.json({ features: { skills_per_run: true } })
+      : Response.json({ object: "list", data: [
+        { name: "家庭助手", description: "查看家庭状态", category: "家庭", path: "/private/path" },
+        { name: "", description: "invalid" },
+      ] });
+  });
+  assert.deepEqual(await client.skills(), [{ name: "家庭助手", description: "查看家庭状态", category: "家庭" }]);
+  assert.deepEqual(paths, ["/p/jarvis/v1/capabilities", "/p/jarvis/v1/skills"]);
+
+  const legacy = new HermesClient("http://hermes:8642", "secret", async () => Response.json({ features: { skills_api: true } }));
+  assert.deepEqual(await legacy.skills(), []);
+});
+
+test("Hermes durable runs forward a selected reasoning effort", async () => {
+  let request: Request | undefined;
+  const client = new HermesClient("http://hermes:8642/p/jarvis", "secret", async (input, init) => {
+    request = new Request(input, init);
+    return Response.json({ run_id: "run-1", status: "queued" });
+  });
+  await client.startRun("请分析", { sessionId: "session-1", idempotencyKey: "request-1", model: "gpt-5", modelOptions: { reasoning_effort: "high" }, skills: ["家庭助手"] });
+  assert.equal(new URL(request!.url).pathname, "/p/jarvis/v1/runs");
+  const runBody = await request!.json() as any;
+  assert.deepEqual(runBody.model_options, { reasoning_effort: "high" });
+  assert.deepEqual(runBody.skills, ["家庭助手"]);
+});
+
+test("Hermes semantic title generation is tool-free and uses the configured model", async () => {
+  let request: Request | undefined;
+  const client = new HermesClient("http://hermes:8642/p/jarvis", "secret", async (input, init) => {
+    request = new Request(input, init);
+    return Response.json({ choices: [{ message: { content: "猫咪活动趋势" } }] });
+  });
+  assert.equal(await client.suggestTitle("看看猫咪今天的活动", "猫咪今天在客厅活动。", { model: "deepseek-flash" }), "猫咪活动趋势");
+  const body = await request!.json() as any;
+  assert.equal(new URL(request!.url).pathname, "/p/jarvis/v1/chat/completions");
+  assert.equal(body.model, "deepseek-flash");
+  assert.equal(body.stream, false);
+  assert.equal("tools" in body, false);
+});
+
 test("Hermes bridge reconstructs streamed tool calls for the Kernel loop", async () => {
   const body = new ReadableStream({ start(c) {
     c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"system_status_read","arguments":"{}"}}]}}]}\n\n'));

@@ -65,10 +65,11 @@ def _dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
-def _publish_media(context_token: str, data: bytes, content_type: str) -> str:
+def _publish_media(context_token: str, data: bytes, content_type: str, source: str) -> str:
     body = json.dumps({
         "context_token": context_token,
         "content_type": content_type,
+        "source": source,
         "data": base64.b64encode(data).decode("ascii"),
     }).encode("utf-8")
     request = Request(
@@ -82,12 +83,12 @@ def _publish_media(context_token: str, data: bytes, content_type: str) -> str:
     )
     with urlopen(request, timeout=30) as response:
         value = json.load(response)
-    if not isinstance(value, dict) or not isinstance(value.get("path"), str):
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str):
         raise RuntimeError("jarvis_media_publish_invalid_response")
-    return value["path"]
+    return value["id"]
 
 
-async def _dump_tool_result(value: object, context_token: str) -> str:
+async def _dump_tool_result(value: object, context_token: str, source: str) -> str:
     if hasattr(value, "model_dump"):
         value = value.model_dump(mode="json", by_alias=True, exclude_none=True)
     if isinstance(value, dict) and isinstance(value.get("content"), list):
@@ -107,9 +108,9 @@ async def _dump_tool_result(value: object, context_token: str) -> str:
                 raw = base64.b64decode(image_data, validate=True)
                 if not raw or len(raw) > 2 * 1024 * 1024:
                     continue
-                path = await asyncio.to_thread(_publish_media, context_token, raw, image_type)
+                resource_id = await asyncio.to_thread(_publish_media, context_token, raw, image_type, source)
                 item.clear()
-                item.update({"type": "text", "text": f"MEDIA:{path}"})
+                item.update({"type": "text", "text": f"MEDIA_RESOURCE:{resource_id}"})
             except Exception:
                 continue
     return _dump(value)
@@ -182,14 +183,14 @@ async def _mcp_call(provider: str, context_token: str, tool_name: str, arguments
         annotations = getattr(selected, "annotations", None)
         read_only = bool(getattr(annotations, "read_only_hint", False)) if annotations is not None else False
         if read_only:
-            return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token)
+            return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token, provider)
 
     # A write tool requires a separate explicit write permission. Re-open the
     # upstream only after Jarvis approves it, so a member can never bypass the
     # policy by claiming that a tool is read-only.
     write_config = await _authorize(context_token, provider, tool_name, False)
     async with _upstream(provider, write_config) as session:
-        return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token)
+        return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token, provider)
 
 
 server = MCPServer(
@@ -223,7 +224,7 @@ def agent_list(context_token: str) -> str:
 
 @server.tool()
 def llm_usage_read(context_token: str) -> str:
-    """读取当前用户的模型用量。"""
+    """读取当前用户的模型用量，包括按真实 Conversation 汇总的 top_conversations 会话排行。回答“哪个会话最高”时使用该排行，不要从其他指标推测。"""
     return _call("llm_usage_read", context_token)
 
 
@@ -234,9 +235,12 @@ def agent_run_status(context_token: str, run_id: str) -> str:
 
 
 @server.tool()
-def ui_view_show(context_token: str, intent: Literal["system_overview", "network_overview", "usage_analysis", "agent_run_analysis"], resources: list[str] = []) -> str:
-    """展示持久化图表。服务器趋势用 system_overview 和 []；任务分析用 agent_run_analysis 和 ["agent-run/<run_id>"]。"""
-    return _call("ui_view_show", context_token, intent=intent, resources=resources)
+def ui_view_show(context_token: str, intent: str, resources: list[str] = [], target: Literal["inline", "workspace"] = "workspace", view: dict | None = None) -> str:
+    """交付 UI Protocol V2 结果。usage_analysis 使用已有用量资源，首屏突出 llm_usage_read 返回的最高消耗 Conversation、Token 数与今日占比，并提供真实 Top 会话排行；cat_activity 用真实 Frigate 与 Home Assistant 数据构造 view 并进入工作区；cat_photos 用 photo_grid 构造 view，始终内联展示。view 必须包含 ui_protocol='2.0', id, revision, intent='overview'或'search', title, layout={type:'workspace'}, sections 与 fallback。section 包含 id,role,component,component_version=2,title,data,actions=[],fallback。不要编造数据、传感器或工具。照片项引用工具结果中的 MEDIA_RESOURCE UUID，放入 resource_id，不要拼接文件系统路径。相同 intent 更新原工作区。"""
+    args = dict(intent=intent, resources=resources, target=target)
+    if view is not None:
+        args["view"] = view
+    return _call("ui_view_show", context_token, **args)
 
 
 @server.tool()

@@ -28,6 +28,9 @@ test('M3.11 owner isolation, bound single-use approvals and durable native views
       ws.on('message',raw=>events[i].push(JSON.parse(raw.toString()))); await once(ws,'open');
     }
     const conv:any = await ctx.m2.handle('conversation.create',{title:'private A'},a.device_id);
+    const turnId = randomUUID();
+    await ctx.db.query("INSERT INTO conversation_turns(id,conversation_id,owner_device_id,status,active) VALUES($1,$2,$3,'running',true)", [turnId, conv.id, a.device_id]);
+    await ctx.db.query("INSERT INTO conversation_messages(id,conversation_id,owner_device_id,role,content,status,turn_id) VALUES($1,$2,$3,'jarvis','','streaming',$4)", [randomUUID(), conv.id, a.device_id, turnId]);
     const schedule:any = await ctx.m2.handle('schedule.create',{prompt:'private A prompt',cadence:'once',next_run_at:new Date(Date.now()+86400000).toISOString()},a.device_id);
     const workspace:any = await ctx.m2.handle('workspace.create',{conversation_id:conv.id,title:'private A workspace'},a.device_id);
     await assert.rejects(ctx.m2.handle('conversation.get',{conversation_id:conv.id},b.device_id),/not_found/);

@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: jarvis-server
+  namespace: jarvis
 spec:
   replicas: 1
   strategy:
@@ -17,7 +18,6 @@ spec:
       # Read host interfaces and bind only its Tailscale IP (supplied by Secret).
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      supplementalGroups: [10000]
       # Single-node service IPs: host proxy intercepts DNS even to CoreDNS.
       # Re-resolve from `kubectl -n jarvis get svc` if these Services are recreated.
       hostAliases:
@@ -30,6 +30,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        supplementalGroups: [10000]
       initContainers:
         - name: prepare-hermes-media
           image: jarvis-server:0.3.2-mcp-20260928-r5
@@ -43,7 +44,7 @@ spec:
               mountPath: /hermes-data
       containers:
         - name: server
-          image: jarvis-server:0.3.2-mcp-20260928-r5
+          image: jarvis-server:0.3.2-m33-20260929-r4
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
@@ -65,7 +66,7 @@ spec:
             - name: PRICES_FILE
               value: /config/prices.json
             - name: HERMES_URL
-              value: http://hermes-core:8642/p/jarvis
+              value: http://hermes-core:8642
             - name: HERMES_PROFILE
               value: jarvis
             - name: HERMES_MODEL

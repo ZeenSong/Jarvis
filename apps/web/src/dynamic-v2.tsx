@@ -16,7 +16,7 @@ import { blockTypes, actionSchema, type Resource, type ViewSpec } from "../../..
 const supported = [...blockTypes.filter((c) => c !== "table" && c !== "status_grid"), "data_table", "status", "log", "list", "task", "gallery", "photo_grid"];
 export const webRenderer = { platform: "web", supports: { min: "2.0", max: "2.0" }, components: supported.map((c) => `${c}@2`), features: ["charts", "actions", "gallery"] };
 
-export function DynamicView({ value, action, liveResources }: { value: unknown; action: (a: any) => void; liveResources?: Map<string, Resource> }) {
+export function DynamicView({ value, action, liveResources, host = "workspace", followup }: { value: unknown; action: (a: any) => void; liveResources?: Map<string, Resource>; host?: "inline" | "workspace"; followup?: (text: string) => void }) {
   const [initialLayout] = useState(() => {
     try { return parseWorkspaceLayout(localStorage.getItem("jarvis-workspace-layout")); }
     catch { return parseWorkspaceLayout(null); }
@@ -42,8 +42,9 @@ export function DynamicView({ value, action, liveResources }: { value: unknown; 
       {section.actions.map((item) => render({ ...section, id: `${section.id}-${item.id}`, title: item.label, actions: [item] }))}
     </section>;
     const live = section.source ? liveResources?.get(section.source) : undefined;
+    if (section.source && !live && section.data == null) return <section className="section-skeleton" aria-label={`正在加载${section.title}`}><h3>{section.title}</h3><span /><span /><span /></section>;
     if (live) section = bindSection(section, { ...live, revision: Number(live.revision) });
-    if (["gallery", "photo_grid"].includes(section.component)) return <div className="semantic-section" key={section.id} data-component={section.component}><GalleryView title={section.title} data={section.data} fallback={section.fallback}/></div>;
+    if (["gallery", "photo_grid"].includes(section.component)) return <div className="semantic-section" key={section.id} data-component={section.component}><GalleryView title={section.title} data={section.data} fallback={section.fallback} action={action} followup={followup}/></div>;
     if (section.component === "timeline") return <div className="semantic-section" key={section.id} data-component="timeline"><TimelineView title={section.title} data={section.data} fallback={section.fallback} /></div>;
     if (section.component === "task" && section.component_version === 2) return <div className="semantic-section" key={section.id} data-component="task" data-wide="true"><TaskView title={section.title} data={section.data} fallback={section.fallback} /></div>;
     if (section.component === "list" && section.component_version === 2) return <div className="semantic-section" key={section.id} data-component="list"><ListView title={section.title} data={section.data} fallback={section.fallback} /></div>;
@@ -61,6 +62,7 @@ export function DynamicView({ value, action, liveResources }: { value: unknown; 
       <RiskAction key={JSON.stringify(a)} title={a.label} target={a.resource_id} action={action}>{(invoke) => <Blocks view={spec} resources={resources} action={invoke} />}</RiskAction> : <Blocks view={spec} resources={resources} action={action} />}</div>;
   };
   const hasPanels = !!layout.left?.length || !!layout.right?.length;
+  if (host === "inline") return <section className="inline-dynamic-result" aria-label={view.title}>{view.sections.map(render)}</section>;
   return <>
     {hasPanels && <div className="workspace-controls" role="group" aria-label="工作区面板">
       {!!layout.left?.length && <button aria-pressed={activityVisible} onClick={() => setActivityVisible(!activityVisible)}>执行过程</button>}

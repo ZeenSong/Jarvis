@@ -60,6 +60,12 @@ export function preset(input: unknown): ViewSpec {
       : i.intent === "usage_analysis"
         ? [
             {
+              type: "table",
+              title: "会话消耗排行 · Top 10",
+              resource: "llm/usage/today",
+              path: "top_conversations",
+            },
+            {
               type: "metric_group",
               title: "今日用量 · UTC",
               resource: "llm/usage/today",

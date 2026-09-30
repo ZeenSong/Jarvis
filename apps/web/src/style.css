@@ -153,6 +153,27 @@ header {
 .chart {
   height: 260px;
 }
+.chart-loading {
+  display: grid;
+  place-items: center;
+  min-height: 80px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  background: linear-gradient(100deg, #6489ae12, #6489ae30, #6489ae12);
+  background-size: 200% 100%;
+  animation: chart-shimmer 1.5s ease-in-out infinite;
+}
+@keyframes chart-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-loading {
+    animation: none;
+  }
+}
 .big {
   font-size: 38px;
   font-weight: 500;

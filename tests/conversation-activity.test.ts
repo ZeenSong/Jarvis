@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { visibleActivities, capabilityLabel, canonicalActivityCapability, activitySource } from "../packages/conversation/src/activity.js";
+import { visibleActivities, capabilityLabel, canonicalActivityCapability, activitySource, activityPresentation, activityTitle } from "../packages/conversation/src/activity.js";
 import { activityGroupKey } from "../packages/conversation/src/model.js";
 import { ConversationService } from "../packages/conversation/src/index.js";
 
@@ -41,6 +41,17 @@ test("only explicitly known Jarvis wrappers are hidden; native and other MCP too
   assert.deepEqual(visibleActivities(other), other);
   assert.equal(visibleActivities([{ capability: "mcp__jarvis__system_status_read", status: "completed" }]).length, 0);
   assert.equal(capabilityLabel("mcp_other_system_status_read"), "执行操作");
+});
+
+test("MCP provider calls receive ordinary-language labels without exposing protocol names", () => {
+  const home = activityPresentation({ capability: "mcp__homeassistant__GetLiveContext" });
+  assert.equal(home.provider, "Home Assistant");
+  assert.equal(home.title, "读取设备状态");
+  assert.equal(activityTitle({ capability: "mcp__homeassistant__GetLiveContext" }), "Home Assistant · 读取设备状态");
+  assert.equal(activityTitle({ capability: "mcp__frigate__get_event_snapshot" }), "Frigate · 查看画面");
+  assert.equal(activityTitle({ capability: "mcp__immich__search_photos" }), "Immich · 搜索照片");
+  assert.equal(activityTitle({ capability: "immich_photo_search" }), "Immich · 搜索照片");
+  assert.equal(activityTitle({ capability: "mcp__other__opaque_method" }), "执行操作");
 });
 
 test("conversation snapshot uses the same visible records for activity counts and preserves developer evidence", async () => {

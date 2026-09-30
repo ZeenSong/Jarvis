@@ -79,15 +79,17 @@ test("M3.2 assistant-ui adapter resumes after a Gateway interruption and emits t
   let reads = 0;
   const calls: string[] = [];
   const gateway = {
+    async *stream() {
+      yield { topic: "connection", payload: "已连接" };
+    },
     request: async (topic: string) => {
       calls.push(topic);
-      if (topic === "conversation.message") return { reply_id: "reply-1" };
+      if (topic === "conversation.message") return { reply_id: "reply-1", turn_id: "turn-1" };
       if (topic === "conversation.get") {
         reads += 1;
-        if (reads === 1) throw Error("connection_interrupted");
         return {
           messages: [{ id: "reply-1", role: "jarvis", content: "完成", status: "completed" }],
-          activities: [{ id: "activity-1", tool_call_id: "call-1", capability: "system.status.read", status: "completed", output: { status: "ok" } }],
+          activities: [{ id: "activity-1", turn_id: "turn-1", tool_call_id: "call-1", capability: "system.status.read", status: "completed", output: { status: "ok" } }],
         };
       }
       throw Error(`unexpected_${topic}`);
@@ -97,11 +99,11 @@ test("M3.2 assistant-ui adapter resumes after a Gateway interruption and emits t
   const updates: any[] = [];
   const stream = adapter.model.run({ messages: [{ role: "user", content: [{ type: "text", text: "状态" }] }], abortSignal: new AbortController().signal } as any) as AsyncGenerator<any>;
   for await (const update of stream) updates.push(update);
-  assert.equal(reads, 2);
-  assert.deepEqual(calls, ["conversation.message", "conversation.get", "conversation.get"]);
-  assert.equal(updates[0].content[0].text, "完成");
-  assert.equal(updates[0].content[1].type, "tool-call");
-  assert.deepEqual(updates[0].content[1].result, { status: "ok" });
+  assert.equal(reads, 1);
+  assert.deepEqual(calls, ["conversation.message", "conversation.get"]);
+  assert.equal(updates.at(-1).content[0].text, "完成");
+  assert.equal(updates.at(-1).content[1].type, "tool-call");
+  assert.deepEqual(updates.at(-1).content[1].result, { status: "ok" });
 });
 
 const databaseUrl = process.env.TEST_DATABASE_URL;

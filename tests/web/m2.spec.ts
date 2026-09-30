@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { fork, type ChildProcess } from "node:child_process";
 let child: ChildProcess;
 let base: string;
-let codes: string[];
+let logins: { username: string; password: string }[];
 let runs: { input: string; cancel: string };
 test.beforeAll(async () => {
   child = fork("tests/web-server.ts", [], {
@@ -15,7 +15,7 @@ test.beforeAll(async () => {
     child.stderr?.on("data", (b) => process.stderr.write(b));
   });
   base = result.base;
-  codes = result.codes;
+  logins = result.logins;
   runs = result.runs;
 });
 test.afterAll(async () => {
@@ -24,7 +24,7 @@ test.afterAll(async () => {
     await new Promise((resolve) => child.once("exit", resolve));
   }
 });
-test("Web pairing, deterministic conversation, isolated history, refresh and reconnect", async ({
+test("Web login, deterministic conversation, isolated history, refresh and reconnect", async ({
   page,
   browser,
 }) => {
@@ -33,24 +33,26 @@ test("Web pairing, deterministic conversation, isolated history, refresh and rec
     Object.defineProperty(crypto, "randomUUID", { value: undefined });
   });
   await page.goto(base);
-  await page.getByLabel("配对码").fill(codes.shift()!);
-  await page.getByRole("button", { name: "配对并连接" }).click();
+  await page.getByLabel("用户名", { exact: true }).fill(logins[0].username);
+  await page.getByLabel("密码", { exact: true }).fill(logins[0].password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Jarvis", exact: true }).click();
-  await page.getByLabel("消息", { exact: true }).fill("CPU 现在多少？");
-  await page.getByRole("button", { name: "发送 ↑" }).click();
-  await expect(page.locator(".message.jarvis")).toContainText(
+  await page.getByLabel("消息内容", { exact: true }).fill("CPU 现在多少？");
+  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(page.locator(".jarvis-turn")).toContainText(
     "当前 CPU 使用率",
   );
+  await expect(page.locator(".conversation-list").getByRole("button", { name: "CPU 使用率查询", exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Jarvis", exact: true }).click();
   await page
     .locator(".conversation-list")
-    .getByRole("button", { name: "CPU 现在多少？" })
+    .getByRole("button", { name: "CPU 使用率查询", exact: true })
     .first()
     .click();
-  await expect(page.locator(".message.jarvis")).toContainText(
+  await expect(page.locator(".jarvis-turn")).toContainText(
     "当前 CPU 使用率",
   );
   await page.context().setOffline(true);
@@ -61,21 +63,20 @@ test("Web pairing, deterministic conversation, isolated history, refresh and rec
   const other = await browser.newContext();
   const second = await other.newPage();
   await second.goto(base);
-  await second.getByLabel("配对码").fill(codes.shift()!);
-  await second.getByRole("button", { name: "配对并连接" }).click();
+  await second.getByLabel("用户名", { exact: true }).fill(logins[1].username);
+  await second.getByLabel("密码", { exact: true }).fill(logins[1].password);
+  await second.getByRole("button", { name: "登录", exact: true }).click();
   await expect(second.getByText("已连接", { exact: true })).toBeVisible();
   await second.getByRole("button", { name: "Jarvis", exact: true }).click();
-  await expect(second.locator(".conversation-list").getByRole("button", { name: "CPU 现在多少？" })).toHaveCount(0);
-  await expect(second.locator(".message.jarvis")).toHaveCount(0);
+  await expect(second.locator(".conversation-list").getByRole("button", { name: "CPU 使用率查询", exact: true })).toHaveCount(0);
+  await expect(second.locator(".jarvis-turn")).toHaveCount(0);
   await second.screenshot({
     path: ".local/evidence/m2-web-conversation.png",
     fullPage: true,
   });
   await other.close();
-  await page.locator("nav").getByRole("button", { name: "系统", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "CPU / GPU 历史" }),
-  ).toBeVisible();
+  await expect(page.locator("nav").getByRole("button", { name: "系统", exact: true })).toHaveCount(0);
+  await expect(page.locator("nav").getByRole("button", { name: "Hermes", exact: true })).toHaveCount(0);
   await page.screenshot({
     path: ".local/evidence/m2-web-home.png",
     fullPage: true,

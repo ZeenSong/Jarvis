@@ -10,9 +10,10 @@ data:
       provider: "deepseek"
       # DeepSeek's public API identifier for the V4.1-Flash release.
       default: "deepseek-flash"
-    # Expose named Hermes Agent profiles below /p/<profile>/ on this gateway.
+    # Run the Jarvis profile as the only standalone gateway. The default profile
+    # remains registered for Hermes internals but is intentionally stopped.
     gateway:
-      multiplex_profiles: true
+      multiplex_profiles: false
     # Hermes native Skills, toolsets and configured MCP servers are available to
     # the Jarvis Agent profile.
     mcp_servers:
@@ -64,6 +65,12 @@ data:
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
     from mcp.server import MCPServer
+
+    # Canonical source is bundled in the versioned Jarvis Hermes image; this keeps the
+    # mounted ConfigMap entry in lockstep with the media-resource and dynamic MCP bridge.
+    from runpy import run_path
+    run_path("/opt/jarvis-source/jarvis_provider.py", run_name="__main__")
+    raise SystemExit(0)
 
 
     BASE_URL = os.environ.get("JARVIS_INTERNAL_URL", "http://jarvis-server:8080").rstrip("/")
@@ -479,7 +486,7 @@ spec:
     metadata:
       labels: { app: hermes-core }
       annotations:
-        config-version: hermes-agent-profile-20260928-mcp7
+        config-version: hermes-agent-profile-20260928-jarvis-standalone
     spec:
       automountServiceAccountToken: false
       initContainers:
@@ -492,7 +499,7 @@ spec:
               export HERMES_HOME=/opt/data
               cp /opt/jarvis-mcp/config.yaml /opt/data/config.yaml
               python - <<'PY'
-              import base64, hashlib, hmac, os, shutil, subprocess, yaml
+              import base64, hashlib, hmac, json, os, shutil, subprocess, yaml
               from pathlib import Path
               from dotenv import set_key
               base = os.environ["API_SERVER_KEY"]
@@ -550,6 +557,21 @@ spec:
               meta["ui_meta"] = ui_meta
               with open(meta_path, "w", encoding="utf-8") as meta_file:
                   yaml.safe_dump(meta, meta_file, sort_keys=False, allow_unicode=True)
+              def set_gateway_desired_state(profile_path, desired_state):
+                  state_path = Path(profile_path) / "gateway_state.json"
+                  try:
+                      with open(state_path, encoding="utf-8") as state_file:
+                          state = json.load(state_file)
+                  except (FileNotFoundError, json.JSONDecodeError):
+                      state = {}
+                  if not isinstance(state, dict):
+                      state = {}
+                  state["desired_state"] = desired_state
+                  with open(state_path, "w", encoding="utf-8") as state_file:
+                      json.dump(state, state_file, separators=(",", ":"))
+                      state_file.write("\n")
+              set_gateway_desired_state("/opt/data", "stopped")
+              set_gateway_desired_state(profile_dir, "running")
               subprocess.run(["hermes", "-p", "jarvis", "chat", "-c", "Bot Chat", "--create-if-missing"], check=True)
               PY
               chmod 600 /opt/data/.env /opt/data/profiles/jarvis/.env
@@ -571,13 +593,13 @@ spec:
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
       containers:
         - name: hermes
-          image: jarvis-hermes-dashboard:20260928-mcp2
+          image: jarvis-hermes-dashboard:20260929-reasoning-stream
           imagePullPolicy: IfNotPresent
           resources:
             requests: { cpu: 100m, memory: 512Mi }
             limits: { cpu: "2", memory: 2Gi }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
-          args: ["hermes", "gateway", "run"]
+          args: ["hermes", "-p", "jarvis", "gateway", "run"]
           env:
             - { name: HERMES_HOME, value: "/opt/data" }
             - { name: HERMES_DASHBOARD, value: "true" }
@@ -616,7 +638,7 @@ spec:
             - { name: data, mountPath: /opt/data }
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
         - name: media-janitor
-          image: jarvis-hermes-dashboard:20260928-mcp2
+          image: jarvis-hermes-dashboard:20260929-reasoning-stream
           imagePullPolicy: IfNotPresent
           command: ["/opt/hermes/.venv/bin/python", "/opt/jarvis-mcp/media_janitor.py"]
           env:

@@ -1,13 +1,15 @@
-# M3.2 家庭服务凭据准备（上游凭据仍待配置）
+# M3.2 家庭服务凭据准备（2026-09-26 历史诊断）
 
 诊断日期：2026-09-26；2026-09-27 已将凭据录入、连接验证和撤销反馈部署到 `jarvis-server:0.3.1-m32-20260927-r13`。当前没有代用户创建上游用户或服务 token，也没有把任何历史 token/password 写入 Jarvis。未读取 HA `.storage`、Frigate JWT 签名文件、Immich 认证表或包含凭据的容器日志。
 
-## 已核实的线上状态
+2026-09-29 现状复核：生产 PostgreSQL 的加密 Integration Credential Store 中有 Home Assistant 1 条、Immich 1 条有效凭据，Frigate 0 条；检查仅统计 provider 和有效记录数，未读取凭据值。该存储与 `jarvis-integrations` Kubernetes Secret 不同。以下表格和诊断结论是 2026-09-26 的历史快照，不代表当前凭据数量，也不证明现有凭据已通过上游连通性测试。
+
+## 2026-09-26 已核实的线上状态（历史快照）
 
 | 项目 | 证据与结果 |
 | --- | --- |
-| Jarvis 凭据表 | 在线 Pod 内使用已有 DB 连接，当前有效凭据为 0；验收用临时记录已正式撤销并仅保留审计状态；未读取密文 |
-| Jarvis 环境 | HA/Immich/Frigate token、FRIGATE_PASSWORD、INTEGRATION_CREDENTIAL_KEY 均为空；仅打印是否存在 |
+| Jarvis 凭据表 | 在线 Pod 内使用已有 DB 连接，当日有效凭据为 0；验收用临时记录已正式撤销并仅保留审计状态；未读取密文 |
+| Jarvis 环境 | 当日 HA/Immich/Frigate token、FRIGATE_PASSWORD、INTEGRATION_CREDENTIAL_KEY 均为空；仅打印是否存在 |
 | 服务地址 | HA `http://100.77.157.73:8123`，Immich `http://100.77.157.73:2283`；FRIGATE_URL 未配置 |
 | Secret | `jarvis/jarvis-secrets` 存在，`integration-credential-key` 已准备并由 r13 加载；只读检查不输出 Secret 内容 |
 | Home Assistant | 2026.5.4；挂载 `/DATA/AppData/homeassistant/config:/config`；无凭据 GET `/api/` 返回 401 |
@@ -45,7 +47,7 @@ KUBECONFIG=.local/m2.kubeconfig node scripts/provision-integrations.mjs --ensure
 
 使用前核对 kubeconfig 指向正确集群。环境变量引用的 Secret 不会自动刷新到运行中的进程；本次已单独滚动重启并确认 r13 加载成功。不可直接全量 apply 当前工作区清单以免覆盖其他线上设置。
 
-普通用户现在可在 Jarvis 首页打开“待处理”→“家庭服务连接”，选择 Home Assistant、Frigate 或 Immich，录入上游已创建的凭据；列表只显示服务名、标签和“已加密保存”，不会回显 secret。真实 Chrome 已验证空状态和不泄露秘密。当前三个上游凭据仍为空，所以 live smoke 对三项 provider 仍为 SKIP。
+普通用户现在可在 Jarvis 首页打开“待处理”→“家庭服务连接”，选择 Home Assistant、Frigate 或 Immich，录入上游已创建的凭据；列表只显示服务名、标签和“已加密保存”，不会回显 secret。真实 Chrome 已验证空状态和不泄露秘密。该次历史验收时三个上游凭据均为空，所以当时 live smoke 对三项 provider 为 SKIP；当前状态见本文顶部的 2026-09-29 复核。
 
 ## Home Assistant：独立只读身份可创建，但不是全 API scope token
 

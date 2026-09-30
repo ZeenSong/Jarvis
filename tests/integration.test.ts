@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import WebSocket from "ws";
 import { buildApp } from "../apps/server/src/app.js";
-import { createPairingCode } from "../apps/server/src/auth.js";
+import { createPairingCode, pair } from "../apps/server/src/auth.js";
 const url = process.env.TEST_DATABASE_URL;
 test(
   "PostgreSQL + authenticated WebSocket + Agent lifecycle + usage + restart",
@@ -36,33 +36,20 @@ test(
       assert.equal((await app.inject("/health/ready")).statusCode, 200);
       assert.equal((await app.inject("/api/v1/agents")).statusCode, 401);
       const code = await createPairingCode(db, "agent");
-      const paired = await app.inject({
+      assert.equal((await app.inject({
         method: "POST",
         url: "/api/v1/pair",
         payload: { device_id: randomUUID(), code },
-      });
-      assert.equal(paired.statusCode, 200);
-      token = paired.json().token;
-      assert.equal(
-        (
-          await app.inject({
-            method: "POST",
-            url: "/api/v1/pair",
-            payload: { device_id: randomUUID(), code },
-          })
-        ).statusCode,
-        401,
-      );
+      })).statusCode, 410);
+      const paired = await pair(db, randomUUID(), code);
+      token = paired.token;
+      await assert.rejects(pair(db, randomUUID(), code), /invalid_pairing_code/);
       const deviceCode = await createPairingCode(db);
-      const device = await app.inject({
-        method: "POST",
-        url: "/api/v1/pair",
-        payload: { device_id: randomUUID(), code: deviceCode },
-      });
-      deviceToken = device.json().token;
+      const device = await pair(db, randomUUID(), deviceCode);
+      deviceToken = device.token;
       const ownerUser = randomUUID();
       await db.query("INSERT INTO users(id,username,role) VALUES($1,$2,'member')", [ownerUser, `integration-${ownerUser}`]);
-      await db.query("UPDATE devices SET user_id=$1 WHERE id=ANY($2::text[])", [ownerUser, [device.json().device_id, paired.json().device_id]]);
+      await db.query("UPDATE devices SET user_id=$1 WHERE id=ANY($2::text[])", [ownerUser, [device.device_id, paired.device_id]]);
       const auth = { authorization: `Bearer ${token}` };
       const unauthorized = new WebSocket(base.replace("http", "ws") + "/ws");
       const rejected = await new Promise<number>((resolve) => {

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS conversation_turns (
 );
 CREATE INDEX IF NOT EXISTS conversation_turns_conversation ON conversation_turns(conversation_id,created_at);
 CREATE INDEX IF NOT EXISTS conversation_turns_owner ON conversation_turns(owner_user_id,created_at DESC);
+ALTER TABLE conversation_turns ADD COLUMN IF NOT EXISTS stop_requested BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS conversation_activities (
   id UUID PRIMARY KEY,
   conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -44,6 +45,37 @@ CREATE TABLE IF NOT EXISTS conversation_activities (
   completed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS conversation_activities_turn ON conversation_activities(turn_id,created_at);
+CREATE TABLE IF NOT EXISTS conversation_events (
+  id UUID PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  turn_id UUID NOT NULL REFERENCES conversation_turns(id) ON DELETE CASCADE,
+  sequence BIGSERIAL NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  activity_id UUID REFERENCES conversation_activities(id) ON DELETE CASCADE,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS conversation_events_order ON conversation_events(conversation_id,sequence);
+CREATE TABLE IF NOT EXISTS conversation_results (
+  id UUID PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  turn_id UUID NOT NULL REFERENCES conversation_turns(id) ON DELETE CASCADE,
+  result_key TEXT NOT NULL,
+  target TEXT NOT NULL CHECK(target IN ('inline','workspace')),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('loading','ready','failed')),
+  revision INTEGER NOT NULL DEFAULT 1,
+  workspace_id UUID,
+  artifact_id UUID,
+  view JSONB,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(turn_id,result_key)
+);
 CREATE TABLE IF NOT EXISTS conversation_questions (
   id UUID PRIMARY KEY,
   conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -150,6 +182,21 @@ ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS hermes_run_id TEXT;
 ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS turn_id UUID REFERENCES conversation_turns(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS message_conversation ON conversation_messages(conversation_id,created_at);
 CREATE INDEX IF NOT EXISTS message_owner_sequence ON conversation_messages(owner_user_id,conversation_id,sequence);
+CREATE TABLE IF NOT EXISTS media_resources (
+  id UUID PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  owner_device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  owner_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  mime_type TEXT NOT NULL CHECK(mime_type IN ('image/png','image/jpeg','image/webp')),
+  filename TEXT NOT NULL,
+  data BYTEA NOT NULL CHECK(octet_length(data)<=2097152),
+  expires_at TIMESTAMPTZ NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS media_resources_expiry ON media_resources(expires_at);
+CREATE INDEX IF NOT EXISTS media_resources_owner ON media_resources(owner_user_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS run_events (id BIGSERIAL PRIMARY KEY,run_id UUID NOT NULL REFERENCES agent_runs(id),agent_id TEXT NOT NULL REFERENCES agent_definitions(id),type TEXT NOT NULL,payload JSONB NOT NULL,timestamp TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS run_event_run ON run_events(run_id,id);
 CREATE TABLE IF NOT EXISTS artifacts (id UUID PRIMARY KEY,run_id UUID NOT NULL REFERENCES agent_runs(id),owner_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,name TEXT NOT NULL,media_type TEXT NOT NULL,content TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),expires_at TIMESTAMPTZ NOT NULL);

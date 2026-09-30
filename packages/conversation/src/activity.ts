@@ -37,6 +37,59 @@ export function capabilityLabel(capability: string) {
   return definition(capability)?.[1] ?? "执行操作";
 }
 
+export type ActivityPresentation = { title: string; provider?: string; category: "tool" | "render" | "question" };
+const providers = {
+  homeassistant: { name: "Home Assistant", labels: ["读取设备状态", "查找设备", "控制设备"] },
+  frigate: { name: "Frigate", labels: ["读取活动", "查看画面", "读取活动"] },
+  immich: { name: "Immich", labels: ["搜索照片", "查看照片", "整理相册"] },
+} as const;
+type ProviderKey = keyof typeof providers;
+const providerKey = (value: unknown): ProviderKey | undefined => {
+  const normalized = String(value ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (normalized === "homeassistant") return "homeassistant";
+  if (normalized === "frigate" || normalized === "immich") return normalized;
+  return undefined;
+};
+function serviceCall(capability: string, input: Record<string, unknown>) {
+  let provider = providerKey(input.provider);
+  let tool = String(input.tool_name ?? input.tool ?? "");
+  if (!provider) {
+    const namespace = /^mcp__(home_?assistant|frigate|immich)__(.+)$/i.exec(capability);
+    if (namespace) { provider = providerKey(namespace[1]); tool = namespace[2]; }
+  }
+  if (!provider) {
+    const canonical = canonicalActivityCapability(capability).toLowerCase();
+    if (canonical.startsWith("homeassistant.")) provider = "homeassistant";
+    else if (canonical.startsWith("frigate.")) provider = "frigate";
+    else if (canonical.startsWith("immich.")) provider = "immich";
+    tool ||= canonical;
+  }
+  if (!provider) return undefined;
+  const normalizedTool = tool.toLowerCase().replace(/[^a-z]/g, "");
+  const labelIndex = provider === "homeassistant"
+    ? /call|service|control|setstate/.test(normalizedTool) ? 2 : /search|find|list/.test(normalizedTool) ? 1 : 0
+    : provider === "frigate"
+      ? /snapshot|image|thumbnail/.test(normalizedTool) ? 1 : 0
+      : /search|find|query|album/.test(normalizedTool) ? 0 : /asset|photo|image/.test(normalizedTool) ? 1 : 2;
+  return { provider: providers[provider].name, title: providers[provider].labels[labelIndex] };
+}
+/** Provider metadata enriches labels without exposing transport wrappers or arguments. */
+export function activityPresentation(activity: { capability: string; input?: unknown }): ActivityPresentation {
+  const input = activity.input && typeof activity.input === "object" ? activity.input as Record<string, unknown> : {};
+  const canonical = canonicalActivityCapability(activity.capability);
+  const service = serviceCall(activity.capability, input);
+  return {
+    title: service?.title ?? capabilityLabel(activity.capability),
+    ...(service ? { provider: service.provider } : {}),
+    category: canonical === "ui.view.show" ? "render" : canonical === "conversation.question.create" ? "question" : "tool",
+  };
+}
+
+export function activityTitle(activity: { capability: string; input?: unknown }) {
+  const presentation = activityPresentation(activity);
+  return presentation.provider ? `${presentation.provider} · ${presentation.title}` : presentation.title;
+}
+
 export function activitySource(capability: string) {
   return wrapperTool(capability) ? "hermes_wrapper" : "execution";
 }
