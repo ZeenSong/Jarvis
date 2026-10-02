@@ -6,7 +6,7 @@
 
 **一句话交代目标，Jarvis 负责理解、规划、调用工具、持续执行并呈现结果。**
 
-[快速开始](#快速开始) · [核心能力](#不止是聊天更是行动) · [系统架构](#为私有云而生) · [部署文档](docs/deployment.md)
+[快速开始](#快速开始) · [核心能力](#不止是聊天更是行动) · [系统架构](#为私有云而生) · [文档中心](docs/README.md)
 
 </div>
 
@@ -66,7 +66,7 @@ Hermes Agent ─── Skills / MCP ─── Immich · Home Assistant · 摄像
 - **可恢复体验**：任务、活动、问题、审批和结果均有持久状态，刷新或短暂掉线不等于任务丢失。
 - **多形态交付**：同一结果可以在桌面端展开为 Workspace，也可以在移动端降级为适合触屏的操作界面。
 
-进一步了解：[架构说明](docs/architecture.md) · [API / WebSocket 协议](docs/protocol.md) · [M3.3 实施记录](docs/M3.3-progress.md)
+进一步了解：[架构说明](docs/reference/architecture.md) · [API / WebSocket 协议](docs/reference/protocol.md) · [M3.3 实施记录](docs/milestones/m3/m3.3-progress.md)
 
 ## 快速开始
 
@@ -92,7 +92,7 @@ npm start
 
 打开 `http://127.0.0.1:8080`，首次注册的账户会成为管理员。默认服务仅监听本机；远程访问推荐使用 Tailscale 等受保护网络，不要把明文 HTTP / WebSocket 端口直接暴露到公网。
 
-完整配置项见 [.env.example](.env.example)。Docker / CasaOS 与 Hermes 组合部署见 [部署说明](deploy/docker/README.md)，K3s 生产部署见 [部署手册](docs/deployment.md)。
+完整配置项见 [.env.example](.env.example)。Docker / CasaOS 与 Hermes 组合部署见 [部署说明](deploy/docker/README.md)，K3s 生产部署见 [部署手册](docs/guides/deployment.md)。
 
 ## Android
 
@@ -124,7 +124,7 @@ TEST_DATABASE_URL=postgres://jarvis:password@127.0.0.1:5432/jarvis_test npm test
 
 ## 当前边界
 
-Jarvis 已具备核心对话、任务、动态 UI、Hermes、Skills/MCP 和家庭服务适配能力，但仍在持续收尾。部分端到端家庭场景需要使用者提供自己的服务与凭据；浏览器协议夹具不代表真实家庭数据已验证。生产部署前请阅读 [M3.3 未完成项](docs/M3.3-progress.md#尚未完成必须继续) 与安全配置说明。
+Jarvis 已具备核心对话、任务、动态 UI、Hermes、Skills/MCP 和家庭服务适配能力，但仍在持续收尾。部分端到端家庭场景需要使用者提供自己的服务与凭据；浏览器协议夹具不代表真实家庭数据已验证。生产部署前请阅读 [M3.3 未完成项](docs/milestones/m3/m3.3-progress.md#尚未完成必须继续) 与安全配置说明。
 
 ## 参与项目
 

@@ -38,7 +38,7 @@ kubectl -n jarvis exec deployment/jarvis-server -- node dist/apps/server/src/pai
 
 ## 重启与故障验收
 
-使用 `docs/m1-acceptance.md` 记录实际结果。依次执行 Jarvis 容器终止、PostgreSQL 重启、K3s 重启、目标服务器重启；每次确认 live/ready、手机恢复在线、历史记录仍存在。仅在目标机维护窗口执行 K3s/宿主机重启。
+使用 [M1 验收记录](../milestones/m1/acceptance.md) 记录实际结果。依次执行 Jarvis 容器终止、PostgreSQL 重启、K3s 重启、目标服务器重启；每次确认 live/ready、手机恢复在线、历史记录仍存在。仅在目标机维护窗口执行 K3s/宿主机重启。
 
 故障定位：`kubectl -n jarvis get pods`、`kubectl -n jarvis logs deployment/jarvis-server`、`kubectl -n jarvis describe pod ...`。数据库不可达时 ready=503，但 live 仍为 200，避免将数据库故障误判为进程死亡。
 

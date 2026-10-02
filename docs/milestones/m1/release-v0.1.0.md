@@ -20,6 +20,6 @@ sha256sum -c SHA256SUMS
 gzip -dc jarvis-server-0.1.0-linux-amd64.tar.gz | docker load
 ```
 
-部署参见 README 与 docs/deployment.md。无本地 LLM；未配置模型价格时费用显示未知。Android 后台连接受系统省电及强制停止限制。
+部署参见 项目 README 与 [部署指南](../../guides/deployment.md)。无本地 LLM；未配置模型价格时费用显示未知。Android 后台连接受系统省电及强制停止限制。
 
 源码、APK、镜像发布前进行隐私检查，个人密钥、设备地址、本机路径、日志、用量明细及数据库不随版本发布。

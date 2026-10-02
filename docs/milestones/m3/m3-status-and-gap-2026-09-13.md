@@ -24,10 +24,10 @@
 
 | 基线 | 用途与冲突处理 |
 | --- | --- |
-| [M3 Investor Demo Milestone](../dev_guidlines/Jarvis_M3_Investor_Demo_Milestone.md) | 工作包、六个 Demo 场景、测试范围与 A–G 最终验收的主基线 |
-| [Product Architecture v2](../dev_guidlines/Jarvis_Product_Architecture_v2.md) | 用户隔离、Capability / Resource / Integration、服务端事实源和五类 Contract 边界 |
-| [Experience & Dynamic UI v2](../dev_guidlines/Jarvis_Experience_Dynamic_UI_v2.md) | 双端原生重排、Design System、第三方应用原生化、版本协商与降级 |
-| [2026-09-09 概念图](../dev_guidlines/Jarvis_Product_Concept_Images_2026-09-09/) | 视觉和场景参考；不是所有远期示意能力都属于 M3 P0，也不要求复制示意数据 |
+| [M3 Investor Demo Milestone](../../product/m3-investor-demo.md) | 工作包、六个 Demo 场景、测试范围与 A–G 最终验收的主基线 |
+| [Product Architecture v2](../../product/architecture-v2.md) | 用户隔离、Capability / Resource / Integration、服务端事实源和五类 Contract 边界 |
+| [Experience & Dynamic UI v2](../../product/experience-dynamic-ui-v2.md) | 双端原生重排、Design System、第三方应用原生化、版本协商与降级 |
+| [2026-09-09 概念图](../../product/concept-images/) | 视觉和场景参考；不是所有远期示意能力都属于 M3 P0，也不要求复制示意数据 |
 | 用户最新安排 | 先发布当前版本，依据实际使用再调整；Grafana / Portainer 暂缓。不得因此宣称原始四 Provider 要求已满足 |
 
 体验文档将 Integration Agent 等列为 P1，但 M3 里程碑将其列入最终验收。因此本报告仍把它们视为 M3 必须补齐的交付，不自行缩减范围。Home Assistant 深度控制、Node Bridge、Voice、Frigate 等不列为当前 M3 阻塞项。
@@ -127,22 +127,22 @@
 
 | 范围 | 源码 |
 | --- | --- |
-| 产品外壳 | [Web product.tsx](../apps/web/src/product.tsx)、[Android ProductScreens.kt](../apps/android/app/src/main/java/cloud/jarvis/app/features/ProductScreens.kt) |
-| Dynamic UI | [协议](../packages/ui-protocol-v2/src/index.ts)、[Web Renderer](../apps/web/src/dynamic-v2.tsx)、[Compose Renderer](../apps/android/app/src/main/java/cloud/jarvis/app/dynamicui/SemanticView.kt) |
-| CasaOS | [Adapter](../packages/integration-casaos/src/index.ts)、[服务端桥接](../apps/server/src/applications.ts) |
-| Immich / 媒体 | [Immich Adapter](../packages/integration-immich/src/index.ts)、[临时媒体接口基础](../apps/server/src/media.ts)、[Gallery](../apps/web/src/gallery-view.tsx) |
-| 数据模型 | [M2 增量表](../apps/server/src/m2-migration.ts) |
-| 发布 | [发布说明](../deploy/m3/release-notes.md)、[预览部署脚本](../deploy/m3/deploy-preview.mjs)、[打包脚本](../deploy/m3/package.mjs) |
+| 产品外壳 | [Web product.tsx](../../../apps/web/src/product.tsx)、[Android ProductScreens.kt](../../../apps/android/app/src/main/java/cloud/jarvis/app/features/ProductScreens.kt) |
+| Dynamic UI | [协议](../../../packages/ui-protocol-v2/src/index.ts)、[Web Renderer](../../../apps/web/src/dynamic-v2.tsx)、[Compose Renderer](../../../apps/android/app/src/main/java/cloud/jarvis/app/dynamicui/SemanticView.kt) |
+| CasaOS | [Adapter](../../../packages/integration-casaos/src/index.ts)、[服务端桥接](../../../apps/server/src/applications.ts) |
+| Immich / 媒体 | [Immich Adapter](../../../packages/integration-immich/src/index.ts)、[临时媒体接口基础](../../../apps/server/src/media.ts)、[Gallery](../../../apps/web/src/gallery-view.tsx) |
+| 数据模型 | [M2 增量表](../../../apps/server/src/m2-migration.ts) |
+| 发布 | [发布说明](../../../deploy/m3/release-notes.md)、[预览部署脚本](../../../deploy/m3/deploy-preview.mjs)、[打包脚本](../../../deploy/m3/package.mjs) |
 
 发布产物：[GitHub v0.3.0-preview.1](https://github.com/ZeenSong/Jarvis/releases/tag/v0.3.0-preview.1)。
 
 以下证据仅存在开发主机的 git-ignored `.local`，不包含在公共源码包；新克隆仓库中链接不可用。生产截图可能含私人活动，未上传公共 Release：
 
-- [生产 Web 首页](../.local/m3-release-0.3.0-preview.1/production-web-home.png)
-- [生产 Immich 详情](../.local/m3-release-0.3.0-preview.1/production-web-immich.png)
-- [生产 smoke 记录](../.local/m3-release-0.3.0-preview.1/smoke.json)
-- [Android 真实 CasaOS 测试首页](../.local/evidence/m3-android-live-home.png)
-- [Android 真实 CasaOS 测试详情](../.local/evidence/m3-android-live-app-detail.png)
+- [生产 Web 首页](../../../.local/m3-release-0.3.0-preview.1/production-web-home.png)
+- [生产 Immich 详情](../../../.local/m3-release-0.3.0-preview.1/production-web-immich.png)
+- [生产 smoke 记录](../../../.local/m3-release-0.3.0-preview.1/smoke.json)
+- [Android 真实 CasaOS 测试首页](../../../.local/evidence/m3-android-live-home.png)
+- [Android 真实 CasaOS 测试详情](../../../.local/evidence/m3-android-live-app-detail.png)
 
 ## 9. 下一轮建议（待实际使用反馈确定，不代表本次开始实施）
 
@@ -157,4 +157,4 @@
 | 暂缓项 | Grafana / Portainer | 等用户恢复优先级；最终按原始 M3 验收仍需补齐 |
 | 收尾 | 统一 Incident、六场景连续演示、≥4 场景自动化、≥12 组件与视觉验收 | A–G 逐项通过后再标记正式 M3 完成并 Demo Freeze |
 
-本报告记录的是截至 2026-09-13 的发布后快照；[历史开发流水](m3-progress.md)保留各阶段记录，其中早期“未安装”“未部署”“Renderer pending”等描述不可作为当前状态使用。
+本报告记录的是截至 2026-09-13 的发布后快照；[历史开发流水](m3-progress-history.md)保留各阶段记录，其中早期“未安装”“未部署”“Renderer pending”等描述不可作为当前状态使用。

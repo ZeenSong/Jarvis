@@ -3,8 +3,8 @@
 > 当前进度请先阅读 [2026-09-13 发布后进度与 M3 差距表](m3-status-and-gap-2026-09-13.md)。
 > 本文是按时间追加的历史流水；下方初始状态表及早期“未部署”等结论已被后续实现和 `v0.3.0-preview.1` 发布更新，不代表当前快照。M3 仍未完成验收。
 
-Baseline: `dev_guidlines/Jarvis_M3_Investor_Demo_Milestone.md`,
-`Jarvis_Product_Architecture_v2.md`, and `Jarvis_Experience_Dynamic_UI_v2.md` (2026-09-09).
+Baseline: [M3 Investor Demo](../../product/m3-investor-demo.md),
+[Product Architecture v2](../../product/architecture-v2.md), and [Experience & Dynamic UI v2](../../product/experience-dynamic-ui-v2.md) (2026-09-09).
 The milestone remains **in progress**. Existing M2 functionality does not prove M3 acceptance.
 
 ## Requirements and evidence

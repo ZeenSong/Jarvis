@@ -1,6 +1,6 @@
 # M2 启动、升级与回退
 
-交付版本为 **0.2.0-rc.1**。真实 Core、Ops、Codex 与双端本地验收已执行；生产 K3s 网络隔离、升级和真机验收尚未执行，详情见 [验收记录](../../docs/m2/acceptance.md)。本套启动脚本针对当前机器的单节点 K3s 与已运行的 M1，不会使用默认 minikube context。
+交付版本为 **0.2.0-rc.1**。真实 Core、Ops、Codex 与双端本地验收已执行；生产 K3s 网络隔离、升级和真机验收尚未执行，详情见 [验收记录](../../docs/milestones/m2/acceptance.md)。本套启动脚本针对当前机器的单节点 K3s 与已运行的 M1，不会使用默认 minikube context。
 
 ## 当前机器上需要你执行的第一步
 
@@ -29,7 +29,7 @@ bash deploy/m2/start.sh pair
 bash deploy/m2/start.sh status
 ```
 
-`deploy` 要求本集群 24 小时内的备份与恢复验证成功记录。Node.js 22、Docker、kubectl、gzip 与本机 K3s 必须可用；镜像导入也需要 sudo。服务地址沿用原 M1 Tailnet 地址，Web 直接打开 `http://<Tailnet IP>:8080`。已配对 Android 设备可同签名覆盖安装 APK，保留原配对与缓存。完成 [双端 Demo](../../docs/m2/demo.md) 后再把版本标记为正式上线。
+`deploy` 要求本集群 24 小时内的备份与恢复验证成功记录。Node.js 22、Docker、kubectl、gzip 与本机 K3s 必须可用；镜像导入也需要 sudo。服务地址沿用原 M1 Tailnet 地址，Web 直接打开 `http://<Tailnet IP>:8080`。已配对 Android 设备可同签名覆盖安装 APK，保留原配对与缓存。完成 [双端 Demo](../../docs/milestones/m2/demo.md) 后再把版本标记为正式上线。
 
 在新目录解压源码时先运行 `npm ci`。镜像包与 APK 位于 `artifacts/`；进入该目录运行 `sha256sum -c M2-SHA256SUMS` 可核对交付文件。重新打包使用 `node deploy/m2/package.mjs`。
 
