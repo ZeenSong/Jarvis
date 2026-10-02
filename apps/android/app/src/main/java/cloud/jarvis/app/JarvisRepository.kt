@@ -30,6 +30,8 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     val backgroundEnabled = MutableStateFlow(false)
     val savedAt = MutableStateFlow<Long?>(null)
     val range = MutableStateFlow("today")
+    val deepLink = MutableStateFlow<String?>(null)
+    private val notificationDispatcher = JarvisNotificationDispatcher(app)
     private var foreground = false
     private var page = "home"
     private var selectedAgent: String? = null
@@ -44,7 +46,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         })
         scope.launch { runCatching {
             cache.all().forEach { s ->
-                if(s.key.startsWith("m2-") || s.key == "m3-semantic-view") m2.restore(s)
+                if(s.key.startsWith("m2-") || s.key.startsWith("m4-") || s.key == "m3-semantic-view") m2.restore(s)
                 when (s.key) { "system" -> system.value = Json.parseToJsonElement(s.json).jsonObject; "agents" -> agents.value = Json.parseToJsonElement(s.json).jsonArray.map { it.jsonObject }; "today" -> today.value = Json.parseToJsonElement(s.json).jsonObject }
                 savedAt.value = maxOf(savedAt.value ?: 0, s.savedAt)
             }
@@ -58,6 +60,22 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     override fun onStart(owner: LifecycleOwner) { foreground = true; gateway.subscribe(page in listOf("home", "server")); gateway.networkChanged(); if (backgroundEnabled.value && paired.value) startBackground() }
     override fun onStop(owner: LifecycleOwner) { foreground = false; gateway.subscribe(false) }
     fun selectPage(value: String) { page = value; gateway.subscribe(foreground && value in listOf("home", "server")) }
+    fun handleDeepLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme != "jarvis") return
+        val target = when (uri.host) {
+            "home" -> "home"
+            "conversation" -> uri.pathSegments.firstOrNull()?.let { "conversation/$it" }
+            "task" -> uri.pathSegments.firstOrNull()?.let { "run/$it" }
+            "workspace" -> uri.pathSegments.firstOrNull()?.let { "workspace/$it" }
+            "space" -> uri.pathSegments.firstOrNull()?.let { "space/$it" }
+            "app" -> uri.pathSegments.firstOrNull()?.let { "app/$it" }
+            "notification" -> uri.pathSegments.firstOrNull()?.let { "notification/$it" }
+            else -> null
+        }
+        if (target != null) deepLink.value = target
+    }
+    fun consumeDeepLink() { deepLink.value = null }
     fun login(server: String, username: String, password: String) { scope.launch {
         error.value = null
         runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
@@ -70,6 +88,12 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
             "agent.status.changed" -> { val a = value.jsonObject; agents.value = (agents.value.filter { it["id"] != a["id"] } + a).sortedBy { it["name"].toString() }; scope.launch { runCatching { save("agents", JsonArray(agents.value)); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = it.message } } }
             "network.public_ipv6.changed" -> refresh()
             "llm.usage.changed" -> { scope.launch { runCatching { loadUsage(); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = it.message } } }
+            "notification.created" -> scope.launch {
+                runCatching {
+                    val id = value.jsonObject["notification_id"]?.jsonPrimitive?.contentOrNull
+                    m2.reloadNotifications().firstOrNull { it["id"]?.jsonPrimitive?.contentOrNull == id }?.let(notificationDispatcher::show)
+                }.onFailure { error.value = it.message }
+            }
         }
     }
     fun refresh() { if (refreshing) return; scope.launch {

@@ -10,6 +10,18 @@
         </service>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="jarvis" android:host="home" />
+                <data android:scheme="jarvis" android:host="conversation" />
+                <data android:scheme="jarvis" android:host="task" />
+                <data android:scheme="jarvis" android:host="workspace" />
+                <data android:scheme="jarvis" android:host="space" />
+                <data android:scheme="jarvis" android:host="app" />
+                <data android:scheme="jarvis" android:host="notification" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

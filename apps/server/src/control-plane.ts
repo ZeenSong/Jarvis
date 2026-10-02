@@ -45,6 +45,24 @@ export class ControlPlane {
     this.emit("approval.resolved", { approval_id: id, status }); return result.rows[0];
   }
   async notifications(owner: string) { const user = await ownerUserId(this.db, owner); return (await this.db.query("SELECT * FROM notifications WHERE owner_device_id=$1 OR owner_user_id=$2 ORDER BY created_at DESC LIMIT 100", [owner, user ?? null])).rows; }
+  async createTaskNotification(runId: string, status: string) {
+    const run = (await this.db.query("SELECT requested_by,requested_by_user_id,goal FROM agent_runs WHERE id=$1", [z.uuid().parse(runId)])).rows[0];
+    if (!run) return;
+    const kind = status === "completed" ? "task_completed" : status === "failed" ? "task_failed" : "task_question";
+    const title = status === "completed" ? "任务已完成" : status === "failed" ? "任务失败" : status === "waiting_for_approval" ? "任务需要确认" : "任务等待你的回答";
+    const existing = await this.db.query("SELECT id FROM notifications WHERE reference_id=$1 AND kind=$2", [runId, kind]);
+    if (existing.rowCount) return;
+    const id = randomUUID();
+    await this.db.query("INSERT INTO notifications(id,owner_device_id,owner_user_id,kind,title,body,reference_id) VALUES($1,$2,$3,$4,$5,$6,$7)", [id, run.requested_by, run.requested_by_user_id ?? null, kind, title, String(run.goal ?? "").slice(0, 500), runId]);
+    this.emit("notification.created", { notification_id: id, kind, reference_id: runId });
+  }
+  async createQuestionNotification(question: { id: string; conversation_id: string; turn_id: string; prompt: string }) {
+    const turn = (await this.db.query("SELECT owner_device_id,owner_user_id FROM conversation_turns WHERE id=$1", [question.turn_id])).rows[0];
+    if (!turn) return;
+    const id = randomUUID();
+    await this.db.query("INSERT INTO notifications(id,owner_device_id,owner_user_id,kind,title,body,reference_id) VALUES($1,$2,$3,'question','Jarvis 等待你的回答',$4,$5)", [id, turn.owner_device_id, turn.owner_user_id ?? null, question.prompt.slice(0, 500), question.conversation_id]);
+    this.emit("notification.created", { notification_id: id, kind: "question", reference_id: question.conversation_id });
+  }
   async markNotification(owner: string, id: string) { const user = await ownerUserId(this.db, owner); const r = await this.db.query("UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3) RETURNING *", [z.uuid().parse(id), owner, user ?? null]); if (!r.rowCount) throw Error("not_found"); return r.rows[0]; }
   async schedules(owner: string) { const user = await ownerUserId(this.db, owner); return (await this.db.query("SELECT * FROM schedules WHERE owner_device_id=$1 OR owner_user_id=$2 ORDER BY next_run_at", [owner, user ?? null])).rows; }
   async createSchedule(owner: string, value: unknown) { const p = scheduleInput.parse(value); const user = await ownerUserId(this.db, owner); if (p.conversation_id && !(await this.db.query("SELECT 1 FROM conversations WHERE id=$1 AND (owner_device_id=$2 OR owner_user_id=$3)", [p.conversation_id, owner, user ?? null])).rowCount) throw Error("not_found"); const row = (await this.db.query("INSERT INTO schedules(id,owner_device_id,owner_user_id,prompt,cadence,next_run_at,conversation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *", [randomUUID(), owner, user ?? null, p.prompt, p.cadence, p.next_run_at, p.conversation_id ?? null])).rows[0]; this.emit("schedule.created", row); return row; }

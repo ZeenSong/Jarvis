@@ -93,6 +93,7 @@ export class AgentManager {
     readonly push: Push,
     readonly prices: Prices = {},
     readonly onApproval?: (run: { id: string; requested_by: string }, event: AgentEvent) => Promise<void>,
+    readonly onTaskStatus?: (runId: string, status: string, payload: Record<string, unknown>) => Promise<void>,
   ) {}
   async selectExecutor(c: PoolClient, request: TaskRequest) {
     const definitions = (await c.query("SELECT * FROM agent_definitions WHERE enabled=true AND tier='managed' ORDER BY id")).rows;
@@ -311,7 +312,11 @@ export class AgentManager {
       });
       const status = String(event.payload.status ?? "");
       const taskTopic = status === "running" ? "task.started" : ["waiting_for_user", "waiting_for_approval"].includes(status) ? "task.waiting" : ["completed", "failed", "cancelled"].includes(status) ? `task.${status}` : undefined;
-      if (taskTopic) this.push(taskTopic, { task_id: id, run_id: id, status, payload: event.payload });
+      if (taskTopic) {
+        this.push(taskTopic, { task_id: id, run_id: id, status, payload: event.payload });
+        if (this.onTaskStatus && ["waiting_for_user", "completed", "failed"].includes(status))
+          await this.onTaskStatus(id, status, event.payload as Record<string, unknown>);
+      }
     }
     return !!event;
   }

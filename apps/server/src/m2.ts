@@ -204,11 +204,14 @@ export class M2 {
     this.integrationCredentials = new IntegrationCredentialStore(db);
     this.manager = new AgentManager(db, registry, push, prices, async (run, event) => {
       await this.control.createApproval(run.requested_by, { run_id: run.id, capability: String(event.payload.capability ?? "unknown"), input: (event.payload.input as Record<string, unknown>) ?? {} });
+    }, async (runId, status) => {
+      await this.control.createTaskNotification(runId, status);
     });
     this.conversations = new ConversationService(
       db,
       this.manager,
       push,
+      (question) => this.control.createQuestionNotification(question),
     );
     this.workspaces = new WorkspaceStore(db, push);
   }

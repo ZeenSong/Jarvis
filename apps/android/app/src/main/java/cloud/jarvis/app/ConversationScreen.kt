@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.*
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import cloud.jarvis.app.designsystem.JarvisOrb
 
 private fun JsonObject?.str(key: String) = (this?.get(key) as? JsonPrimitive)?.contentOrNull ?: ""
 
@@ -81,8 +82,8 @@ private fun parseMarkdown(value: String): List<MarkdownBlock> {
     ClickableText(text, style = style.copy(color = MaterialTheme.colorScheme.onSurface), onClick = { offset -> text.getStringAnnotations("url", offset, offset).firstOrNull()?.let { uriHandler.openUri(it.item) } })
 }
 
-@Composable private fun MarkdownMessage(value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+@Composable private fun MarkdownMessage(value: String, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         parseMarkdown(value).forEach { block ->
             when (block) {
                 is MarkdownBlock.Text -> { val style = when (block.style) { 1 -> MaterialTheme.typography.headlineSmall; 2 -> MaterialTheme.typography.titleLarge; 3 -> MaterialTheme.typography.titleMedium; else -> MaterialTheme.typography.bodyLarge }; MarkdownInline(block.value, style) }
@@ -108,40 +109,102 @@ private fun parseMarkdown(value: String): List<MarkdownBlock> {
 }
 
 @Composable fun ConversationScreen(repo: M2Repository, openRun: (String)->Unit, openView:(String)->Unit, openWorkspace: () -> Unit) {
-    val conversations by repo.conversations.collectAsStateWithLifecycle(); val current by repo.conversation.collectAsStateWithLifecycle(); val sending by repo.sending.collectAsStateWithLifecycle(); val toolStates by repo.toolStates.collectAsStateWithLifecycle(); val draft by repo.draft.collectAsStateWithLifecycle()
+    val conversations by repo.conversations.collectAsStateWithLifecycle(); val current by repo.conversation.collectAsStateWithLifecycle(); val sending by repo.sending.collectAsStateWithLifecycle(); val draft by repo.draft.collectAsStateWithLifecycle(); val options by repo.composerOptions.collectAsStateWithLifecycle()
     var text by remember { mutableStateOf("") }
+    var reasoning by remember { mutableStateOf<String?>(null) }
+    var selectedSkills by remember { mutableStateOf(setOf<String>()) }
+    var reasoningMenu by remember { mutableStateOf(false) }
+    var skillsMenu by remember { mutableStateOf(false) }
+    val conversationScroll = rememberScrollState()
     LaunchedEffect(draft) { if (draft.isNotBlank()) { text = draft; repo.clearDraft() } }
-    Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.horizontalScroll(rememberScrollState())) {
+    val efforts=options?.get("reasoning_efforts")?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+    val skills=options?.get("skills")?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
+    LaunchedEffect(efforts) { if(reasoning == null && efforts.isNotEmpty()) reasoning = efforts.firstOrNull { it == "medium" } ?: efforts.first() }
+    val messages=current?.get("messages")?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
+    val events=current?.get("events")?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
+    val title=current?.get("conversation")?.jsonObject?.str("title").orEmpty().ifBlank { "与 Jarvis 对话" }
+    val latestContentLength = messages.lastOrNull()?.text("content")?.length ?: 0
+    LaunchedEffect(messages.size, events.size, latestContentLength) {
+        kotlinx.coroutines.delay(40)
+        conversationScroll.animateScrollTo(conversationScroll.maxValue)
+    }
+    Column(Modifier.fillMaxSize().padding(horizontal=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+            JarvisOrb(38.dp);Column { Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold);Text("你的家庭 AI · 想到什么，就从这里开始",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        HorizontalDivider()
+        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
             TextButton(onClick={repo.selectConversation(null)}) {Text("＋ 新会话")}
             conversations.forEach { c -> TextButton(onClick={repo.selectConversation(c.text("id"))}){Text(c.text("title").take(20))} }
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            if(current==null)Text("今天需要我做什么？查看状态、分析用量，或委派代码任务。")
-            current?.get("messages")?.jsonArray?.forEach { value -> val m=value.jsonObject
-                Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Text(if(m.text("role")=="user")"你" else "Jarvis",color=MaterialTheme.colorScheme.primary)
-                    if (m.text("content").isBlank()) Text("正在处理…") else MarkdownMessage(m.text("content"));Text(display(m["status"]),style=MaterialTheme.typography.bodySmall)
-                    val conversationId = current?.get("conversation")?.jsonObject?.text("id")
-                    toolStates[conversationId]?.values?.forEach { state -> val parts = state.split('|', limit = 2); Text("工具 · ${parts.firstOrNull() ?: "tool"} · ${if (parts.getOrNull(1) == "running") "运行中" else if (parts.getOrNull(1) == "failed") "失败" else "已完成"}", modifier = Modifier.fillMaxWidth().background(Color(0x1800A6C7)).padding(8.dp), style = MaterialTheme.typography.bodySmall) }
-                    (m["run_id"] as? JsonPrimitive)?.contentOrNull?.let { id -> TextButton(onClick={openRun(id)}){Text("查看任务 →")} }
-                    (m["view_id"] as? JsonPrimitive)?.contentOrNull?.let { id -> TextButton(onClick={openView(id)}){Text("查看动态图表")} }
-                    val workspaceId = (m["workspace_id"] as? JsonPrimitive)?.contentOrNull
-                    if (!workspaceId.isNullOrBlank() || (m["view_id"] as? JsonPrimitive)?.contentOrNull != null) TextButton(onClick={repo.openWorkspace(workspaceId); openWorkspace()}){Text("打开工作区 →")}
-                }}
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if(messages.isEmpty()) Column(Modifier.fillMaxSize(),horizontalAlignment=androidx.compose.ui.Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
+                JarvisOrb(58.dp);Spacer(Modifier.height(18.dp));Text("今天，有什么我可以帮你？",style=MaterialTheme.typography.headlineSmall);Spacer(Modifier.height(8.dp));Text("看看家里的近况，发现照片里的美好，或一起理清一个问题。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            } else Column(Modifier.fillMaxSize().verticalScroll(conversationScroll),verticalArrangement=Arrangement.spacedBy(18.dp)) {
+                messages.forEach { m ->
+                    if(m.text("role")=="user") Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) { Card(colors=CardDefaults.cardColors(containerColor=Color(0xFF173A61)),shape=androidx.compose.foundation.shape.RoundedCornerShape(16.dp,16.dp,4.dp,16.dp),modifier=Modifier.fillMaxWidth(.86f)) { MarkdownMessage(m.text("content"),Modifier.padding(14.dp)) } }
+                    else Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) { JarvisOrb(28.dp);Text("Jarvis",fontWeight=FontWeight.SemiBold) }
+                        ExecutionStream(events.filter { it.str("turn_id") == m.str("turn_id") })
+                        if (m.text("content").isBlank()) Text("正在处理…",color=MaterialTheme.colorScheme.onSurfaceVariant) else MarkdownMessage(m.text("content"))
+                        if(m.text("status") !in listOf("completed","")) Text(display(m["status"]),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        (m["run_id"] as? JsonPrimitive)?.contentOrNull?.let { id -> TextButton(onClick={openRun(id)}){Text("查看任务 →")} }
+                        (m["view_id"] as? JsonPrimitive)?.contentOrNull?.let { id -> TextButton(onClick={openView(id)}){Text("查看动态结果")} }
+                        val workspaceId = (m["workspace_id"] as? JsonPrimitive)?.contentOrNull
+                        if (!workspaceId.isNullOrBlank() || (m["view_id"] as? JsonPrimitive)?.contentOrNull != null) TextButton(onClick={repo.openWorkspace(workspaceId); openWorkspace()}){Text("打开工作区 →")}
+                    }
+                }
+                current?.get("questions")?.jsonArray?.mapNotNull { it as? JsonObject }?.filter { it.str("status") == "pending" }?.forEach { question ->
+                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text(question.str("prompt"), fontWeight=FontWeight.Bold)
+                    if(question.str("kind") == "boolean") Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Button(onClick={repo.answerQuestion(question.str("id"), JsonPrimitive(true))}) { Text("是") }
+                        OutlinedButton(onClick={repo.answerQuestion(question.str("id"), JsonPrimitive(false))}) { Text("否") }
+                    } else question["options"]?.jsonArray?.forEach { option -> val o=option.jsonObject; OutlinedButton(onClick={repo.answerQuestion(question.str("id"), JsonPrimitive(o.str("value")))}) { Text(o.str("label")) } }
+                } }
+                }
+                current?.get("approvals")?.jsonArray?.mapNotNull { it as? JsonObject }?.filter { it.str("status") == "pending" }?.forEach { approval ->
+                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text("需要确认", fontWeight=FontWeight.Bold); Text(approval.str("capability"))
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { Button(onClick={repo.resolveApproval(approval.str("id"),true)}) { Text("允许") }; OutlinedButton(onClick={repo.resolveApproval(approval.str("id"),false)}) { Text("拒绝") } }
+                } }
+                }
             }
         }
-        OutlinedTextField(value=text,onValueChange={text=it},label={Text("向 Jarvis 发送消息")},modifier=Modifier.fillMaxWidth().testTag("conversation-input"))
-        Button(onClick={repo.send(text)},enabled=!sending&&text.isNotBlank(),modifier=Modifier.testTag("conversation-send")){Text(if(sending)"提交中…" else "发送")}
+        Card(Modifier.fillMaxWidth(),shape=androidx.compose.foundation.shape.RoundedCornerShape(18.dp)) { Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(value=text,onValueChange={text=it},placeholder={Text("问 Jarvis 任何事情……")},modifier=Modifier.fillMaxWidth().testTag("conversation-input"),minLines=2,maxLines=4)
+        val activeTurn=current?.get("turns")?.jsonArray?.mapNotNull { it as? JsonObject }?.lastOrNull { it.str("status") in listOf("queued","running","waiting_approval","waiting_question") }
+        Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+            if(skills.isNotEmpty()) Box { TextButton(onClick={skillsMenu=true}) { Text(if(selectedSkills.isEmpty()) "Skills · Auto" else "Skills · ${selectedSkills.size}") };DropdownMenu(skillsMenu,{skillsMenu=false}) { skills.forEach { skill->val name=skill.str("name");DropdownMenuItem({Text(name)},{selectedSkills=if(name in selectedSkills)selectedSkills-name else selectedSkills+name},leadingIcon={Checkbox(name in selectedSkills,null)}) } } }
+            if(efforts.isNotEmpty()) Box { TextButton(onClick={reasoningMenu=true}) { Text("推理 · ${reasoningLabel(reasoning)}") };DropdownMenu(reasoningMenu,{reasoningMenu=false}) { efforts.forEach { effort->DropdownMenuItem({Text(reasoningLabel(effort))},{reasoning=effort;reasoningMenu=false}) } } }
+            Spacer(Modifier.weight(1f))
+            if(activeTurn!=null) OutlinedButton(onClick={repo.stop(activeTurn.str("id"))},enabled=!sending) { Text("■ 停止") }
+            else Button(onClick={val submitted=text;text="";repo.send(submitted,reasoning,selectedSkills)},enabled=!sending&&text.isNotBlank(),modifier=Modifier.testTag("conversation-send")){Text(if(sending)"提交中…" else "发送 ↑")}
+        }
+        } }
     }
+}
+
+private fun executionLabel(kind:String)=when(kind){"reasoning"->"推理";"skill"->"技能";"tool"->"工具";"processing"->"处理中";"render"->"渲染";"result"->"结果";"question"->"问题";"approval"->"审批";else->kind}
+private fun reasoningLabel(value:String?)=when(value){"low"->"快速";"medium"->"标准";"high"->"深度";"max"->"极深";else->"自动"}
+
+@Composable private fun ExecutionStream(events:List<JsonObject>) {
+    if(events.isEmpty()) return
+    Card(colors=CardDefaults.cardColors(containerColor=Color(0x221D82C4)),modifier=Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        Text("执行过程 · ${events.size} 个阶段",style=MaterialTheme.typography.titleSmall)
+        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            events.forEachIndexed { index,event -> var expanded by remember(event.str("id")) { mutableStateOf(false) };Surface(onClick={expanded=!expanded},color=Color.Transparent,shape=androidx.compose.foundation.shape.RoundedCornerShape(12.dp),modifier=Modifier.widthIn(min=190.dp,max=280.dp)) { Column(Modifier.padding(10.dp)) { Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) { Text(if(event.str("status")=="completed") "✓" else if(event.str("status")=="failed") "!" else "◌",color=MaterialTheme.colorScheme.primary);Text("${index+1}. ${executionLabel(event.str("kind"))}",style=MaterialTheme.typography.labelMedium);Text(event.str("title"),Modifier.weight(1f),maxLines=1);Text(if(expanded) "⌃" else "⌄") };if(expanded) event.str("content").takeIf { it.isNotBlank() }?.let { Box(Modifier.padding(top=6.dp)) { MarkdownMessage(it) } } } } }
+        }
+    } }
 }
 
 @Composable fun WorkspaceScreen(repo: M2Repository, back: () -> Unit) {
     val current by repo.workspace.collectAsStateWithLifecycle()
+    val conversation by repo.conversation.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { repo.openWorkspace() }
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
         TextButton(onClick = back) { Text("← 返回 Conversation") }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("工作区", style = MaterialTheme.typography.headlineMedium); Button(onClick = repo::createWorkspace, enabled = repo.conversation.value != null) { Text("保存工作区") } }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("工作区", style = MaterialTheme.typography.headlineMedium); Button(onClick = repo::createWorkspace, enabled = conversation != null) { Text("保存工作区") } }
         if (current == null) {
             Text("还没有与当前对话关联的持久化工作区。", style = MaterialTheme.typography.bodySmall)
         } else {

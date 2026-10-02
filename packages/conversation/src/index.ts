@@ -48,6 +48,7 @@ export class ConversationService {
     private db: Database,
     private manager: AgentManager,
     private push: Push,
+    private onQuestion?: (question: { id: string; conversation_id: string; turn_id: string; prompt: string }) => Promise<void>,
   ) {}
   private async activeHermesModel(client: HermesClient, signal: AbortSignal) {
     try {
@@ -249,6 +250,7 @@ export class ConversationService {
     return row;
     });
     this.push("conversation.question.created", row);
+    if (this.onQuestion) await this.onQuestion(row);
     return row;
   }
   async answerQuestion(device: string, questionId: string, answer: unknown) {

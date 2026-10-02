@@ -14,6 +14,9 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     val semanticView = MutableStateFlow<JsonObject?>(null)
     suspend fun thumbnail(path:String)=gateway.thumbnail(path)
     val applications = MutableStateFlow<JsonObject?>(null)
+    val notifications = MutableStateFlow<List<JsonObject>>(emptyList())
+    val approvals = MutableStateFlow<List<JsonObject>>(emptyList())
+    val composerOptions = MutableStateFlow<JsonObject?>(null)
     fun refreshApplications() { task { loadApplications() } }
     fun openApp(id: String, context: Context) { task {
         val appId = if (id == "homeassistant") "home-assistant" else id
@@ -50,6 +53,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
         viewGeneration++; selected = null; pendingWorkspaceId = null; runId = null; pending = null
         conversations.value = emptyList(); conversation.value = null; hierarchy.value = null
         view.value = null; semanticView.value = null; resources.value = emptyMap(); applications.value = null
+        notifications.value = emptyList(); approvals.value = emptyList(); composerOptions.value = null
         workspaces.value = emptyList(); workspace.value = null; toolStates.value = emptyMap(); draft.value = ""; sending.value = false
     }
     suspend fun restore(s: Snapshot) {
@@ -61,6 +65,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
             "m2-view" -> view.value = value.jsonObject
             "m3-semantic-view" -> semanticView.value = (value as? JsonObject)?.takeIf { (it["ui_protocol"] as? JsonPrimitive)?.content == "2.0" && it["sections"] is JsonArray }
             "m2-pending" -> pending = value as? JsonObject
+            "m4-notifications" -> notifications.value = value.jsonArray.map { it.jsonObject }
             else -> if(s.key.startsWith("m2-resource:")) accept(value.jsonObject, false)
         }
     }
@@ -71,6 +76,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
         try { do {
             refreshAgain = false
             loadApplications()
+            loadControlPlane()
             conversations.value = gateway.request("conversation.list").jsonArray.map { it.jsonObject }; save("m2-conversations", JsonArray(conversations.value))
             hierarchy.value = gateway.request("agent.definition.list").jsonObject; save("m2-hierarchy", hierarchy.value!!)
             selected?.let { loadConversation(it) }
@@ -83,6 +89,17 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
                 source?.let { show("agent_run_analysis", it, refreshingView = true) }
             }
         } while(refreshAgain) } finally { refreshing = false }
+    }
+    private suspend fun loadControlPlane() {
+        reloadNotifications()
+        approvals.value = gateway.request("approval.list").jsonArray.map { it.jsonObject }
+        composerOptions.value = gateway.request("conversation.composer.options").jsonObject
+    }
+    suspend fun reloadNotifications(): List<JsonObject> {
+        val result = gateway.request("notification.list").jsonArray.map { it.jsonObject }
+        notifications.value = result
+        save("m4-notifications", JsonArray(result))
+        return result
     }
     private suspend fun loadConversation(id: String) { val result = gateway.request("conversation.get", buildJsonObject { put("conversation_id",id) }).jsonObject; if(id == selected) { conversation.value = result; save("m2-conversation",result) } }
     fun selectConversation(id: String?) { selected = id; conversation.value = null; if(id != null) task { loadConversation(id) } }
@@ -107,17 +124,25 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
             }
         } }
     }
+    fun openWorkspaceById(workspaceId: String) { task {
+        workspace.value = gateway.request("workspace.get", buildJsonObject { put("workspace_id", workspaceId) }).jsonObject
+    } }
     fun createWorkspace() { selected?.let { id -> task { workspace.value = gateway.request("workspace.create", buildJsonObject { put("conversation_id", id); put("type", "native"); put("title", "Jarvis 工作区") }).jsonObject; openWorkspace() } } }
-    fun send(text: String) { if(text.isBlank() || sending.value) return; sending.value = true; task {
+    fun send(text: String, reasoningEffort: String? = null, skills: Set<String> = emptySet()) { if(text.isBlank() || sending.value) return; sending.value = true; task {
         try {
             var id = selected
             if(id == null) { val c = gateway.request("conversation.create", buildJsonObject { put("title", text.take(40)) }).jsonObject; id = c.getValue("id").jsonPrimitive.content; selected = id }
-            val request = pending ?: buildJsonObject { put("conversation_id", id); put("content",text); put("idempotency_key",UUID.randomUUID().toString()) }
+            val request = pending ?: buildJsonObject { put("conversation_id", id); put("content",text); put("idempotency_key",UUID.randomUUID().toString()); reasoningEffort?.let { put("reasoning_effort", it) }; if(skills.isNotEmpty()) put("skills", JsonArray(skills.sorted().map(::JsonPrimitive))) }
             check(request["content"]?.jsonPrimitive?.content == text && request["conversation_id"]?.jsonPrimitive?.content == id) { "上一条消息尚未确认，请重试原消息" }
             pending = request; save("m2-pending", request)
             gateway.request("conversation.message",request); pending = null; save("m2-pending",JsonNull); loadConversation(id!!)
         } finally { sending.value = false }
     } }
+    fun stop(turnId: String) { task { gateway.request("conversation.stop", buildJsonObject { put("turn_id", turnId) }); selected?.let { loadConversation(it) } } }
+    fun answerQuestion(questionId: String, answer: JsonElement) { task { gateway.request("conversation.question.answer", buildJsonObject { put("question_id", questionId); put("answer", answer) }); selected?.let { loadConversation(it) }; loadControlPlane() } }
+    fun resolveApproval(approvalId: String, approved: Boolean) { task { gateway.request("approval.resolve", buildJsonObject { put("approval_id", approvalId); put("status", if(approved) "approved" else "rejected") }); selected?.let { loadConversation(it) }; loadControlPlane() } }
+    fun markNotificationRead(id: String) { task { gateway.request("notification.read", buildJsonObject { put("notification_id", id) }); loadControlPlane() } }
+    fun cancelTask(id: String) { task { gateway.request("task.cancel", buildJsonObject { put("task_id", id) }); refresh() } }
     private suspend fun accept(next: JsonObject, persist: Boolean = true) {
         if(next["version"]?.jsonPrimitive?.intOrNull != 1) return
         val name = next["resource"]?.jsonPrimitive?.content ?: return
@@ -160,7 +185,8 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     fun event(topic: String, value: JsonElement) {
         when(topic) {
             "resource.updated" -> task { accept(value.jsonObject) }
-            "conversation.updated" -> task { refresh() }
+            "conversation.updated", "conversation.execution.updated", "conversation.result.updated", "conversation.question.created", "conversation.question.answered", "approval.created", "approval.resolved" -> task { refresh() }
+            "notification.created" -> task { loadControlPlane() }
             "workspace.created", "workspace.updated", "workspace.artifact.updated" -> task { openWorkspace() }
             "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled",
             "agent.run.created", "agent.run.updated" -> task { refresh() }

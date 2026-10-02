@@ -31,6 +31,7 @@ private val states = mapOf("queued" to "排队中", "starting" to "启动中", "
     val hierarchy by repo.m2.hierarchy.collectAsStateWithLifecycle()
     val conversations by repo.m2.conversations.collectAsStateWithLifecycle()
     val applications by repo.m2.applications.collectAsStateWithLifecycle()
+    val notifications by repo.m2.notifications.collectAsStateWithLifecycle()
     val runs = (hierarchy?.get("runs") as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
     val active = runs.filter { it.str("status") in listOf("queued","starting","running","waiting_for_user","waiting_for_approval") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal=20.dp), verticalArrangement=Arrangement.spacedBy(20.dp)) {
@@ -38,20 +39,17 @@ private val states = mapOf("queued" to "排队中", "starting" to "启动中", "
             Column(Modifier.weight(1f)) { Text("你的私人云",style=MaterialTheme.typography.headlineMedium,color=Color.White); Spacer(Modifier.height(8.dp)); Text(if(system == null) "正在连接…" else if(system.child("jarvis").str("server_status")=="healthy") "一切正常，随时为你效劳" else "有状态需要关注",style=MaterialTheme.typography.bodySmall,color=Color(0xFFB7CDE5)) }; JarvisOrb()
         }
         OutlinedButton(onClick={navigate("jarvis")},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp),contentPadding=PaddingValues(14.dp)) { JarvisOrb(30.dp); Spacer(Modifier.width(12.dp)); Text("问 Jarvis，或说说你的想法…") }
-        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-            listOf("CPU" to system.child("cpu"), "内存" to system.child("memory")).forEach { (name,data) ->
-                val value=(data?.get("usage_percent") as? JsonPrimitive)?.doubleOrNull
-                Card(onClick={navigate("server")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) { Text(name);Text(value?.let { "%.0f%%".format(it) } ?: "—",style=MaterialTheme.typography.headlineMedium);LinearProgressIndicator(progress={((value?:0.0)/100).toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth()) } }
-            }
+        Text("今日重点",style=MaterialTheme.typography.titleLarge)
+        val important = notifications.filter { it.str("read_at").isBlank() || it.str("kind") in listOf("approval", "question", "task_question", "task_failed") }.take(3)
+        if(important.isEmpty()) Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Row(Modifier.padding(18.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text("◇",color=MaterialTheme.colorScheme.primary);Column { Text("一切正常",style=MaterialTheme.typography.titleMedium);Text("今天没有需要你处理的事项。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant) } } }
+        important.forEach { n -> Card(onClick={ navigate(when(n.str("kind")){"task_completed","task_failed","task_question"->"run/${n.str("reference_id")}";"question"->"conversation/${n.str("reference_id")}";else->"notification/${n.str("id")}"}) },modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp)) { Text(n.str("title"),style=MaterialTheme.typography.titleMedium);Text(n.str("body"),color=MaterialTheme.colorScheme.onSurfaceVariant) } } }
+        Text("Jarvis 正在工作",style=MaterialTheme.typography.titleLarge)
+        if(active.isEmpty()) Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Row(Modifier.padding(18.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text("◇",color=MaterialTheme.colorScheme.primary);Column { Text("当前没有运行任务",style=MaterialTheme.typography.titleMedium);Text("交给 Jarvis 的长任务会显示在这里。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant) } } }
+        active.take(3).forEach { run -> Card(onClick={navigate("run/${run.str("id")}")},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp)) { Text(run.str("goal"),style=MaterialTheme.typography.titleMedium);Text(states[run.str("status")] ?: run.str("status"),color=MaterialTheme.colorScheme.primary) } } }
+        Text("快捷入口",style=MaterialTheme.typography.titleLarge)
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            listOf("notifications" to "通知", "tasks" to "任务", "spaces" to "空间", "apps" to "应用").forEach { (path,label) -> OutlinedButton(onClick={navigate(path)},modifier=Modifier.weight(1f),contentPadding=PaddingValues(vertical=12.dp,horizontal=2.dp)) { Text(label) } }
         }
-        // Keep the legacy M1 entry points discoverable while the product home
-        // remains the primary M3.1 navigation surface.
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { navigate("server") }, modifier = Modifier.weight(1f)) { Text("服务器") }
-            TextButton(onClick = { navigate("agents") }, modifier = Modifier.weight(1f)) { Text("智能体") }
-            TextButton(onClick = { navigate("ai") }, modifier = Modifier.weight(1f)) { Text("AI") }
-        }
-        Card(onClick={navigate("tasks")},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp)) { Text("Jarvis 正在工作",style=MaterialTheme.typography.titleMedium);Text("${active.size} 个任务进行中",color=MaterialTheme.colorScheme.onSurfaceVariant);active.firstOrNull()?.let { Spacer(Modifier.height(10.dp));Text(it.str("goal")) } } }
         Text("我的空间",style=MaterialTheme.typography.titleLarge); SpaceTiles(navigate)
         Text("最近活动",style=MaterialTheme.typography.titleLarge)
         if(conversations.isEmpty()) ProductEmpty("从一次对话开始","你的对话与任务进展会汇集在这里。")
@@ -65,16 +63,15 @@ private val states = mapOf("queued" to "排队中", "starting" to "启动中", "
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun SpaceTiles(navigate: (String) -> Unit) {
-    var selected by remember { mutableStateOf<String?>(null) }
-    val spaces = listOf("照片" to R.drawable.space_photos, "文件" to R.drawable.space_files,
-        "知识" to R.drawable.space_knowledge, "家庭" to R.drawable.space_family,
-        "媒体" to R.drawable.space_media, "开发" to R.drawable.space_development)
+    val spaces = listOf(Triple("照片", "photos", R.drawable.space_photos), Triple("文件", "files", R.drawable.space_files),
+        Triple("知识", "knowledge", R.drawable.space_knowledge), Triple("家庭", "family", R.drawable.space_family),
+        Triple("媒体", "media", R.drawable.space_media), Triple("开发", "development", R.drawable.space_development))
     val descriptions = mapOf("照片" to "珍藏生活的片刻", "文件" to "资料，触手可及", "知识" to "让想法持续生长",
         "家庭" to "设备与生活", "媒体" to "你的影音空间", "开发" to "把想法变成作品")
     Column(verticalArrangement=Arrangement.spacedBy(12.dp)) { spaces.chunked(2).forEach { row ->
     Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-        row.forEach { (name,image) ->
-            Card(onClick={if(name=="开发") navigate("tasks") else selected=name},modifier=Modifier.weight(1f),shape=RoundedCornerShape(18.dp)) {
+        row.forEach { (name,id,image) ->
+            Card(onClick={navigate("space/$id")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(18.dp)) {
                 Box(Modifier.fillMaxWidth().height(150.dp)) {
                     Image(painterResource(image),contentDescription=null,contentScale=ContentScale.Crop,modifier=Modifier.matchParentSize())
                     Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent,Color(0xEE061322)))))
@@ -86,21 +83,6 @@ private val states = mapOf("queued" to "排队中", "starting" to "启动中", "
             }
         }
     }
-    } }
-    selected?.let { name -> ModalBottomSheet(onDismissRequest={selected=null}) {
-        Column(Modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-            Text("$name · 接入进度",style=MaterialTheme.typography.headlineSmall)
-            Text(when(name) {
-                "照片" -> "可在应用中心查看 Immich 的连接与运行状态。照片时间线、相册与搜索尚未接入；封面是装饰图，不是你的照片。"
-                "家庭" -> "可在应用中心查看 Home Assistant 的连接与运行状态。设备、房间与控制尚未接入。"
-                "知识" -> "知识库与检索尚未接入。已有对话可在 Jarvis 中查看。"
-                "文件" -> "文件浏览、上传与权限控制尚未接入。这里不会显示模拟文件。"
-                else -> "影音库尚未接入。这里不会显示模拟媒体内容。"
-            })
-            if(name in listOf("照片","家庭")) Button(onClick={selected=null;navigate("apps")},modifier=Modifier.fillMaxWidth()) { Text("查看已安装应用") }
-            if(name=="知识") Button(onClick={selected=null;navigate("jarvis")},modifier=Modifier.fillMaxWidth()) { Text("打开 Jarvis") }
-            TextButton(onClick={selected=null}) { Text("关闭") }
-        }
     } }
 }
 @Composable fun ProductEmpty(title: String, subtitle: String) {

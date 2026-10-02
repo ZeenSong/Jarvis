@@ -26,7 +26,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonElement>>()
-    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "conversation.tool.started", "conversation.tool.completed", "conversation.tool.failed", "conversation.status", "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated", "workspace.created", "workspace.updated", "workspace.opened", "workspace.artifact.updated", "approval.created", "approval.resolved", "notification.created", "schedule.created")
+    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "conversation.execution.updated", "conversation.result.updated", "conversation.question.created", "conversation.question.answered", "conversation.question.cancelled", "conversation.tool.started", "conversation.tool.completed", "conversation.tool.failed", "conversation.status", "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated", "workspace.created", "workspace.updated", "workspace.opened", "workspace.artifact.updated", "approval.created", "approval.resolved", "notification.created", "schedule.created")
     private var topics = listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed")
 
     suspend fun login(server: String, username: String, password: String): Credentials = withContext(Dispatchers.IO) {

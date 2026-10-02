@@ -1,6 +1,7 @@
 package cloud.jarvis.app
 
 import android.os.Bundle
+import android.content.Intent
 import android.os.Build
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,9 +37,12 @@ import cloud.jarvis.app.features.SpaceTiles
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import cloud.jarvis.app.features.ProductApplications
+import cloud.jarvis.app.features.NotificationCenter
+import cloud.jarvis.app.features.NotificationDetail
+import cloud.jarvis.app.features.SpaceDetail
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)); setContent {
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); (application as JarvisApplication).repository.handleDeepLink(intent); enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)); setContent {
         val preferences=remember { getSharedPreferences("jarvis-appearance",MODE_PRIVATE) }
         var light by remember { mutableStateOf(preferences.getBoolean("light",false)) }
         SideEffect {
@@ -49,6 +53,7 @@ class MainActivity : ComponentActivity() {
             val vm: JarvisViewModel = viewModel(); JarvisApp(vm.repository,light) { light=!light;preferences.edit().putBoolean("light",light).apply() }
         }
     } }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); (application as JarvisApplication).repository.handleDeepLink(intent) }
 }
 private fun JsonObject?.value(key: String): String = (this?.get(key) as? JsonPrimitive)?.takeUnless { it is JsonNull }?.content ?: "—"
 private fun JsonObject?.obj(key: String): JsonObject? = this?.get(key) as? JsonObject
@@ -65,25 +70,35 @@ private fun localized(value: String) = uiLabels[value] ?: value
     val paired by repo.paired.collectAsStateWithLifecycle(); val connection by repo.gateway.state.collectAsStateWithLifecycle()
     val error by repo.error.collectAsStateWithLifecycle(); val saved by repo.savedAt.collectAsStateWithLifecycle()
     var settings by remember { mutableStateOf(false) }
+    var notificationAsked by remember { mutableStateOf(false) }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(paired, connection) { if(paired && connection == ConnectionState.online && Build.VERSION.SDK_INT >= 33 && !notificationAsked) { notificationAsked = true; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) } }
     if (!paired || settings || connection == ConnectionState.unauthorized) { LoginScreen(error, paired, { server, user, password -> repo.login(server, user, password); settings = false }, { settings = false }); return }
-    val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"; val workspaceRoute = route == "workspace"
+    val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"; val workspaceRoute = route.startsWith("workspace")
+    val deepLink by repo.deepLink.collectAsStateWithLifecycle()
+    LaunchedEffect(deepLink, paired, connection) { val target=deepLink; if(target!=null && paired && connection==ConnectionState.online) { nav.navigate(target) { launchSingleTop=true }; repo.consumeDeepLink() } }
     LaunchedEffect(route) { repo.selectPage(route) }
     Scaffold(topBar = { if (!workspaceRoute) Column(Modifier.statusBarsPadding().padding(20.dp)) {
-        TextButton(onClick=toggleTheme) { Text(if(light) "切换深色主题" else "切换浅色主题") }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新登录" }) } }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Spacer(Modifier.weight(1f)); TextButton(onClick=toggleTheme) { Text(if(light) "深色" else "浅色") }; TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新登录" }) } }
         if (connection != ConnectionState.online) Text("显示最近缓存 · ${saved?.let { Instant.ofEpochMilli(it) } ?: "尚无数据"}", style = MaterialTheme.typography.bodySmall)
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     } }, bottomBar = { if (!workspaceRoute) NavigationBar(containerColor=MaterialTheme.colorScheme.background) { listOf("home" to "首页", "spaces" to "空间", "jarvis" to "Jarvis", "tasks" to "任务", "apps" to "应用").forEach { (path, label) -> NavigationBarItem(selected = route == path || (path == "tasks" && route.startsWith("run/")), onClick = { nav.navigate(path) { popUpTo("home"); launchSingleTop = true } }, icon = { if(path=="jarvis") JarvisOrb(30.dp) else Icon(painterResource(when(path){"home"->R.drawable.nav_home;"spaces"->R.drawable.nav_spaces;"tasks"->R.drawable.nav_tasks;else->R.drawable.nav_apps}),contentDescription=null) }, label = { Text(label) }) } } }) { padding ->
         NavHost(nav, startDestination = "home", modifier = Modifier.padding(padding)) {
             composable("home") { ProductHome(repo) { nav.navigate(it) } }
             composable("tasks") { ProductTasks(repo) { nav.navigate("run/$it") } }
+            composable("notifications") { NotificationCenter(repo) { nav.navigate(it) } }
             composable("spaces") { Screen("我的空间") { SpaceTiles { nav.navigate(it) { launchSingleTop = true } } } }
+            composable("space/{id}") { entry -> SpaceDetail(entry.arguments?.getString("id").orEmpty()) { nav.navigate(it) } }
             composable("apps") { val apps by repo.m2.applications.collectAsStateWithLifecycle(); val context = LocalContext.current; LaunchedEffect(Unit) { repo.m2.refreshApplications() }; Screen("应用") { ProductApplications(apps, { repo.m2.refreshApplications() }, { repo.m2.openApp(it, context) }, { repo.m2.askAboutApp(it); nav.navigate("jarvis") }) } }
             composable("server") { ServerScreen(repo, { repo.m2.show("system_overview"); nav.navigate("workspace") }) { nav.navigate("agents") } }
             composable("agents") { AgentCenter(repo.m2, { nav.navigate("run/$it") }, { nav.navigate("legacy-agents") }) { nav.navigate("ai") } }
             composable("legacy-agents") { AgentsScreen(repo, { nav.navigate("agent/$it") }) { nav.navigate("ai") } }
             composable("jarvis") { ConversationScreen(repo.m2, { nav.navigate("run/$it") }, { repo.m2.loadView(it);nav.navigate("workspace") }, { repo.m2.openWorkspace(); nav.navigate("workspace") }) }
+            composable("conversation/{id}") { entry -> val id=entry.arguments?.getString("id").orEmpty(); LaunchedEffect(id){repo.m2.selectConversation(id)}; ConversationScreen(repo.m2, { nav.navigate("run/$it") }, { repo.m2.loadView(it);nav.navigate("workspace") }, { repo.m2.openWorkspace();nav.navigate("workspace") }) }
             composable("workspace") { WorkspaceScreen(repo.m2) { nav.popBackStack() } }
+            composable("workspace/{id}") { entry -> val id=entry.arguments?.getString("id").orEmpty(); LaunchedEffect(id){repo.m2.openWorkspaceById(id)}; WorkspaceScreen(repo.m2) { nav.popBackStack() } }
+            composable("notification/{id}") { entry -> val id=entry.arguments?.getString("id").orEmpty(); NotificationDetail(repo,id,{nav.navigate("run/$it")}){nav.popBackStack()} }
+            composable("app/{id}") { val context=LocalContext.current; val apps by repo.m2.applications.collectAsStateWithLifecycle(); Screen("应用") { ProductApplications(apps,{repo.m2.refreshApplications()},{repo.m2.openApp(it,context)},{repo.m2.askAboutApp(it);nav.navigate("jarvis")}) } }
             composable("run/{id}") { entry -> val id=entry.arguments?.getString("id")!!; LaunchedEffect(id){repo.m2.openRun(id)}; DynamicScreen(repo.m2) { nav.navigate("run/$it") } }
             composable("agent/{id}") { entry -> val id = entry.arguments?.getString("id")!!; DisposableEffect(id) { repo.selectAgent(id); onDispose { repo.selectAgent(null) } }; AgentScreen(repo) { nav.popBackStack() } }
             composable("ai") { UsageScreen(repo, { repo.m2.show("usage_analysis"); nav.navigate("workspace") }) { nav.navigate("agents") } }
