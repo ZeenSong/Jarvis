@@ -50,8 +50,6 @@ export class ConversationService {
     private push: Push,
   ) {}
   private async activeHermesModel(client: HermesClient, signal: AbortSignal) {
-    const configured = process.env.HERMES_MODEL || process.env.CORE_MODEL;
-    if (configured) return configured;
     try {
       const options = await client.modelOptions(signal);
       if (typeof options.model === "string" && options.model.trim()) return options.model.trim();

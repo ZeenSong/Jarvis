@@ -67,7 +67,7 @@ services:
       hermes-dashboard: { condition: service_healthy }
 
   jarvis-server:
-    image: jarvis-server:0.3.2-profile-resolve-model-20261002
+    image: jarvis-server:0.3.2-profile-only-model-20261002
     container_name: jarvis-server
     restart: unless-stopped
     env_file: [/DATA/AppData/jarvis/config/server.env]
