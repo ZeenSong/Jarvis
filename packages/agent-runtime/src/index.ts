@@ -17,6 +17,11 @@ export interface AgentRunInput {
   goal: string;
   model?: string;
   workspace?: { repository: string; commit: string };
+  task?: {
+    execution_mode: "auto" | "background" | "durable";
+    required_capabilities: string[];
+    constraints: { max_risk: "read" | "write" | "execute"; workspace_required: boolean };
+  };
   /** Stable owner propagated to capability bridges; never exposed to the model. */
   owner_device_id?: string;
 }
@@ -58,6 +63,9 @@ export class RuntimeRegistry {
   }
   has(type: string) {
     return this.runtimes.has(type);
+  }
+  types() {
+    return [...this.runtimes.keys()].sort();
   }
   get(type: string) {
     const r = this.runtimes.get(type);

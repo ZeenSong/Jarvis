@@ -1,0 +1,1 @@
+{"domain":"yi_sd_recordings","name":"Yi SD Recordings","version":"1.0.0","documentation":"https://github.com/alienatedsec/yi-hack-v5","dependencies":["http","websocket_api"],"after_dependencies":["yi_hack"],"codeowners":[],"iot_class":"local_polling"}

@@ -1,0 +1,136 @@
+name: jarvis
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: jarvis-postgres
+    restart: unless-stopped
+    env_file: [/DATA/AppData/jarvis/config/postgres.env]
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_DB: jarvis
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes: [/DATA/AppData/jarvis/postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U jarvis -d jarvis"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    x-casaos:
+      volumes:
+        - container: /var/lib/postgresql/data
+          description: { en_US: Jarvis PostgreSQL data, zh_CN: Jarvis PostgreSQL 数据 }
+
+  hermes-dashboard:
+    image: jarvis-hermes-dashboard:20261002-task-routing-r1
+    container_name: jarvis-hermes-dashboard
+    user: "0:0"
+    restart: unless-stopped
+    env_file: [/DATA/AppData/jarvis/config/hermes.env]
+    entrypoint: [/opt/jarvis-compose/start-hermes.sh]
+    ports: ["9119:9119"]
+    volumes:
+      - /DATA/AppData/jarvis/hermes:/opt/data
+      - /DATA/AppData/jarvis/config/hermes-config.yaml:/opt/jarvis-compose/hermes-config.yaml:ro
+      - /DATA/AppData/jarvis/config/prepare-hermes-data.py:/opt/jarvis-compose/prepare-hermes-data.py:ro
+      - /DATA/AppData/jarvis/config/start-hermes.sh:/opt/jarvis-compose/start-hermes.sh:ro
+    healthcheck:
+      test: [CMD, /opt/hermes/.venv/bin/python, -c, "import socket; [socket.create_connection(('127.0.0.1', port), 5).close() for port in (8642, 9119)]"]
+      interval: 10s
+      timeout: 6s
+      retries: 30
+      start_period: 30s
+    x-casaos:
+      ports:
+        - container: "9119"
+          description: { en_US: Hermes Dashboard, zh_CN: Hermes Dashboard 管理界面 }
+      volumes:
+        - container: /opt/data
+          description: { en_US: "Hermes profiles, sessions, skills, and media", zh_CN: Hermes 配置、会话、技能与媒体数据 }
+
+  media-janitor:
+    image: jarvis-hermes-dashboard:20261002-task-routing-r1
+    container_name: jarvis-media-janitor
+    user: "0:0"
+    restart: unless-stopped
+    command: [/opt/hermes/.venv/bin/python, /opt/jarvis-compose/media-janitor.py]
+    environment:
+      MEDIA_ROOT: /opt/data/media/tmp
+      MEDIA_TTL_SECONDS: "43200"
+      MEDIA_MAX_FILES: "256"
+      MEDIA_MAX_BYTES: "536870912"
+      MEDIA_INTERVAL_SECONDS: "300"
+    volumes:
+      - /DATA/AppData/jarvis/hermes:/opt/data
+      - /DATA/AppData/jarvis/config/media-janitor.py:/opt/jarvis-compose/media-janitor.py:ro
+    depends_on:
+      hermes-dashboard: { condition: service_healthy }
+
+  jarvis-server:
+    image: jarvis-server:0.3.2-task-routing-20261002-r1
+    container_name: jarvis-server
+    restart: unless-stopped
+    env_file: [/DATA/AppData/jarvis/config/server.env]
+    ports: ["8080:8080"]
+    volumes:
+      - /:/host:ro
+      - /DATA/AppData/jarvis/config/prices.json:/config/prices.json:ro
+      - /DATA/AppData/jarvis/casaos-session:/var/lib/jarvis-casaos
+      - /DATA/AppData/jarvis/hermes/media:/hermes-media:ro
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    depends_on:
+      postgres: { condition: service_healthy }
+      hermes-dashboard: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    x-casaos:
+      ports:
+        - container: "8080"
+          description: { en_US: Jarvis Web, zh_CN: Jarvis 网页入口 }
+      volumes:
+        - container: /var/lib/jarvis-casaos
+          description: { en_US: CasaOS session state, zh_CN: CasaOS 会话状态 }
+
+  node-bridge:
+    image: jarvis-node-bridge:0.1.0-m31-codex9
+    container_name: jarvis-node-bridge-m31
+    restart: unless-stopped
+    network_mode: host
+    env_file: [/DATA/AppData/jarvis/config/node-bridge.env]
+    volumes:
+      - /home/root2023/.codex:/seed-codex:ro
+      - /home/root2023/Codes/Projects/Jarvis:/workspace:ro
+    depends_on:
+      jarvis-server: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    x-casaos:
+      volumes:
+        - container: /workspace
+          description: { en_US: Jarvis workspace (read-only), zh_CN: Jarvis 工作区（只读） }
+
+x-casaos:
+  architectures: [amd64]
+  main: jarvis-server
+  author: Jarvis
+  category: Utilities
+  description:
+    en_US: Jarvis personal cloud coordinator with Hermes Dashboard.
+    zh_CN: 集成 Hermes Dashboard 的 Jarvis 个人云协调服务。
+  developer: Jarvis
+  icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/jarvis.png
+  index: /
+  port_map: "8080"
+  scheme: http
+  title: { en_US: Jarvis, zh_CN: Jarvis }

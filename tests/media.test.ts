@@ -48,9 +48,9 @@ test("persistent media resources are conversation-scoped and serve authenticated
     assert.equal((await ctx.app.inject({url:resource.thumbnail_url,headers:{authorization:`Bearer ${owner.token}`} })).statusCode,200);
     const bridgeResponse=await ctx.app.inject({method:"POST",url:"/internal/hermes/media",headers:{"x-jarvis-bridge-key":"media-bridge-test-key"},payload:{
       context_token:createHermesContextToken("media-bridge-test-key",owner.device_id,conversationId),
-      content_type:"image/png",source:"frigate",data:Buffer.from([137,80,78,71,13,10,26,10]).toString("base64"),
+      content_type:"image/png",source:"homeassistant",data:Buffer.from([137,80,78,71,13,10,26,10]).toString("base64"),
     }});
-    assert.equal(bridgeResponse.statusCode,200);assert.match(bridgeResponse.json().id,/^[0-9a-f-]{36}$/);assert.equal(bridgeResponse.json().source,"frigate");
+    assert.equal(bridgeResponse.statusCode,200);assert.match(bridgeResponse.json().id,/^[0-9a-f-]{36}$/);assert.equal(bridgeResponse.json().source,"homeassistant");
   } finally {
     if(ctx) await ctx.app.close();
     if(priorBridgeKey===undefined) delete process.env.HERMES_BRIDGE_KEY; else process.env.HERMES_BRIDGE_KEY=priorBridgeKey;

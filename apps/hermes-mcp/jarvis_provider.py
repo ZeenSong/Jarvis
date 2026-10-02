@@ -11,7 +11,9 @@ import base64
 import json
 import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from typing import Literal
@@ -127,6 +129,91 @@ async def _authorize(context_token: str, provider: str, tool_name: str, read_onl
     )
 
 
+def _immich_preview(config: dict, asset_id: str) -> tuple[bytes, str]:
+    """Fetch a bounded authenticated preview without creating a shared link."""
+    try:
+        normalized_id = str(uuid.UUID(asset_id))
+    except (ValueError, TypeError, AttributeError):
+        raise RuntimeError("immich_asset_id_invalid")
+    request = Request(
+        f"{str(config['base_url']).rstrip('/')}/api/assets/{quote(normalized_id)}/thumbnail?size=preview",
+        headers={"Accept": "image/jpeg,image/png,image/webp", "x-api-key": str(config["token"])},
+    )
+    with urlopen(request, timeout=30) as response:
+        content_type = response.headers.get_content_type()
+        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise RuntimeError("immich_preview_type_invalid")
+        data = response.read(2 * 1024 * 1024 + 1)
+    if not data or len(data) > 2 * 1024 * 1024:
+        raise RuntimeError("immich_preview_size_invalid")
+    return data, content_type
+
+
+async def _immich_preview_resource(config: dict, context_token: str, arguments: dict[str, object]) -> str:
+    asset_id = arguments.get("id")
+    if not isinstance(asset_id, str):
+        raise RuntimeError("immich_asset_id_invalid")
+    data, content_type = await asyncio.to_thread(_immich_preview, config, asset_id)
+    resource_id = await asyncio.to_thread(_publish_media, context_token, data, content_type, "immich")
+    return json.dumps({"asset_id": asset_id, "media_resource": f"MEDIA_RESOURCE:{resource_id}"}, ensure_ascii=False)
+
+
+def _homeassistant_base(config: dict) -> str:
+    endpoint = str(config.get("endpoint", "")).rstrip("/")
+    suffix = "/api/mcp"
+    if not endpoint.endswith(suffix):
+        raise RuntimeError("homeassistant_endpoint_invalid")
+    return endpoint[:-len(suffix)]
+
+
+def _homeassistant_request(config: dict, path: str) -> tuple[bytes, str]:
+    request = Request(
+        f"{_homeassistant_base(config)}{path}",
+        headers={"Authorization": f"Bearer {config['token']}", "Accept": "application/json,image/jpeg,image/png,image/webp"},
+    )
+    with urlopen(request, timeout=30) as response:
+        content_type = response.headers.get_content_type()
+        data = response.read(2 * 1024 * 1024 + 1)
+    if not data or len(data) > 2 * 1024 * 1024:
+        raise RuntimeError("homeassistant_response_size_invalid")
+    return data, content_type
+
+
+async def _homeassistant_cameras(context_token: str) -> str:
+    config = await _authorize(context_token, "homeassistant", "camera_entities_list", True)
+    data, content_type = await asyncio.to_thread(_homeassistant_request, config, "/api/states")
+    if content_type != "application/json":
+        raise RuntimeError("homeassistant_states_type_invalid")
+    value = json.loads(data)
+    if not isinstance(value, list):
+        raise RuntimeError("homeassistant_states_invalid")
+    cameras = []
+    for item in value:
+        if not isinstance(item, dict) or not str(item.get("entity_id", "")).startswith("camera."):
+            continue
+        attributes = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+        cameras.append({
+            "entity_id": item["entity_id"],
+            "name": attributes.get("friendly_name"),
+            "state": item.get("state"),
+            "supported_features": attributes.get("supported_features"),
+        })
+    return json.dumps({"provider": "homeassistant", "cameras": cameras}, ensure_ascii=False)
+
+
+async def _homeassistant_camera_snapshot(context_token: str, entity_id: str) -> str:
+    if not isinstance(entity_id, str) or not entity_id.startswith("camera.") or not all(char.isalnum() or char in "_." for char in entity_id):
+        raise RuntimeError("homeassistant_camera_entity_invalid")
+    config = await _authorize(context_token, "homeassistant", "camera_snapshot_read", True)
+    data, content_type = await asyncio.to_thread(
+        _homeassistant_request, config, f"/api/camera_proxy/{quote(entity_id, safe='.')}",
+    )
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise RuntimeError("homeassistant_camera_type_invalid")
+    resource_id = await asyncio.to_thread(_publish_media, context_token, data, content_type, "homeassistant")
+    return json.dumps({"entity_id": entity_id, "media_resource": f"MEDIA_RESOURCE:{resource_id}"}, ensure_ascii=False)
+
+
 @asynccontextmanager
 async def _upstream(provider: str, config: dict):
     """Open the real upstream MCP server with the household credential.
@@ -182,6 +269,11 @@ async def _mcp_call(provider: str, context_token: str, tool_name: str, arguments
             raise RuntimeError("mcp_tool_not_found")
         annotations = getattr(selected, "annotations", None)
         read_only = bool(getattr(annotations, "read_only_hint", False)) if annotations is not None else False
+        # Immich MCP v0.4.0 does not annotate this read-only URL helper. Treat
+        # this one audited operation as read-only and convert it into a Jarvis
+        # media resource so displaying a photo never requires a shared link.
+        if provider == "immich" and tool_name == "immich_assets_download_thumbnail":
+            return await _immich_preview_resource(read_config, context_token, arguments)
         if read_only:
             return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token, provider)
 
@@ -236,7 +328,7 @@ def agent_run_status(context_token: str, run_id: str) -> str:
 
 @server.tool()
 def ui_view_show(context_token: str, intent: str, resources: list[str] = [], target: Literal["inline", "workspace"] = "workspace", view: dict | None = None) -> str:
-    """交付 UI Protocol V2 结果。usage_analysis 使用已有用量资源，首屏突出 llm_usage_read 返回的最高消耗 Conversation、Token 数与今日占比，并提供真实 Top 会话排行；cat_activity 用真实 Frigate 与 Home Assistant 数据构造 view 并进入工作区；cat_photos 用 photo_grid 构造 view，始终内联展示。view 必须包含 ui_protocol='2.0', id, revision, intent='overview'或'search', title, layout={type:'workspace'}, sections 与 fallback。section 包含 id,role,component,component_version=2,title,data,actions=[],fallback。不要编造数据、传感器或工具。照片项引用工具结果中的 MEDIA_RESOURCE UUID，放入 resource_id，不要拼接文件系统路径。相同 intent 更新原工作区。"""
+    """交付 UI Protocol V2 结果。view 必须包含 ui_protocol='2.0', id, revision, intent='overview'或'search', title, layout={type:'workspace'}, sections 与 fallback。section 包含 id,role,component,component_version=2,title,data,actions=[],fallback。不要编造数据、设备、区域或工具；根据当前请求与实时工具结果生成通用视图。照片项引用工具结果中的 MEDIA_RESOURCE UUID，放入 resource_id，不要拼接文件系统路径。相同 intent 更新原工作区。"""
     args = dict(intent=intent, resources=resources, target=target)
     if view is not None:
         args["view"] = view
@@ -244,9 +336,25 @@ def ui_view_show(context_token: str, intent: str, resources: list[str] = [], tar
 
 
 @server.tool()
-def task_create(context_token: str, goal: str, idempotency_key: str) -> str:
-    """创建可追踪的只读 Ops 持久任务。每个新请求用唯一 idempotency_key；网络重试复用同一 key。返回 task_id/run_id。"""
-    return _call("task_create", context_token, goal=goal, idempotency_key=idempotency_key)
+def task_create(
+    context_token: str,
+    goal: str,
+    idempotency_key: str,
+    execution_mode: Literal["auto", "background", "durable"] = "auto",
+    required_capabilities: list[str] | None = None,
+    max_risk: Literal["read", "write", "execute"] = "read",
+    workspace_required: bool = False,
+) -> str:
+    """创建可追踪的持久任务，由调度器按目标、能力和约束选择执行者。适合脱离当前回复持续执行、跨阶段推进、等待外部状态或需要独立进度的目标；简单即时请求不要创建任务。每个新请求使用唯一 idempotency_key，网络重试复用同一 key。"""
+    return _call(
+        "task_create",
+        context_token,
+        goal=goal,
+        idempotency_key=idempotency_key,
+        execution_mode=execution_mode,
+        required_capabilities=required_capabilities or [],
+        constraints={"max_risk": max_risk, "workspace_required": workspace_required},
+    )
 
 
 @server.tool()

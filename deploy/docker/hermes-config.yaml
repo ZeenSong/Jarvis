@@ -1,0 +1,27 @@
+model:
+  provider: deepseek
+  default: deepseek-flash
+gateway:
+  multiplex_profiles: false
+mcp_servers:
+  jarvis:
+    command: /opt/hermes/.venv/bin/python
+    args: ["/opt/jarvis-source/jarvis_provider.py"]
+    env:
+      JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+      JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+  homeassistant:
+    command: /opt/hermes/.venv/bin/python
+    args: ["/opt/jarvis-source/upstream_provider.py"]
+    env:
+      MCP_PROVIDER: homeassistant
+      JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+      JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+  immich:
+    command: /opt/hermes/.venv/bin/python
+    args: ["/opt/jarvis-source/upstream_provider.py"]
+    env:
+      MCP_PROVIDER: immich
+      JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
+      JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
+

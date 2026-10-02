@@ -48,7 +48,7 @@ test("MCP provider calls receive ordinary-language labels without exposing proto
   assert.equal(home.provider, "Home Assistant");
   assert.equal(home.title, "读取设备状态");
   assert.equal(activityTitle({ capability: "mcp__homeassistant__GetLiveContext" }), "Home Assistant · 读取设备状态");
-  assert.equal(activityTitle({ capability: "mcp__frigate__get_event_snapshot" }), "Frigate · 查看画面");
+  assert.equal(activityTitle({ capability: "mcp__homeassistant__camera_snapshot_read" }), "Home Assistant · 查看监控画面");
   assert.equal(activityTitle({ capability: "mcp__immich__search_photos" }), "Immich · 搜索照片");
   assert.equal(activityTitle({ capability: "immich_photo_search" }), "Immich · 搜索照片");
   assert.equal(activityTitle({ capability: "mcp__other__opaque_method" }), "执行操作");

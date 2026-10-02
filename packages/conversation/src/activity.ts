@@ -12,8 +12,8 @@ const capabilities: Record<string, [string, string]> = {
   home_assistant_state: ["homeassistant.state.read", "读取家庭状态"],
   mcp_tools_list: ["mcp.tools.list", "读取上游工具清单"],
   mcp_tool_call: ["mcp.tool.call", "调用上游 MCP"],
-  frigate_events_read: ["frigate.events.read", "查看监控事件"],
-  frigate_event_snapshot_read: ["frigate.event.snapshot.read", "查看监控快照"],
+  camera_entities_list: ["homeassistant.camera.list", "查找监控设备"],
+  camera_snapshot_read: ["homeassistant.camera.snapshot.read", "查看监控画面"],
   immich_photo_search: ["immich.photo.search", "搜索照片"],
   schedule_create: ["schedule.create", "创建定时任务"],
   conversation_question_create: ["conversation.question.create", "等待你的选择"],
@@ -39,38 +39,34 @@ export function capabilityLabel(capability: string) {
 
 export type ActivityPresentation = { title: string; provider?: string; category: "tool" | "render" | "question" };
 const providers = {
-  homeassistant: { name: "Home Assistant", labels: ["读取设备状态", "查找设备", "控制设备"] },
-  frigate: { name: "Frigate", labels: ["读取活动", "查看画面", "读取活动"] },
+  homeassistant: { name: "Home Assistant", labels: ["读取设备状态", "查找设备", "控制设备", "查看监控画面"] },
   immich: { name: "Immich", labels: ["搜索照片", "查看照片", "整理相册"] },
 } as const;
 type ProviderKey = keyof typeof providers;
 const providerKey = (value: unknown): ProviderKey | undefined => {
   const normalized = String(value ?? "").toLowerCase().replace(/[^a-z]/g, "");
   if (normalized === "homeassistant") return "homeassistant";
-  if (normalized === "frigate" || normalized === "immich") return normalized;
+  if (normalized === "immich") return normalized;
   return undefined;
 };
 function serviceCall(capability: string, input: Record<string, unknown>) {
   let provider = providerKey(input.provider);
   let tool = String(input.tool_name ?? input.tool ?? "");
   if (!provider) {
-    const namespace = /^mcp__(home_?assistant|frigate|immich)__(.+)$/i.exec(capability);
+    const namespace = /^mcp__(home_?assistant|immich)__(.+)$/i.exec(capability);
     if (namespace) { provider = providerKey(namespace[1]); tool = namespace[2]; }
   }
   if (!provider) {
     const canonical = canonicalActivityCapability(capability).toLowerCase();
     if (canonical.startsWith("homeassistant.")) provider = "homeassistant";
-    else if (canonical.startsWith("frigate.")) provider = "frigate";
     else if (canonical.startsWith("immich.")) provider = "immich";
     tool ||= canonical;
   }
   if (!provider) return undefined;
   const normalizedTool = tool.toLowerCase().replace(/[^a-z]/g, "");
   const labelIndex = provider === "homeassistant"
-    ? /call|service|control|setstate/.test(normalizedTool) ? 2 : /search|find|list/.test(normalizedTool) ? 1 : 0
-    : provider === "frigate"
-      ? /snapshot|image|thumbnail/.test(normalizedTool) ? 1 : 0
-      : /search|find|query|album/.test(normalizedTool) ? 0 : /asset|photo|image/.test(normalizedTool) ? 1 : 2;
+    ? /snapshot|image|camera_proxy/.test(normalizedTool) ? 3 : /call|service|control|setstate/.test(normalizedTool) ? 2 : /search|find|list/.test(normalizedTool) ? 1 : 0
+    : /search|find|query|album/.test(normalizedTool) ? 0 : /asset|photo|image/.test(normalizedTool) ? 1 : 2;
   return { provider: providers[provider].name, title: providers[provider].labels[labelIndex] };
 }
 /** Provider metadata enriches labels without exposing transport wrappers or arguments. */

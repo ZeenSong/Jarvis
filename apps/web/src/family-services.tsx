@@ -7,7 +7,6 @@ type FamilyServicesProps = {
 
 const providerLabels: Record<string, string> = {
   "home-assistant": "Home Assistant",
-  frigate: "Frigate",
   immich: "Immich",
 };
 
@@ -63,8 +62,8 @@ export function FamilyServices({ gateway, onError }: FamilyServicesProps) {
     <p className="muted">在对应服务中创建只读凭据，再粘贴到这里。Jarvis 只显示连接状态，不会回显秘密。</p>
     {credentialNotice && <p className="credential-notice" role="status">{credentialNotice}</p>}
     <form className="credential-form settings-credential-form" onSubmit={(event) => { void saveCredential(event).catch(onError); }}>
-      <div><select aria-label="家庭服务" value={credentialProvider} onChange={(event) => setCredentialProvider(event.target.value)}><option value="home-assistant">Home Assistant</option><option value="frigate">Frigate</option><option value="immich">Immich</option></select><input aria-label="连接标签" placeholder="连接标签（可选）" value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={120} /></div>
-      <input aria-label="服务凭据" type="password" autoComplete="new-password" placeholder={credentialProvider === "frigate" ? 'Bearer token 或 {"username":"…","password":"…"}' : "只读服务凭据"} value={credentialSecret} onChange={(event) => setCredentialSecret(event.target.value)} maxLength={16384} />
+      <div><select aria-label="家庭服务" value={credentialProvider} onChange={(event) => setCredentialProvider(event.target.value)}><option value="home-assistant">Home Assistant</option><option value="immich">Immich</option></select><input aria-label="连接标签" placeholder="连接标签（可选）" value={credentialLabel} onChange={(event) => setCredentialLabel(event.target.value)} maxLength={120} /></div>
+      <input aria-label="服务凭据" type="password" autoComplete="new-password" placeholder="只读服务凭据" value={credentialSecret} onChange={(event) => setCredentialSecret(event.target.value)} maxLength={16384} />
       <button disabled={!credentialSecret.trim()}>保存并验证</button>
     </form>
     {credentials.length ? <div className="credential-list">{credentials.map((item) => <div className="credential-item" key={item.id}><span><strong>{providerLabels[String(item.provider)] ?? String(item.provider)}</strong><small>{item.label} · {credentialStatus[item.id] === "connected" ? "连接已验证" : credentialStatus[item.id] === "failed" ? "已保存，验证失败" : credentialStatus[item.id] === "testing" ? "正在验证连接…" : "已加密保存"}</small></span><button type="button" className="quiet" onClick={() => void gateway.request("integration.credential.revoke", { credential_id: item.id }).then(() => { setCredentialStatus((current) => { const next = { ...current }; delete next[item.id]; return next; }); return refresh(); }).catch(onError)}>撤销</button></div>)}</div> : <p className="muted">{credentialsLoaded ? "尚未配置家庭服务连接。" : "正在读取家庭服务连接…"}</p>}

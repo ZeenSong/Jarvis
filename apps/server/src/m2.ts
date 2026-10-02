@@ -7,6 +7,7 @@ import {
   AgentManager,
   transaction,
   type Push,
+  type TaskRequest,
 } from "../../../packages/agent-manager/src/index.js";
 import { RuntimeRegistry } from "../../../packages/agent-runtime/src/index.js";
 import { ConversationService } from "../../../packages/conversation/src/index.js";
@@ -26,6 +27,27 @@ import {
 import { WorkspaceStore } from "./workspaces.js";
 import { ControlPlane } from "./control-plane.js";
 import { appDescriptorSchema, resolveAppLink } from "../../../packages/app-bridge/src/index.js";
+
+const taskCapabilitySchema = z.string().regex(/^[a-z][a-z0-9.*_-]{1,199}$/);
+const taskCreateSchema = z.object({
+  conversation_id: z.uuid().optional(),
+  workspace_id: z.uuid().optional(),
+  goal: z.string().trim().min(1).max(16000),
+  idempotency_key: z.string().min(1).max(128),
+  execution_mode: z.enum(["auto", "background", "durable"]).default("auto"),
+  required_capabilities: z.array(taskCapabilitySchema).max(32).default([]),
+  constraints: z.object({
+    max_risk: z.enum(["read", "write", "execute"]).default("read"),
+    workspace_required: z.boolean().default(false),
+  }).strict().default({ max_risk: "read", workspace_required: false }),
+}).strict();
+const legacyRunCreateSchema = z.object({
+  agent_id: z.string().regex(/^[\w.-]{1,100}$/),
+  conversation_id: z.uuid().optional(),
+  workspace_id: z.uuid().optional(),
+  goal: z.string().min(1).max(16000),
+  idempotency_key: z.string().min(1).max(128),
+}).strict();
 import { ownerUserId } from "./ownership.js";
 import { capabilitySchema, mergeCapabilities, parseCapabilityCatalog, type Capability } from "../../../packages/capability-registry/src/index.js";
 import { IntegrationCredentialStore } from "./integration-credentials.js";
@@ -150,8 +172,6 @@ const capabilityCatalog: Capability[] = [
   { id: "agent.run.read", kind: "kernel", risk: "read", approval_required: false },
   { id: "homeassistant.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
   { id: "homeassistant.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
-  { id: "frigate.events.read", kind: "mcp", risk: "read", approval_required: false, provider: "frigate" },
-  { id: "frigate.event.snapshot.read", kind: "mcp", risk: "read", approval_required: false, provider: "frigate" },
   { id: "immich.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
   { id: "immich.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
   { id: "schedule.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
@@ -222,11 +242,10 @@ export class M2 {
     const userId = owner ? await ownerUserId(this.db, owner) : undefined;
     const ownerFilter = owner ? " WHERE (requested_by=$1 OR requested_by_user_id=$2)" : "";
     const ownerValues = owner ? [owner, userId ?? null] : [];
-    const definitions = (
-      await this.db.query("SELECT * FROM agent_definitions WHERE id <> 'coding-agent' ORDER BY tier,id")
-    ).rows.map((definition: any) => definition.id === "ops-agent" && this.manager.registry.has("hermes")
-      ? { ...definition, runtime_type: "hermes" }
-      : definition);
+    const definitions = (await this.db.query("SELECT * FROM agent_definitions ORDER BY tier,id")).rows.map((definition: any) => ({
+      ...definition,
+      available: definition.tier === "core" || this.manager.registry.has(definition.runtime_type),
+    }));
     return {
       // Codex is exposed through Node Bridge capabilities, not as a user-facing Agent.
       definitions,
@@ -566,19 +585,46 @@ export class M2 {
         return (await this.definitions(device)).runs;
       case "task.list":
         return (await this.definitions(device)).runs;
-      case "task.create":
-        return this.handle("agent.run.create", p, device);
+      case "task.create": {
+        const input = taskCreateSchema.parse(p);
+        const request: TaskRequest = {
+          goal: input.goal,
+          execution_mode: input.execution_mode,
+          required_capabilities: [...new Set(input.required_capabilities)].sort(),
+          constraints: input.constraints,
+        };
+        const r = await transaction(this.db, async (c) => {
+          await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [device + ":" + input.idempotency_key]);
+          const old = (await c.query("SELECT *,request=$3::jsonb AS same FROM m2_idempotency WHERE device_id=$1 AND key=$2", [device, input.idempotency_key, input])).rows[0];
+          if (old) {
+            if (!old.same) throw Error("id_reused_with_different_request");
+            return old.response;
+          }
+          const selected = await this.manager.selectExecutor(c, request);
+          const repository = process.env.CODING_REPOSITORY;
+          const commit = process.env.CODING_COMMIT;
+          const run = await this.manager.create(c, {
+            agent_id: selected.definition.id,
+            conversation_id: input.conversation_id,
+            workspace_id: input.workspace_id,
+            goal: input.goal,
+            input: {
+              task: request,
+              routing: { executor_id: selected.definition.id, runtime_type: selected.definition.runtime_type },
+              ...(selected.config.timeout_ms ? { timeout_ms: selected.config.timeout_ms } : {}),
+              ...(selected.config.supports_workspace && repository && commit ? { workspace: { repository, commit } } : {}),
+              ...(selected.definition.runtime_config?.model ? { model: selected.definition.runtime_config.model } : {}),
+            },
+          }, device);
+          await c.query("INSERT INTO m2_idempotency(device_id,key,request,response) VALUES($1,$2,$3,$4)", [device, input.idempotency_key, input, run]);
+          return run;
+        });
+        this.push("agent.run.created", r);
+        this.push("task.created", { task_id: r.id, run_id: r.id, status: "queued" });
+        return r;
+      }
       case "agent.run.create": {
-        const input = z
-          .object({
-            agent_id: z.enum(["coding-agent", "ops-agent"]),
-            conversation_id: z.uuid().optional(),
-            workspace_id: z.uuid().optional(),
-            goal: z.string().min(1).max(16000),
-            idempotency_key: z.string().min(1).max(128),
-          })
-          .strict()
-          .parse(p);
+        const input = legacyRunCreateSchema.parse(p);
         const r = await transaction(this.db, async (c) => {
           await c.query(
             "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
@@ -594,20 +640,20 @@ export class M2 {
             if (!old.same) throw Error("id_reused_with_different_request");
             return old.response;
           }
+          const definition = (await c.query("SELECT runtime_config FROM agent_definitions WHERE id=$1 AND enabled", [input.agent_id])).rows[0];
+          if (!definition) throw Error("agent_not_found");
+          const taskConfig = definition.runtime_config?.task ?? {};
+          const repository = process.env.CODING_REPOSITORY;
+          const commit = process.env.CODING_COMMIT;
           const r = await this.manager.create(
             c,
             {
               ...input,
-              input:
-                input.agent_id === "coding-agent"
-                  ? {
-                      workspace: {
-                        repository: process.env.CODING_REPOSITORY,
-                        commit: process.env.CODING_COMMIT,
-                      },
-                      model: process.env.CODING_MODEL,
-                    }
-                  : {},
+              input: {
+                ...(taskConfig.supports_workspace === true && repository && commit ? { workspace: { repository, commit } } : {}),
+                ...(definition.runtime_config?.model || process.env.CODING_MODEL ? { model: definition.runtime_config?.model ?? process.env.CODING_MODEL } : {}),
+                ...(Number.isFinite(Number(taskConfig.timeout_ms)) ? { timeout_ms: Number(taskConfig.timeout_ms) } : {}),
+              },
             },
             device,
           );

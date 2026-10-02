@@ -89,7 +89,7 @@ export function ExecutionStream({ events, activities, developer }: { events: Exe
       return <li key={id} data-status={status} data-kind={kind}>
         <span className="execution-index" aria-hidden="true">{index + 1}</span>
         <span className="execution-node" aria-label={statusLabel(status)}>{status === "completed" ? "✓" : status === "failed" ? "!" : status === "cancelled" ? "×" : status === "running" ? "◌" : "·"}</span>
-        <div className="execution-body"><span className="execution-kind">{kindLabel(kind)}</span><details open={kind === "reasoning" && status === "running" ? true : undefined}>
+        <div className="execution-body"><span className="execution-kind">{kindLabel(kind)}</span><details>
           <summary><span title={title}>{title}</span><small>{statusLabel(status)}</small></summary>
           {content && <div className="reasoning-content"><MarkdownContent value={content} /></div>}
           {developer && evidence && <pre>{JSON.stringify(evidence, null, 2)}</pre>}

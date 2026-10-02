@@ -13,7 +13,7 @@ import sys
 
 from mcp.server import MCPServer
 
-from jarvis_provider import _mcp_call, _mcp_tools
+from jarvis_provider import _homeassistant_camera_snapshot, _homeassistant_cameras, _mcp_call, _mcp_tools
 
 
 PROVIDER = os.environ.get("MCP_PROVIDER", "").strip()
@@ -44,6 +44,19 @@ async def mcp_tool_call(context_token: str, tool_name: str, arguments: dict[str,
     if not tool_name.strip() or len(tool_name) > 200:
         return json.dumps({"error": "mcp_tool_invalid"}, ensure_ascii=False)
     return await _mcp_call(PROVIDER, context_token, tool_name, arguments)
+
+
+if PROVIDER == "homeassistant":
+    @server.tool()
+    async def camera_entities_list(context_token: str) -> str:
+        """实时列出 Home Assistant 当前所有 camera.* 实体；不要缓存或假定设备与区域。"""
+        return await _homeassistant_cameras(context_token)
+
+
+    @server.tool()
+    async def camera_snapshot_read(context_token: str, entity_id: str) -> str:
+        """读取 camera_entities_list 返回的相机实体当前画面，并发布为会话媒体资源。"""
+        return await _homeassistant_camera_snapshot(context_token, entity_id)
 
 
 async def main() -> None:

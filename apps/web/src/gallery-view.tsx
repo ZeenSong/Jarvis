@@ -40,7 +40,7 @@ export function GalleryView({ title, data, fallback, action, followup }: {
         <Thumbnail src={imageUrl(value)} title={value.title} /><span>{value.title}</span>
       </button>)}</div>
       <div className="gallery-actions">
-        <button type="button" onClick={() => followup?.("请从 Immich 为我查看更多符合刚才条件的猫咪照片，并简要说明每张照片的亮点。")}>查看更多</button>
+        <button type="button" onClick={() => followup?.("请从 Immich 为我查看更多符合当前筛选条件的照片，并简要说明每张照片的亮点。")}>查看更多</button>
         {items.length === 3 && items.every((photo) => photo.immich_asset_id) && <button type="button" onClick={() => favorite(items)}>收藏这三张</button>}
       </div>
     </>}

@@ -80,11 +80,12 @@ test("turn execution streams without polling, survives reload and fits mobile", 
   const secondTurn = page.locator(".jarvis-turn").last();
   await expect(secondTurn.locator(".execution-stream li")).toHaveCount(4);
   await expect(secondTurn.locator('.execution-stream li[data-status="running"]')).toHaveCount(2);
+  await expect(page.getByText("先读取今天的 Token 用量。")).toBeHidden();
+  const streamedReasoning = secondTurn.locator(".execution-stream li").first();
+  await streamedReasoning.locator("summary").click();
   await expect(page.getByText("先读取今天的 Token 用量。")).toBeVisible();
   await expect(page.getByText("正在核对小时趋势。", { exact: true })).toBeVisible();
-  const streamedReasoning = secondTurn.locator(".execution-stream li").first();
   await expect(streamedReasoning).toHaveAttribute("data-status", "completed");
-  await streamedReasoning.locator("summary").click();
   await expect(page.getByText("测试提供方正在核对小时趋势。")).toBeVisible();
   await expect(page.getByText("已核对小时趋势。")).toBeVisible();
   expect(messageRequest.reasoning_effort).toBe("high");
@@ -96,6 +97,7 @@ test("turn execution streams without polling, survives reload and fits mobile", 
   const restoredTurn = page.locator(".jarvis-turn").nth(1);
   await expect(restoredTurn.locator(".execution-stream li")).toHaveCount(4);
   await expect(restoredTurn.locator(".execution-stream li .execution-body summary span")).toHaveText(["继续分析趋势", "读取小时趋势", "对齐小时数据", "更新分析界面"]);
+  await expect(restoredTurn.getByText("测试提供方正在核对小时趋势。")).toBeHidden();
   expect(messageAdmissions).toBe(1);
   expect(calls.filter((topic) => topic === "conversation.get")).toHaveLength(reads + 1);
   await page.setViewportSize({ width: 390, height: 844 });

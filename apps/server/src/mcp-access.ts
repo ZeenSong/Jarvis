@@ -14,11 +14,10 @@ export const DEFAULT_MEMBER_CAPABILITIES = [
   "schedule.write",
   "conversation.write",
   "mcp.homeassistant.read",
-  "mcp.frigate.read",
   "mcp.immich.read",
 ] as const;
 
-export type McpProvider = "homeassistant" | "frigate" | "immich";
+export type McpProvider = "homeassistant" | "immich";
 
 function capability(provider: McpProvider, readOnly: boolean) {
   return `mcp.${provider}.${readOnly ? "read" : "write"}`;

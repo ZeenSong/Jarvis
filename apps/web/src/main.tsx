@@ -472,9 +472,9 @@ function App() {
                   <section className="block" key={d.id}>
                     <h3>{d.name}</h3>
                     <p>
-                      {d.role === "coding" ? "隔离代码执行" : "只读运维分析"}
+                      {d.description || `按能力路由的${d.role || "通用"}执行器`}
                     </p>
-                    <small>{d.runtime_type}</small>
+                    <small>{d.available === false ? "当前不可用" : d.runtime_type}</small>
                   </section>
                 ))}
             </div>
@@ -488,7 +488,7 @@ function App() {
               >
                 <span>{r.goal}</span>
                 <small>
-                  {r.agent_id} · {labels[r.status]}
+                  {labels[r.status]}
                 </small>
               </button>
             ))}

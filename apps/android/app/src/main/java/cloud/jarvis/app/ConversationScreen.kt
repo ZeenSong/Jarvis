@@ -166,8 +166,8 @@ private fun parseMarkdown(value: String): List<MarkdownBlock> {
         TextButton(onClick=openAi){Text("AI")}
         Card(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp)){Text("◈ Jarvis Core");Text("对话 · 委派 · 汇总")}}
         Text("领域智能体",style=MaterialTheme.typography.titleLarge)
-        hierarchy?.get("definitions")?.jsonArray?.filter {it.jsonObject.text("tier")=="managed" && it.jsonObject.text("id") != "coding-agent"}?.forEach {v->val d=v.jsonObject;Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(d.text("name"));Text(if(d.text("role")=="coding")"隔离代码执行" else "只读运维分析")}}}
+        hierarchy?.get("definitions")?.jsonArray?.filter {it.jsonObject.text("tier")=="managed"}?.forEach {v->val d=v.jsonObject;Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(d.text("name"));Text(d.text("description").ifBlank { "按能力路由的执行器" })}}}
         Text("任务与执行实例",style=MaterialTheme.typography.titleLarge)
-        hierarchy?.get("runs")?.jsonArray?.forEach {v->val r=v.jsonObject;Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(r.text("goal"));Text("${r.text("agent_id")} · ${display(r["status"])}");if(r["agent_instance_id"] !is JsonNull)Text("◇ Worker",style=MaterialTheme.typography.bodySmall);TextButton(onClick={openRun(r.text("id"))},modifier=Modifier.testTag("run-open-${r.text("id")}")){Text("查看任务")}}}}
+        hierarchy?.get("runs")?.jsonArray?.forEach {v->val r=v.jsonObject;Card(Modifier.fillMaxWidth()){Column(Modifier.padding(18.dp)){Text(r.text("goal"));Text(display(r["status"]));if(r["agent_instance_id"] !is JsonNull)Text("◇ Worker",style=MaterialTheme.typography.bodySmall);TextButton(onClick={openRun(r.text("id"))},modifier=Modifier.testTag("run-open-${r.text("id")}")){Text("查看任务")}}}}
     }
 }

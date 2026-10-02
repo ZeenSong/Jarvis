@@ -46,6 +46,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    x-casaos:
+      ports:
+        - container: "9000"
+          description: { en_US: Authentik login portal, zh_CN: Authentik 登录门户 }
 
   worker:
     image: ghcr.io/goauthentik/server:2025.8.4
@@ -66,3 +70,18 @@ services:
 
 volumes:
   authentik-postgres:
+
+x-casaos:
+  architectures: [amd64]
+  main: server
+  author: Jarvis
+  category: Utilities
+  description:
+    en_US: Identity provider used by Jarvis for OIDC login.
+    zh_CN: Jarvis OIDC 登录所使用的身份认证服务。
+  developer: Authentik
+  icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/authentik.png
+  index: /
+  port_map: "9000"
+  scheme: http
+  title: { en_US: Jarvis Authentik, zh_CN: Jarvis Authentik }

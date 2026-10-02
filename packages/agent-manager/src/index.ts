@@ -11,6 +11,56 @@ import {
   type AgentEvent,
 } from "../../agent-runtime/src/index.js";
 export type Push = (topic: string, payload: unknown) => void;
+export type TaskExecutionMode = "auto" | "background" | "durable";
+export type TaskRisk = "read" | "write" | "execute";
+export type TaskRequest = {
+  goal: string;
+  execution_mode: TaskExecutionMode;
+  required_capabilities: string[];
+  constraints: { max_risk: TaskRisk; workspace_required: boolean };
+};
+type TaskExecutorConfig = {
+  capabilities: string[];
+  modes: TaskExecutionMode[];
+  max_risk: TaskRisk;
+  supports_workspace: boolean;
+  priority: number;
+  timeout_ms?: number;
+};
+const riskRank: Record<TaskRisk, number> = { read: 0, write: 1, execute: 2 };
+const capabilityMatches = (offered: string, required: string) =>
+  offered === "*" || offered === required || (offered.endsWith(".*") && required.startsWith(offered.slice(0, -1)));
+function taskExecutorConfig(value: unknown): TaskExecutorConfig | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const task = (value as Record<string, unknown>).task;
+  if (!task || typeof task !== "object") return undefined;
+  const config = task as Record<string, unknown>;
+  const capabilities = Array.isArray(config.capabilities) ? config.capabilities.filter((item): item is string => typeof item === "string") : [];
+  const modes = Array.isArray(config.modes) ? config.modes.filter((item): item is TaskExecutionMode => ["auto", "background", "durable"].includes(String(item))) : [];
+  const maxRisk = ["read", "write", "execute"].includes(String(config.max_risk)) ? config.max_risk as TaskRisk : "read";
+  const priority = Number(config.priority ?? 0);
+  const timeout = Number(config.timeout_ms);
+  return {
+    capabilities,
+    modes: modes.length ? modes : ["auto", "background", "durable"],
+    max_risk: maxRisk,
+    supports_workspace: config.supports_workspace === true,
+    priority: Number.isFinite(priority) ? priority : 0,
+    ...(Number.isFinite(timeout) && timeout > 0 ? { timeout_ms: timeout } : {}),
+  };
+}
+export function rankTaskExecutors(definitions: any[], availableRuntimeTypes: Iterable<string>, request: TaskRequest) {
+  const available = new Set(availableRuntimeTypes);
+  return definitions.flatMap((definition: any) => {
+    const config = taskExecutorConfig(definition.runtime_config);
+    if (!config || !definition.enabled || definition.tier !== "managed" || !available.has(definition.runtime_type)) return [];
+    if (request.execution_mode !== "auto" && !config.modes.includes(request.execution_mode) && !config.modes.includes("auto")) return [];
+    if (riskRank[config.max_risk] < riskRank[request.constraints.max_risk]) return [];
+    if (request.constraints.workspace_required && !config.supports_workspace) return [];
+    if (!request.required_capabilities.every((required) => config.capabilities.some((offered) => capabilityMatches(offered, required)))) return [];
+    return [{ definition, config }];
+  }).sort((a, b) => b.config.priority - a.config.priority || String(a.definition.id).localeCompare(String(b.definition.id)));
+}
 async function ownerUserId(db: Database, owner: string) {
   if (owner.startsWith("user-")) return owner.slice(5) || null;
   const row = (await db.query("SELECT user_id::text FROM devices WHERE id=$1", [owner])).rows[0];
@@ -44,6 +94,13 @@ export class AgentManager {
     readonly prices: Prices = {},
     readonly onApproval?: (run: { id: string; requested_by: string }, event: AgentEvent) => Promise<void>,
   ) {}
+  async selectExecutor(c: PoolClient, request: TaskRequest) {
+    const definitions = (await c.query("SELECT * FROM agent_definitions WHERE enabled=true AND tier='managed' ORDER BY id")).rows;
+    const candidates = rankTaskExecutors(definitions, this.registry.types(), request);
+    const selected = candidates[0];
+    if (!selected) throw Error("task_executor_unavailable");
+    return selected;
+  }
   async recordUsage(
     p: {
       provider: string;
@@ -119,9 +176,7 @@ export class AgentManager {
     }
     if (definition.tier === "core" && p.parent_run_id)
       throw Error("invalid_core_parent");
-    const runtimeType = definition.id === "ops-agent" && this.registry.has("hermes")
-      ? "hermes"
-      : definition.runtime_type;
+    const runtimeType = definition.runtime_type;
     const run = (
       await c.query(
         `INSERT INTO agent_runs(id,agent_id,parent_run_id,conversation_id,requested_by,requested_by_user_id,durable_workspace_id,goal,runtime_type,status,depth,input_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11) RETURNING *`,
@@ -494,9 +549,7 @@ export class AgentManager {
       this.lastCleanup = Date.now();
       await this.recover(true);
     }
-    // Hermes is a first-class durable runtime when enabled; keep the legacy
-    // controller runtimes in the same scheduler for migration compatibility.
-    for (const type of ["codex", "pydantic", "hermes"]) {
+    for (const type of this.registry.types()) {
       if (this.active.has(type)) continue;
       const row = (
         await this.db.query(
@@ -527,11 +580,7 @@ export class AgentManager {
         "UPDATE agent_runs SET agent_instance_id=$2 WHERE id=$1",
         [run.id, instance],
       );
-      if (
-        run.runtime_type === "codex" &&
-        run.input_json.workspace?.repository &&
-        run.input_json.workspace?.commit
-      ) {
+      if (run.input_json.workspace?.repository && run.input_json.workspace?.commit) {
         const w = run.input_json.workspace;
         await this.db.query(
           "INSERT INTO workspaces(id,repository,commit_sha,expires_at) VALUES($1,$2,$3,now()+interval '24 hours') ON CONFLICT DO NOTHING",
@@ -567,9 +616,7 @@ export class AgentManager {
             .then(() => runtime!.cancel(started.id))
             .catch(() => {});
         },
-        run.runtime_type === "codex"
-          ? Number(process.env.CODING_TIMEOUT_MS ?? 1800000)
-          : Number(process.env.OPS_TIMEOUT_MS ?? 300000),
+        Number(run.input_json.timeout_ms ?? process.env.TASK_TIMEOUT_MS ?? 300000),
       );
       try {
         for await (const event of runtime.events(started.id))

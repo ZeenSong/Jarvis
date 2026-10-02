@@ -19,26 +19,20 @@ data:
     mcp_servers:
       jarvis:
         command: /opt/hermes/.venv/bin/python
-        args: ["/opt/jarvis-mcp/jarvis_provider.py"]
+        args: ["/opt/jarvis-source/jarvis_provider.py"]
         env:
           JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
           JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
       homeassistant:
         command: /opt/hermes/.venv/bin/python
-        args: ["/opt/jarvis-mcp/upstream_provider.py"]
+        args: ["/opt/jarvis-source/upstream_provider.py"]
         env:
           MCP_PROVIDER: "homeassistant"
           JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
           JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
-      frigate:
-        command: /opt/hermes/.venv/bin/python
-        args: ["/opt/jarvis-mcp/frigate_provider.py"]
-        env:
-          JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
-          JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
       immich:
         command: /opt/hermes/.venv/bin/python
-        args: ["/opt/jarvis-mcp/upstream_provider.py"]
+        args: ["/opt/jarvis-source/upstream_provider.py"]
         env:
           MCP_PROVIDER: "immich"
           JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
@@ -241,9 +235,17 @@ data:
 
 
     @server.tool()
-    def task_create(context_token: str, goal: str, idempotency_key: str) -> str:
-        """创建可追踪的只读 Ops 持久任务。每个新请求用唯一 idempotency_key；网络重试复用同一 key。返回 task_id/run_id。"""
-        return _call("task_create", context_token, goal=goal, idempotency_key=idempotency_key)
+    def task_create(
+        context_token: str,
+        goal: str,
+        idempotency_key: str,
+        execution_mode: Literal["auto", "background", "durable"] = "auto",
+        required_capabilities: list[str] | None = None,
+        max_risk: Literal["read", "write", "execute"] = "read",
+        workspace_required: bool = False,
+    ) -> str:
+        """创建可追踪的持久任务，由调度器按目标、能力和约束选择执行者。简单即时请求不要创建任务。"""
+        return _call("task_create", context_token, goal=goal, idempotency_key=idempotency_key, execution_mode=execution_mode, required_capabilities=required_capabilities or [], constraints={"max_risk": max_risk, "workspace_required": workspace_required})
 
 
     @server.tool()
@@ -338,75 +340,6 @@ data:
 
     if __name__ == "__main__":
         main()
-  frigate_provider.py: |
-    """Policy-gated Frigate MCP entry point.
-
-    Frigate is an external household service, not a Jarvis-kernel capability.
-    """
-
-    from __future__ import annotations
-
-    import asyncio
-    import os
-    import sys
-
-    from mcp.server import MCPServer
-
-    from jarvis_provider import _call, _call_json
-
-
-    PROVIDER = "frigate"
-
-
-    server = MCPServer(
-        PROVIDER,
-        instructions=(
-            "Jarvis policy-gated Frigate MCP. Every call requires the exact context_token "
-            "from the Jarvis system message. Jarvis checks the current household member "
-            "capability before reading camera events or snapshots."
-        ),
-    )
-
-
-    async def _authorize(context_token: str, tool_name: str) -> None:
-        await asyncio.to_thread(
-            _call_json,
-            "mcp_authorize",
-            context_token,
-            provider=PROVIDER,
-            tool_name=tool_name,
-            read_only=True,
-        )
-
-
-    @server.tool()
-    async def frigate_events_read(context_token: str, after: float | None = None, before: float | None = None, limit: int = 40) -> str:
-        """读取 Frigate 事件摘要。"""
-        await _authorize(context_token, "frigate_events_read")
-        arguments: dict[str, object] = {"limit": limit}
-        if after is not None:
-            arguments["after"] = after
-        if before is not None:
-            arguments["before"] = before
-        return await asyncio.to_thread(_call, "frigate_events_read", context_token, **arguments)
-
-
-    @server.tool()
-    async def frigate_event_snapshot_read(context_token: str, event_id: str) -> str:
-        """读取 Frigate 事件截图。"""
-        await _authorize(context_token, "frigate_event_snapshot_read")
-        return await asyncio.to_thread(_call, "frigate_event_snapshot_read", context_token, event_id=event_id)
-
-
-    async def main() -> None:
-        if not os.environ.get("JARVIS_BRIDGE_KEY"):
-            print("JARVIS_BRIDGE_KEY is required", file=sys.stderr)
-            raise SystemExit(2)
-        await server.run_stdio_async()
-
-
-    if __name__ == "__main__":
-        asyncio.run(main())
   upstream_provider.py: |
     """Policy-gated MCP entry point for one household upstream service."""
 
@@ -533,7 +466,7 @@ spec:
               set_key(profile_env, "JARVIS_BRIDGE_KEY", os.environ["JARVIS_BRIDGE_KEY"])
               soul_path = os.path.join(profile_dir, "SOUL.md")
               with open(soul_path, "w", encoding="utf-8") as soul:
-                  soul.write("You are Jarvis, the user's personal cloud coordinator. Use your configured Hermes Skills, MCP servers, and tools. Use the Jarvis MCP server for authoritative Jarvis state, permissions, UI views, and durable tasks. When temporarily saving a returned image, use /opt/data/media/tmp and return it with the exact MEDIA:/opt/data/media/tmp/<filename> marker. Never accumulate media in /opt/data root. Be concise, truthful, and never invent unavailable state.\n")
+                  soul.write("You are Jarvis, the user's personal cloud coordinator. Use your configured Hermes Skills, MCP servers, and tools. Use the Jarvis MCP server for authoritative Jarvis state, permissions, UI views, and durable tasks. Preserve MEDIA_RESOURCE markers returned by approved photo tools. For Home Assistant cameras, discover the current camera entities at request time and never assume or cache a device, entity, or area. Never create public photo sharing links or expose local filesystem paths. Be concise, truthful, and never invent unavailable state.\n")
               meta_path = os.path.join(profile_dir, "profile.yaml")
               try:
                   with open(meta_path, encoding="utf-8") as meta_file:
@@ -593,7 +526,7 @@ spec:
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
       containers:
         - name: hermes
-          image: jarvis-hermes-dashboard:20260929-reasoning-stream
+          image: jarvis-hermes-dashboard:20261001-ha-camera-r3
           imagePullPolicy: IfNotPresent
           resources:
             requests: { cpu: 100m, memory: 512Mi }
@@ -638,7 +571,7 @@ spec:
             - { name: data, mountPath: /opt/data }
             - { name: mcp, mountPath: /opt/jarvis-mcp, readOnly: true }
         - name: media-janitor
-          image: jarvis-hermes-dashboard:20260929-reasoning-stream
+          image: jarvis-hermes-dashboard:20261001-ha-camera-r3
           imagePullPolicy: IfNotPresent
           command: ["/opt/hermes/.venv/bin/python", "/opt/jarvis-mcp/media_janitor.py"]
           env:

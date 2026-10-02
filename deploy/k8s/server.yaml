@@ -33,7 +33,7 @@ spec:
         supplementalGroups: [10000]
       initContainers:
         - name: prepare-hermes-media
-          image: jarvis-server:0.3.2-mcp-20260928-r5
+          image: jarvis-server:0.3.2-ha-camera-20261001-r3
           imagePullPolicy: IfNotPresent
           command: [node, -e]
           args:
@@ -44,7 +44,7 @@ spec:
               mountPath: /hermes-data
       containers:
         - name: server
-          image: jarvis-server:0.3.2-m33-20260929-r4
+          image: jarvis-server:0.3.2-ha-camera-20261001-r3
           imagePullPolicy: IfNotPresent
           env:
             - name: DATABASE_URL
@@ -92,17 +92,6 @@ spec:
             - name: HOME_ASSISTANT_TOKEN
               valueFrom:
                 secretKeyRef: { name: jarvis-integrations, key: home-assistant-token, optional: true }
-            - name: FRIGATE_URL
-              value: https://100.77.157.73:8971
-            - name: FRIGATE_TOKEN
-              valueFrom:
-                secretKeyRef: { name: jarvis-integrations, key: frigate-token, optional: true }
-            - name: FRIGATE_USERNAME
-              valueFrom:
-                secretKeyRef: { name: jarvis-integrations, key: frigate-username, optional: true }
-            - name: FRIGATE_PASSWORD
-              valueFrom:
-                secretKeyRef: { name: jarvis-integrations, key: frigate-password, optional: true }
             - name: IMMICH_URL
               value: http://100.77.157.73:2283
             - name: IMMICH_API_KEY

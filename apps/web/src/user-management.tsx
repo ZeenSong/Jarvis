@@ -15,7 +15,6 @@ type JarvisUser = {
 const capabilityLabels: Array<[string, string]> = [
   ["mcp.homeassistant.read", "Home Assistant 读取"],
   ["mcp.homeassistant.write", "Home Assistant 控制"],
-  ["mcp.frigate.read", "Frigate 读取"],
   ["mcp.immich.read", "Immich 读取"],
   ["mcp.immich.write", "Immich 修改"],
   ["schedule.write", "定时任务"],

@@ -2,13 +2,37 @@ import { randomUUID } from "node:crypto";
 import { createHermesContextToken, HermesClient, type HermesTool } from "../../hermes-bridge/src/index.js";
 import type { AgentEvent, AgentInput, AgentRunInput, AgentRuntime, RuntimeRun } from "../../agent-runtime/src/index.js";
 
-type Run = { id: string; owner?: string; events: AgentEvent[]; waiters: Array<() => void>; abort: AbortController; done: boolean };
+type Run = { id: string; owner?: string; task?: AgentRunInput["task"]; events: AgentEvent[]; waiters: Array<() => void>; abort: AbortController; done: boolean };
 export type HermesToolBridge = {
   tools: HermesTool[];
   invoke: (name: string, args: Record<string, unknown>, owner?: string) => Promise<unknown>;
 };
+export function taskScopes(task?: AgentRunInput["task"]) {
+  const scopes = new Set(["task.execute"]);
+  const capabilities = task?.required_capabilities ?? ["system.read"];
+  const writable = task?.constraints.max_risk === "write" || task?.constraints.max_risk === "execute";
+  for (const capability of capabilities) {
+    if (capability === "analysis") continue;
+    if (capability.startsWith("system.")) scopes.add("system.read");
+    if (capability.startsWith("home.")) {
+      scopes.add("home.read");
+      scopes.add("mcp.homeassistant.read");
+      if (writable) scopes.add("mcp.homeassistant.write");
+    }
+    if (capability.startsWith("photo.")) {
+      scopes.add("photo.read");
+      scopes.add("mcp.immich.read");
+      if (writable) scopes.add("mcp.immich.write");
+    }
+    if (capability.startsWith("mcp.homeassistant.")) scopes.add(`mcp.homeassistant.${writable ? "write" : "read"}`);
+    if (capability.startsWith("mcp.immich.")) scopes.add(`mcp.immich.${writable ? "write" : "read"}`);
+    if (writable && capability.startsWith("schedule.")) scopes.add("schedule.write");
+    if (writable && capability.startsWith("conversation.")) scopes.add("conversation.write");
+  }
+  return [...scopes].sort();
+}
 
-/** Durable-task adapter for a Hermes subagent. It deliberately exposes no shell or provider credentials. */
+/** Durable-task adapter for a capability-routed Hermes executor. */
 export class HermesRuntime implements AgentRuntime {
   private readonly runs = new Map<string, Run>();
   private bridge?: HermesToolBridge;
@@ -17,7 +41,7 @@ export class HermesRuntime implements AgentRuntime {
   setToolBridge(bridge: HermesToolBridge) { this.bridge = bridge; }
   async start(input: AgentRunInput): Promise<RuntimeRun> {
     const id = randomUUID();
-    const run: Run = { id, owner: input.owner_device_id, events: [], waiters: [], abort: new AbortController(), done: false };
+    const run: Run = { id, owner: input.owner_device_id, task: input.task, events: [], waiters: [], abort: new AbortController(), done: false };
     this.runs.set(id, run);
     void this.execute(run, input.goal, run.owner);
     return { id };
@@ -29,12 +53,15 @@ export class HermesRuntime implements AgentRuntime {
   private async execute(run: Run, goal: string, owner?: string) {
     this.push(run, { type: "agent.run.started", payload: { runtime: "hermes" } });
     try {
+      const taskPolicy = run.task
+        ? `执行模式：${run.task.execution_mode}；能力范围：${run.task.required_capabilities.join(", ") || "通用分析"}；最高风险：${run.task.constraints.max_risk}；${run.task.constraints.workspace_required ? "需要工作区" : "不要求工作区"}。`
+        : "执行模式：兼容任务；最高风险：read。";
       const messages: any[] = [
-        { role: "system", content: "你是 Jarvis Ops Hermes 子智能体。仅进行只读运维分析，不执行命令、不修改系统；结论必须简洁并标注不确定性。" },
+        { role: "system", content: `你是 Jarvis 的持久任务执行器。围绕用户目标工作，只使用任务上下文授予的能力并遵守风险上限；不要假定某个固定领域或设备。任务缺少关键信息时明确说明，结论必须可验证并标注不确定性。${taskPolicy}` },
         { role: "user", content: goal },
       ];
       const contextToken = process.env.HERMES_BRIDGE_KEY && owner
-        ? createHermesContextToken(process.env.HERMES_BRIDGE_KEY, owner, run.id)
+        ? createHermesContextToken(process.env.HERMES_BRIDGE_KEY, owner, run.id, 600, { run: run.id, scopes: taskScopes(run.task) })
         : undefined;
       const completeOptions = {
         sessionId: run.id,

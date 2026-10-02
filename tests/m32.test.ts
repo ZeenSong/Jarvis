@@ -7,7 +7,7 @@ import { activityGroupKey, canTransitionActivity, canTransitionTurn, summarizeAc
 import { oidcAuthorizationUrl, upsertOidcIdentity } from "../apps/server/src/oidc.js";
 import { readFileSync } from "node:fs";
 import { JarvisAssistantAdapter } from "../apps/web/src/assistant-ui-adapter.js";
-import { frigateEventSnapshot, frigateEvents, homeAssistantState, immichSearch } from "../apps/server/src/hermes-integrations.js";
+import { homeAssistantState, immichSearch } from "../apps/server/src/hermes-integrations.js";
 
 test("M3.2 context token carries actor, household, session and scopes", () => {
   const token = createHermesContextToken("secret", "device-1", "session-1", 600, { actor: "user-1", household: "household-1", run: "run-1", scopes: ["home.read"] });
@@ -24,11 +24,11 @@ test("M3.2 turn and activity state machines reject terminal regressions and grou
   assert.equal(canTransitionActivity("waiting_approval", "completed"), true);
   assert.equal(canTransitionActivity("failed", "running"), false);
   assert.equal(canTransitionActivity("completed", "waiting_approval"), false);
-  assert.equal(activityGroupKey("frigate.get_snapshot"), "frigate get snapshot");
+  assert.equal(activityGroupKey("homeassistant.camera_snapshot"), "homeassistant camera snapshot");
   assert.deepEqual(summarizeActivityGroup([
-    { capability: "frigate.list_events", status: "completed" },
-    { capability: "frigate.get_snapshot", status: "running" },
-  ]), [{ key: "frigate list events", count: 1, completed: 1, failed: 0, running: 0 }, { key: "frigate get snapshot", count: 1, completed: 0, failed: 0, running: 1 }]);
+    { capability: "homeassistant.camera_list", status: "completed" },
+    { capability: "homeassistant.camera_snapshot", status: "running" },
+  ]), [{ key: "homeassistant camera list", count: 1, completed: 1, failed: 0, running: 0 }, { key: "homeassistant camera snapshot", count: 1, completed: 0, failed: 0, running: 1 }]);
 });
 
 test("M3.2 OIDC authorization uses discovery and PKCE without exposing secrets", async () => {
@@ -45,10 +45,10 @@ test("M3.2 deployed Hermes provider exposes the kernel and transparent upstream 
   const manifest = readFileSync(new URL("../deploy/k8s/hermes.yaml", import.meta.url), "utf8");
   const jarvisSource = readFileSync(new URL("../apps/hermes-mcp/jarvis_provider.py", import.meta.url), "utf8");
   assert.match(manifest, /Hermes native Skills, toolsets and configured MCP servers are/);
-  assert.match(manifest, /homeassistant:[\s\S]*?upstream_provider\.py/);
-  assert.match(manifest, /frigate:[\s\S]*?frigate_provider\.py/);
-  assert.match(manifest, /immich:[\s\S]*?upstream_provider\.py/);
-  assert.match(manifest, /frigate_provider\.py: \|/);
+  assert.match(manifest, /homeassistant:[\s\S]*?\/opt\/jarvis-source\/upstream_provider\.py/);
+  assert.match(manifest, /immich:[\s\S]*?\/opt\/jarvis-source\/upstream_provider\.py/);
+  assert.doesNotMatch(manifest.match(/config\.yaml: \|([\s\S]*?)  jarvis_provider\.py: \|/)?.[1] ?? "", /\/opt\/jarvis-mcp\/(?:jarvis|upstream)_provider\.py/);
+  assert.doesNotMatch(manifest, /frigate_provider\.py|FRIGATE_/);
   assert.match(manifest, /upstream_provider\.py: \|/);
   assert.match(manifest, /media_janitor\.py: \|/);
   assert.match(manifest, /name: media-janitor/);
@@ -59,11 +59,14 @@ test("M3.2 deployed Hermes provider exposes the kernel and transparent upstream 
   for (const tool of ["mcp_tools_list", "mcp_tool_call", "schedule_create", "conversation_question_create"]) {
     assert.match(manifest, new RegExp(`def ${tool}\\(`));
   }
-  assert.doesNotMatch(jarvisSource, /def frigate_events_read\(/);
-  assert.doesNotMatch(jarvisSource, /def frigate_event_snapshot_read\(/);
+  assert.match(jarvisSource, /def _homeassistant_cameras\(/);
+  assert.match(jarvisSource, /\/api\/camera_proxy\//);
   assert.doesNotMatch(manifest, /def home_assistant_state\(/);
   assert.doesNotMatch(manifest, /def immich_photo_search\(/);
   assert.match(manifest, /mcp_authorize/);
+  assert.match(jarvisSource, /immich_assets_download_thumbnail/);
+  assert.match(jarvisSource, /MEDIA_RESOURCE:/);
+  assert.match(jarvisSource, /thumbnail\?size=preview/);
 });
 
 test("M3.2 Authentik PoC is Docker-first and keeps secrets in environment", () => {
@@ -192,12 +195,11 @@ test("M3.2 identity, MCP authorization, Activity, Approval and Question integrat
   }
 });
 
-test("M3.2 Hermes adapters exercise bounded HA, Frigate and Immich provider contracts", async () => {
-  const oldEnv = { HOME_ASSISTANT_URL: process.env.HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN: process.env.HOME_ASSISTANT_TOKEN, FRIGATE_URL: process.env.FRIGATE_URL, IMMICH_URL: process.env.IMMICH_URL, IMMICH_API_KEY: process.env.IMMICH_API_KEY };
+test("M3.2 Hermes adapters exercise bounded HA and Immich provider contracts", async () => {
+  const oldEnv = { HOME_ASSISTANT_URL: process.env.HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN: process.env.HOME_ASSISTANT_TOKEN, IMMICH_URL: process.env.IMMICH_URL, IMMICH_API_KEY: process.env.IMMICH_API_KEY };
   const oldFetch = globalThis.fetch;
   process.env.HOME_ASSISTANT_URL = "http://ha.test";
   process.env.HOME_ASSISTANT_TOKEN = "ha-service-secret";
-  process.env.FRIGATE_URL = "http://frigate.test";
   process.env.IMMICH_URL = "http://immich.test";
   process.env.IMMICH_API_KEY = "immich-service-secret";
   globalThis.fetch = (async (input, init) => {
@@ -206,11 +208,6 @@ test("M3.2 Hermes adapters exercise bounded HA, Frigate and Immich provider cont
       assert.equal((init?.headers as Record<string, string>)?.Authorization, "Bearer ha-service-secret");
       return Response.json([{ entity_id: "light.kitchen", state: "on", attributes: { friendly_name: "Kitchen" } }]);
     }
-    if (url.includes("/api/events?")) {
-      if (url.includes("limit=2")) assert.equal((init?.headers as Record<string, string>)?.Authorization, "Basic dmlld2VyOnJlYWRvbmx5");
-      return Response.json([{ id: "event-1", camera: "front", label: "person", start_time: 1, has_clip: true }]);
-    }
-    if (url.includes("/api/events/event-1/snapshot.jpg")) return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), { status: 200, headers: { "content-type": "image/png" } });
     if (url.endsWith("/api/search/metadata")) {
       assert.equal((init?.headers as Record<string, string>)?.["x-api-key"], "immich-service-secret");
       return Response.json({ assets: { items: [{ id: "00000000-0000-4000-8000-000000000001", type: "IMAGE", originalFileName: "front.jpg", fileCreatedAt: "2026-01-01T00:00:00.000Z", isFavorite: false, exifInfo: null }], nextPage: null, total: 1 } });
@@ -219,9 +216,6 @@ test("M3.2 Hermes adapters exercise bounded HA, Frigate and Immich provider cont
   }) as typeof fetch;
   try {
     assert.equal((await homeAssistantState()).entities[0].entity_id, "light.kitchen");
-    assert.equal((await frigateEvents({ limit: 1 })).events[0].camera, "front");
-    assert.equal((await frigateEvents({ limit: 2 }, { token: JSON.stringify({ username: "viewer", password: "readonly" }) })).events[0].camera, "front");
-    assert.equal((await frigateEventSnapshot({ event_id: "event-1" })).contentType, "image/png");
     assert.equal((await immichSearch({ page: 1, size: 1 })).photos[0].name, "front.jpg");
   } finally {
     globalThis.fetch = oldFetch;

@@ -1,0 +1,4899 @@
+{
+  "title": "家 · 此刻",
+  "views": [
+    {
+      "title": "首页",
+      "path": "home",
+      "icon": "mdi:home-outline",
+      "type": "sections",
+      "max_columns": 3,
+      "theme": "Quiet Home",
+      "dense_section_placement": true,
+      "sections": [
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "<font color=\"#81908b\">H O M E &nbsp; / &nbsp; 家庭中枢</font>\n# {% if now().hour < 11 %}早上好{% elif now().hour < 18 %}下午好{% else %}晚上好{% endif %}，Joshua\n{{ now().strftime('%m 月 %d 日') }} · 家的此刻，一目了然。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px; background: #e6eee6; color: #253d35; }"
+              }
+            },
+            {
+              "type": "markdown",
+              "content": "{% set cams = expand(['binary_sensor.bedroom_camera_status', 'binary_sensor.garden_corridor_camera_status', 'binary_sensor.garage_camera_status', 'binary_sensor.front_gate_camera_status']) %}\n## {{ cams | selectattr('state','eq','on') | list | count }} / 4\n摄像头事件连接在线\n\n{% set off = cams | rejectattr('state','eq','on') | map(attribute='name') | list %}{% if off %}⚠️ 待检查：{{ off | join('、') }}{% else %}所有摄像头事件连接正常{% endif %}",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "markdown",
+              "content": "{% set active = expand(['binary_sensor.bedroom_camera_motion_detection', 'binary_sensor.garden_corridor_camera_motion_detection', 'binary_sensor.garage_camera_motion_detection', 'binary_sensor.front_gate_camera_motion_detection']) | selectattr('state','eq','on') | list %}\n## {{ active | count }} 处活动\n{% if active %}{{ active | map(attribute='name') | join('、') }}{% else %}目前没有移动侦测触发。请结合上方事件连接状态判断覆盖情况。{% endif %}",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "heading",
+              "heading": "我的空间",
+              "icon": "mdi:floor-plan"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.bedroom_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#bedroom"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#bedroom"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #c9d8ef !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garden_corridor_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garden_corridor"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garden_corridor"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #c6ddcf !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garage_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garage"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garage"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #e8d6bd !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "大门",
+              "icon": "mdi:door",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.front_gate_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#front_gate"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#front_gate"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #ddcfee !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "heading",
+              "heading": "最近动态",
+              "icon": "mdi:history"
+            },
+            {
+              "type": "logbook",
+              "entities": [
+                "binary_sensor.bedroom_camera_motion_detection",
+                "binary_sensor.garden_corridor_camera_motion_detection",
+                "binary_sensor.garage_camera_motion_detection",
+                "binary_sensor.front_gate_camera_motion_detection"
+              ],
+              "hours_to_show": 12,
+              "card_mod": {
+                "style": "ha-card { border: 0; border-radius: 24px; }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "Joshua · 在家状态",
+              "icon": "mdi:account-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "person.joshua"
+            },
+            {
+              "type": "markdown",
+              "content": "在家状态尚未确定时显示未知。\n\n灯光与温湿度设备接入后，可在这里查看。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#bedroom",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.bedroom_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garden_corridor",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garden_corridor_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garage",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garage_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#front_gate",
+              "name": "大门",
+              "icon": "mdi:door",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.front_gate_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "horizontal-buttons-stack",
+              "auto_order": false,
+              "styles": ".bubble-button { background: var(--card-background-color) !important; }",
+              "1_name": "首页",
+              "1_link": "/family-home/home",
+              "1_icon": "mdi:home-outline",
+              "2_name": "房间",
+              "2_link": "/family-home/rooms",
+              "2_icon": "mdi:floor-plan",
+              "3_name": "安防",
+              "3_link": "/family-home/security",
+              "3_icon": "mdi:shield-home-outline",
+              "4_name": "更多",
+              "4_link": "/family-home/more",
+              "4_icon": "mdi:dots-horizontal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "房间",
+      "path": "rooms",
+      "icon": "mdi:floor-plan",
+      "type": "sections",
+      "max_columns": 3,
+      "theme": "Quiet Home",
+      "dense_section_placement": true,
+      "sections": [
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "## 室内\n进入房间，查看设备。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.bedroom_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#bedroom"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#bedroom"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #c9d8ef !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "客厅",
+              "icon": "mdi:sofa-outline",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#living-room"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#living-room"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #eadfce !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "厨房",
+              "icon": "mdi:countertop-outline",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#kitchen"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#kitchen"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #eed8ce !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "## 室外\n花园、车库与家门口。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garden_corridor_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garden_corridor"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garden_corridor"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #c6ddcf !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garage_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garage"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garage"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #e8d6bd !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "大门",
+              "icon": "mdi:door",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.front_gate_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#front_gate"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#front_gate"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #ddcfee !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "## 小提示\n点击空间打开设备面板。\n\n摄像头画面、云台方向和常用设置都在同一个地方。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#living-room",
+              "name": "客厅",
+              "icon": "mdi:sofa-outline",
+              "cards": [
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "客厅路由器",
+                  "icon": "mdi:router-wireless",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.hua_wei_lu_you_ws5200zeng_qiang_ban_wan_status"
+                },
+                {
+                  "type": "markdown",
+                  "content": "暂无灯光、空调或温湿度设备。",
+                  "card_mod": {
+                    "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#kitchen",
+              "name": "厨房",
+              "icon": "mdi:countertop-outline",
+              "cards": [
+                {
+                  "type": "markdown",
+                  "content": "厨房还没有接入设备。\n\n添加设备并分配到厨房后，再添加常用控制。",
+                  "card_mod": {
+                    "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#bedroom",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.bedroom_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garden_corridor",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garden_corridor_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garage",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garage_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#front_gate",
+              "name": "大门",
+              "icon": "mdi:door",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.front_gate_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "horizontal-buttons-stack",
+              "auto_order": false,
+              "styles": ".bubble-button { background: var(--card-background-color) !important; }",
+              "1_name": "首页",
+              "1_link": "/family-home/home",
+              "1_icon": "mdi:home-outline",
+              "2_name": "房间",
+              "2_link": "/family-home/rooms",
+              "2_icon": "mdi:floor-plan",
+              "3_name": "安防",
+              "3_link": "/family-home/security",
+              "3_icon": "mdi:shield-home-outline",
+              "4_name": "更多",
+              "4_link": "/family-home/more",
+              "4_icon": "mdi:dots-horizontal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "安防",
+      "path": "security",
+      "icon": "mdi:shield-home-outline",
+      "type": "sections",
+      "max_columns": 2,
+      "theme": "Quiet Home",
+      "dense_section_placement": true,
+      "sections": [
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "SD 卡录像回看",
+              "icon": "mdi:filmstrip",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/family-home/recordings"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/family-home/recordings"
+                }
+              }
+            },
+            {
+              "type": "markdown",
+              "content": "按日期、时间或事件回看摄像头存储卡中的录像。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            }
+          ],
+          "column_span": 2
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.bedroom_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#bedroom"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#bedroom"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #c9d8ef !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "picture-entity",
+              "entity": "camera.bedroom_camera",
+              "camera_view": "live",
+              "show_name": false,
+              "show_state": false,
+              "tap_action": {
+                "action": "more-info"
+              },
+              "card_mod": {
+                "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "移动侦测",
+              "icon": "mdi:motion-sensor",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.bedroom_camera_motion_detection"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "查看画面与云台",
+              "icon": "mdi:camera-control",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#bedroom"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#bedroom"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garden_corridor_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garden_corridor"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garden_corridor"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #c6ddcf !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "picture-entity",
+              "entity": "camera.garden_corridor_camera",
+              "camera_view": "live",
+              "show_name": false,
+              "show_state": false,
+              "tap_action": {
+                "action": "more-info"
+              },
+              "card_mod": {
+                "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "移动侦测",
+              "icon": "mdi:motion-sensor",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garden_corridor_camera_motion_detection"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "查看画面与云台",
+              "icon": "mdi:camera-control",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garden_corridor"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garden_corridor"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garage_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garage"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garage"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #e8d6bd !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "picture-entity",
+              "entity": "camera.garage_camera",
+              "camera_view": "live",
+              "show_name": false,
+              "show_state": false,
+              "tap_action": {
+                "action": "more-info"
+              },
+              "card_mod": {
+                "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "移动侦测",
+              "icon": "mdi:motion-sensor",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.garage_camera_motion_detection"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "查看画面与云台",
+              "icon": "mdi:camera-control",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#garage"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#garage"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "大门",
+              "icon": "mdi:door",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.front_gate_camera_status",
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#front_gate"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#front_gate"
+                }
+              },
+              "styles": ".bubble-button-background { opacity: 1 !important; background: #ddcfee !important; } .bubble-name, .bubble-state, .bubble-icon { color: #243a36 !important; }"
+            },
+            {
+              "type": "picture-entity",
+              "entity": "camera.front_gate_camera",
+              "camera_view": "live",
+              "show_name": false,
+              "show_state": false,
+              "tap_action": {
+                "action": "more-info"
+              },
+              "card_mod": {
+                "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "移动侦测",
+              "icon": "mdi:motion-sensor",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "binary_sensor.front_gate_camera_motion_detection"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "查看画面与云台",
+              "icon": "mdi:camera-control",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "#front_gate"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "#front_gate"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#bedroom",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.bedroom_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garden_corridor",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garden_corridor_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garage",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garage_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#front_gate",
+              "name": "大门",
+              "icon": "mdi:door",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.front_gate_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "horizontal-buttons-stack",
+              "auto_order": false,
+              "styles": ".bubble-button { background: var(--card-background-color) !important; }",
+              "1_name": "首页",
+              "1_link": "/family-home/home",
+              "1_icon": "mdi:home-outline",
+              "2_name": "房间",
+              "2_link": "/family-home/rooms",
+              "2_icon": "mdi:floor-plan",
+              "3_name": "安防",
+              "3_link": "/family-home/security",
+              "3_icon": "mdi:shield-home-outline",
+              "4_name": "更多",
+              "4_link": "/family-home/more",
+              "4_icon": "mdi:dots-horizontal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "更多",
+      "path": "more",
+      "icon": "mdi:dots-horizontal",
+      "type": "sections",
+      "max_columns": 3,
+      "theme": "Quiet Home",
+      "dense_section_placement": true,
+      "sections": [
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "## 家庭管理\n设备、空间与自动化。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "设备与服务",
+              "icon": "mdi:devices",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/config/integrations"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/config/integrations"
+                }
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "区域与标签",
+              "icon": "mdi:map-marker-radius-outline",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/config/areas/dashboard"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/config/areas/dashboard"
+                }
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "自动化",
+              "icon": "mdi:robot-outline",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/config/automation/dashboard"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/config/automation/dashboard"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "## 记录与维护\n回看变化，保持连接。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "活动记录",
+              "icon": "mdi:history",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/logbook"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/logbook"
+                }
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "历史趋势",
+              "icon": "mdi:chart-line",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/history"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/history"
+                }
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "HACS",
+              "icon": "mdi:store-outline",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/hacs/dashboard"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/hacs/dashboard"
+                }
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "name",
+              "name": "备份",
+              "icon": "mdi:backup-restore",
+              "card_layout": "large",
+              "show_state": false,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "tap_action": {
+                "action": "navigate",
+                "navigation_path": "/config/backup/overview"
+              },
+              "button_action": {
+                "tap_action": {
+                  "action": "navigate",
+                  "navigation_path": "/config/backup/overview"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "markdown",
+              "content": "## 随身设备",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "ALT-AL10 · 电量",
+              "icon": "mdi:cellphone",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "sensor.alt_al10_battery_level"
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "button",
+              "button_type": "state",
+              "name": "NOH-AN00 · 电量",
+              "icon": "mdi:cellphone",
+              "card_layout": "large",
+              "show_state": true,
+              "grid_options": {
+                "columns": 12,
+                "rows": 1
+              },
+              "entity": "sensor.noh_an00_battery_level"
+            },
+            {
+              "type": "markdown",
+              "content": "## 家庭中枢\n实时状态与自动化由 Home Assistant 管理。\n\n摄像头连续录像与目标识别已暂停。",
+              "card_mod": {
+                "style": "ha-card { border: 0; box-shadow: none; border-radius: 24px; padding: 8px;  }"
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#bedroom",
+              "name": "卧室",
+              "icon": "mdi:bed-king-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.bedroom_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.bedroom_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.bedroom_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.bedroom_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.bedroom_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garden_corridor",
+              "name": "花园走廊",
+              "icon": "mdi:flower-outline",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garden_corridor_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garden_corridor_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garden_corridor_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garden_corridor_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garden_corridor_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#garage",
+              "name": "车库",
+              "icon": "mdi:garage-variant",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.garage_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.garage_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.garage_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.garage_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.garage_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "pop-up",
+              "hash": "#front_gate",
+              "name": "大门",
+              "icon": "mdi:door",
+              "width_desktop": "560px",
+              "cards": [
+                {
+                  "type": "picture-entity",
+                  "entity": "camera.front_gate_camera",
+                  "camera_view": "live",
+                  "show_name": false,
+                  "show_state": false,
+                  "tap_action": {
+                    "action": "more-info"
+                  },
+                  "card_mod": {
+                    "style": "ha-card { border: 0; border-radius: 22px; overflow: hidden; }"
+                  }
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "name",
+                  "name": "SD 卡录像回看",
+                  "icon": "mdi:history",
+                  "card_layout": "large",
+                  "show_state": false,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "tap_action": {
+                    "action": "navigate",
+                    "navigation_path": "/family-home/recordings"
+                  },
+                  "button_action": {
+                    "tap_action": {
+                      "action": "navigate",
+                      "navigation_path": "/family-home/recordings"
+                    }
+                  }
+                },
+                {
+                  "type": "grid",
+                  "columns": 4,
+                  "square": false,
+                  "cards": [
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "左",
+                      "icon": "mdi:arrow-left",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "left",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "left",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "上",
+                      "icon": "mdi:arrow-up",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "up",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "up",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "下",
+                      "icon": "mdi:arrow-down",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "down",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "down",
+                          "travel_time": 0.3
+                        }
+                      }
+                    },
+                    {
+                      "type": "custom:bubble-card",
+                      "card_type": "button",
+                      "button_type": "name",
+                      "name": "右",
+                      "icon": "mdi:arrow-right",
+                      "button_action": {
+                        "tap_action": {
+                          "action": "perform-action",
+                          "perform_action": "yi_hack.ptz",
+                          "data": {
+                            "entity_id": "camera.front_gate_camera",
+                            "movement": "right",
+                            "travel_time": 0.3
+                          }
+                        }
+                      },
+                      "tap_action": {
+                        "action": "perform-action",
+                        "perform_action": "yi_hack.ptz",
+                        "data": {
+                          "entity_id": "camera.front_gate_camera",
+                          "movement": "right",
+                          "travel_time": 0.3
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "事件连接",
+                  "icon": "mdi:lan-connect",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_status"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "state",
+                  "name": "移动侦测",
+                  "icon": "mdi:motion-sensor",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "binary_sensor.front_gate_camera_motion_detection"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "红外夜视",
+                  "icon": "mdi:weather-night",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_ir"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "指示灯",
+                  "icon": "mdi:led-on",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_led"
+                },
+                {
+                  "type": "custom:bubble-card",
+                  "card_type": "button",
+                  "button_type": "switch",
+                  "name": "移动录像",
+                  "icon": "mdi:record-rec",
+                  "card_layout": "large",
+                  "show_state": true,
+                  "grid_options": {
+                    "columns": 12,
+                    "rows": 1
+                  },
+                  "entity": "switch.front_gate_camera_save_video_on_motion"
+                }
+              ]
+            },
+            {
+              "type": "custom:bubble-card",
+              "card_type": "horizontal-buttons-stack",
+              "auto_order": false,
+              "styles": ".bubble-button { background: var(--card-background-color) !important; }",
+              "1_name": "首页",
+              "1_link": "/family-home/home",
+              "1_icon": "mdi:home-outline",
+              "2_name": "房间",
+              "2_link": "/family-home/rooms",
+              "2_icon": "mdi:floor-plan",
+              "3_name": "安防",
+              "3_link": "/family-home/security",
+              "3_icon": "mdi:shield-home-outline",
+              "4_name": "更多",
+              "4_link": "/family-home/more",
+              "4_icon": "mdi:dots-horizontal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "subview": true,
+      "title": "录像回看",
+      "path": "recordings",
+      "icon": "mdi:filmstrip",
+      "type": "sections",
+      "max_columns": 2,
+      "theme": "Quiet Home",
+      "sections": [
+        {
+          "type": "grid",
+          "column_span": 2,
+          "cards": [
+            {
+              "type": "custom:yi-sd-recordings-card",
+              "cameras": [
+                {
+                  "name": "卧室",
+                  "entity": "camera.bedroom_camera"
+                },
+                {
+                  "name": "花园走廊",
+                  "entity": "camera.garden_corridor_camera"
+                },
+                {
+                  "name": "车库",
+                  "entity": "camera.garage_camera"
+                },
+                {
+                  "name": "大门",
+                  "entity": "camera.front_gate_camera"
+                }
+              ],
+              "grid_options": {
+                "columns": "full"
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "custom:bubble-card",
+              "card_type": "horizontal-buttons-stack",
+              "auto_order": false,
+              "styles": ".bubble-button { background: var(--card-background-color) !important; }",
+              "1_name": "首页",
+              "1_link": "/family-home/home",
+              "1_icon": "mdi:home-outline",
+              "2_name": "房间",
+              "2_link": "/family-home/rooms",
+              "2_icon": "mdi:floor-plan",
+              "3_name": "安防",
+              "3_link": "/family-home/security",
+              "3_icon": "mdi:shield-home-outline",
+              "4_name": "更多",
+              "4_link": "/family-home/more",
+              "4_icon": "mdi:dots-horizontal"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

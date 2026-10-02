@@ -264,7 +264,7 @@ export class HermesClient {
     let content = "";
     const calls = new Map<number, HermesToolCall>();
     const contextualMessages = options.contextToken
-      ? [messages[0], { role: "system" as const, content: `Jarvis capability context token: ${options.contextToken}. When calling any mcp__jarvis__* tool, pass this exact token as context_token.` }, ...messages.slice(1)]
+      ? [messages[0], { role: "system" as const, content: `Jarvis capability context token: ${options.contextToken}. When calling any mcp__jarvis__*, mcp__homeassistant__*, or mcp__immich__* tool, pass this exact token as context_token.` }, ...messages.slice(1)]
       : messages;
     for await (const event of this.stream(contextualMessages, { ...options, tools })) {
       if (event.type === "delta" && event.text) { content += event.text; await options.delta?.(event.text); }

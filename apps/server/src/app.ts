@@ -31,7 +31,7 @@ import { contextAllows, verifyHermesContextToken } from "../../../packages/herme
 import { householdIdForOwner } from "./households.js";
 import { installedApplications, casaosLogin, casaosAccount } from "./applications.js";
 import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
-import { frigateEventSnapshot, frigateEvents, homeAssistantState, immichSearch } from "./hermes-integrations.js";
+import { homeAssistantState, immichSearch } from "./hermes-integrations.js";
 import { canUseMcpTool, setUserCapability, userCapabilities, type McpProvider } from "./mcp-access.js";
 const SERVER_VERSION = "0.3.2";
 export async function buildApp(options: {
@@ -154,7 +154,7 @@ export async function buildApp(options: {
       if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
       contextOwner = context.owner;
       const args = input.arguments;
-      const mcpProvider = input.tool === "mcp_authorize" && (input.arguments.provider === "homeassistant" || input.arguments.provider === "frigate" || input.arguments.provider === "immich")
+      const mcpProvider = input.tool === "mcp_authorize" && (input.arguments.provider === "homeassistant" || input.arguments.provider === "immich")
         ? input.arguments.provider as McpProvider : undefined;
       const mcpReadOnly = mcpProvider ? input.arguments.read_only === true : undefined;
       const mcpToolName = mcpProvider && typeof args.tool_name === "string" ? args.tool_name : "";
@@ -163,8 +163,7 @@ export async function buildApp(options: {
         : input.tool === "task_create" || input.tool === "schedule_create" || input.tool === "conversation_question_create" ? "conversation.write"
         : input.tool === "ui_view_show" ? "conversation.write"
             : input.tool === "home_assistant_state" ? "home.read"
-            : input.tool === "frigate_events_read" || input.tool === "frigate_event_snapshot_read" ? "mcp.frigate.read"
-              : input.tool === "immich_photo_search" ? "photo.read"
+            : input.tool === "immich_photo_search" ? "photo.read"
           : input.tool.startsWith("system_") || input.tool === "agent_list" || input.tool === "agent_run_status" ? "system.read"
             : input.tool.startsWith("schedule_") ? "schedule.write" : undefined;
       const mcpListingAllowed = !mcpListing || contextAllows(context, `mcp.${mcpProvider}.read`) || contextAllows(context, `mcp.${mcpProvider}.write`);
@@ -201,7 +200,7 @@ export async function buildApp(options: {
           const credentialProvider = mcpProvider === "homeassistant" ? "home-assistant" : mcpProvider;
           const token = process.env.INTEGRATION_CREDENTIAL_KEY
             ? await m2.integrationCredentials.readProviderSecret(context.owner, credentialProvider)
-            : mcpProvider === "homeassistant" ? process.env.HOME_ASSISTANT_TOKEN : mcpProvider === "immich" ? process.env.IMMICH_API_KEY : process.env.FRIGATE_TOKEN;
+            : mcpProvider === "homeassistant" ? process.env.HOME_ASSISTANT_TOKEN : process.env.IMMICH_API_KEY;
           if (!token) throw Error(`${mcpProvider}_not_configured`);
           if (mcpProvider === "homeassistant") {
             const base = process.env.HOME_ASSISTANT_URL?.replace(/\/$/, "");
@@ -211,11 +210,6 @@ export async function buildApp(options: {
             const base = process.env.IMMICH_URL?.replace(/\/$/, "");
             if (!base) throw Error("immich_not_configured");
             result = { provider: mcpProvider, base_url: base, token };
-          } else {
-            const base = process.env.FRIGATE_URL?.replace(/\/$/, "");
-            if (!base) throw Error("frigate_not_configured");
-            if (!token && !(process.env.FRIGATE_USERNAME && process.env.FRIGATE_PASSWORD)) throw Error("frigate_not_configured");
-            result = { provider: mcpProvider, base_url: base };
           }
           break;
         }
@@ -234,15 +228,6 @@ export async function buildApp(options: {
         case "home_assistant_state":
           result = await homeAssistantState({ token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "home-assistant") : undefined });
           break;
-        case "frigate_events_read":
-          result = await frigateEvents(args as { after?: number; before?: number; limit?: number }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "frigate") : undefined });
-          break;
-        case "frigate_event_snapshot_read": {
-          const snapshot = await frigateEventSnapshot(args as { event_id: string }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "frigate") : undefined });
-          const resource = await mediaResources.publish(context.owner, context.session, { data: snapshot.data, contentType: snapshot.contentType, source: "frigate", filename: `frigate-${snapshot.event_id}.jpg`, metadata: { event_id: snapshot.event_id } });
-          result = { provider: snapshot.provider, event_id: snapshot.event_id, media_resource: resource };
-          break;
-        }
         case "immich_photo_search":
           result = await immichSearch(args as { query?: string; from?: string; to?: string; page?: number; size?: number }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "immich") : undefined });
           break;
@@ -262,7 +247,7 @@ export async function buildApp(options: {
           break;
         case "task_create": {
           if (!conversationId) throw Error("conversation_required");
-          const task = await m2.handle("task.create", { ...args, agent_id: "ops-agent", conversation_id: conversationId }, context.owner) as any;
+          const task = await m2.handle("task.create", { ...args, conversation_id: conversationId }, context.owner) as any;
           result = { ...task, task_id: task.id, run_id: task.id };
           await db.query("UPDATE conversation_messages SET run_id=$2 WHERE id=(SELECT id FROM conversation_messages WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' ORDER BY sequence DESC LIMIT 1)", [conversationId, task.id]);
           break;
@@ -274,8 +259,8 @@ export async function buildApp(options: {
           {
             if (!turnId) throw Error("conversation_required");
             const params = z.object({ intent: z.string().min(1).max(120), resources: z.array(z.string()).max(60).default([]), target: z.enum(["inline", "workspace"]).optional(), view: viewSpecSchema.optional() }).strict().parse(args);
-            const target = params.intent === "cat_photos" ? "inline" : ["usage_analysis", "cat_activity"].includes(params.intent) ? "workspace" : params.target ?? "workspace";
-            const title = params.view?.title ?? ({ usage_analysis: "今日 Token 使用分析", cat_activity: "今日猫咪活动", cat_photos: "猫咪照片精选" } as Record<string, string>)[params.intent] ?? "分析结果";
+            const target = params.target ?? "workspace";
+            const title = params.view?.title ?? (params.intent === "usage_analysis" ? "今日 Token 使用分析" : "分析结果");
             const results = new ConversationResults(db, m2.workspaces, push);
             const pending = await results.begin(context.owner, turnId, params.intent, title, target);
             try {
@@ -312,7 +297,7 @@ export async function buildApp(options: {
   });
   app.post<{ Body: { context_token?: string; content_type?: string; source?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {
     if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey) return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
-    const input = z.object({ context_token: z.string().min(20).max(2000), content_type: z.enum(["image/png", "image/jpeg", "image/webp"]), source: z.enum(["homeassistant", "frigate", "immich", "hermes"]).default("hermes"), data: z.string().min(1).max(2_800_000) }).strict().safeParse(req.body);
+    const input = z.object({ context_token: z.string().min(20).max(2000), content_type: z.enum(["image/png", "image/jpeg", "image/webp"]), source: z.enum(["homeassistant", "immich", "hermes"]).default("hermes"), data: z.string().min(1).max(2_800_000) }).strict().safeParse(req.body);
     if (!input.success) return reply.code(400).send({ error: "media_validation_error" });
     const context = verifyHermesContextToken(hermesBridgeKey, input.data.context_token);
     if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
@@ -880,7 +865,6 @@ export async function buildApp(options: {
       try {
         const credential = await m2.integrationCredentials.readCredential(identity.id, req.params.id);
         if (credential.provider === "home-assistant") await homeAssistantState({ token: credential.secret });
-        else if (credential.provider === "frigate") await frigateEvents({}, { token: credential.secret });
         else if (credential.provider === "immich") await immichSearch({}, { token: credential.secret });
         else return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
         return { credential_id: credential.id, provider: credential.provider, connected: true };
