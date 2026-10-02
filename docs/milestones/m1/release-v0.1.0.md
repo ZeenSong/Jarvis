@@ -1,5 +1,7 @@
 # Jarvis v0.1.0 — M1 Always-On Personal Cloud
 
+> 历史里程碑记录，不是当前操作手册。命令、镜像标签和环境状态只代表当时版本；部署请以 [`docs/guides/deployment.md`](../../guides/deployment.md) 为准。
+
 首个 M1 版本，使用者已确认 Android 真机通过 Tailscale 连接服务器，并正确读取运行状态。
 
 - TypeScript 模块化服务端，PostgreSQL 持久化和设备配对认证。

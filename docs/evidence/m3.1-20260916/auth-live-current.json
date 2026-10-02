@@ -1,8 +1,0 @@
-{
-  "entrypoint": "http://100.77.157.73:8080",
-  "checks": [
-    { "name": "username_password_login_two_devices", "login_a": 200, "login_b": 200 },
-    { "name": "access_expired_cookie_refresh", "status": 200 },
-    { "name": "revoke_existing_websocket", "revoke_status": 200, "websocket_close_code": 4001, "websocket_close_reason": "session_revoked", "post_revoke_session_status": 401 }
-  ]
-}

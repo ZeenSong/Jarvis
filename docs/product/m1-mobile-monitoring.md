@@ -146,7 +146,7 @@ System Monitor 返回：
     "public_ipv6": "240e:xxxx:xxxx::xxxx",
     "tailscale_ipv4": "100.80.x.x",
     "tailscale_ipv6": "fd7a:115c:a1e0::...",
-    "lan_ipv4": "192.168.1.10",
+    "lan_ipv4": "<private-ip>",
     "interfaces": []
   }
 }
@@ -747,7 +747,7 @@ Tailscale
 100.xx.xx.xx
 
 LAN
-192.168.1.10
+<private-ip>
 ```
 
 ### CPU

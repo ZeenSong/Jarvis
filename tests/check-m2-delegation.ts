@@ -311,7 +311,7 @@ try {
 } finally {
   await ctx.app.close();
   await opsGateway.close();
-  for (const [id, w] of workers) {
+  for (const [, w] of workers) {
     try {
       await writeFile(
         join(evidence, `${prefix}-${w.type}-events.ndjson`),

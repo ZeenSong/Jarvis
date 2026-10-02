@@ -18,13 +18,6 @@ spec:
       # Read host interfaces and bind only its Tailscale IP (supplied by Secret).
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      # Single-node service IPs: host proxy intercepts DNS even to CoreDNS.
-      # Re-resolve from `kubectl -n jarvis get svc` if these Services are recreated.
-      hostAliases:
-        - ip: 10.43.159.41
-          hostnames: [postgres, postgres.jarvis.svc.cluster.local]
-        - ip: 10.43.99.133
-          hostnames: [hermes-core, hermes-core.jarvis.svc.cluster.local]
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -56,11 +49,13 @@ spec:
             - name: HOST_ROOT
               value: /host
             - name: AUTHENTIK_ISSUER
-              value: http://100.77.157.73:9000/application/o/jarvis/
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: authentik-issuer, optional: true }
             - name: AUTHENTIK_CLIENT_ID
               value: jarvis-web
             - name: AUTHENTIK_REDIRECT_URI
-              value: http://100.77.157.73:8080/api/v2/auth/oidc/callback
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: authentik-redirect-uri, optional: true }
             - name: AUTHENTIK_OIDC_SCOPES
               value: openid profile email
             - name: PRICES_FILE
@@ -86,14 +81,17 @@ spec:
             - name: CASAOS_SESSION_FILE
               value: /var/lib/jarvis-casaos/casaos-session.json
             - name: CASAOS_PUBLIC_URL
-              value: http://100.77.157.73
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: casaos-public-url, optional: true }
             - name: HOME_ASSISTANT_URL
-              value: http://100.77.157.73:8123
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: home-assistant-url, optional: true }
             - name: HOME_ASSISTANT_TOKEN
               valueFrom:
                 secretKeyRef: { name: jarvis-integrations, key: home-assistant-token, optional: true }
             - name: IMMICH_URL
-              value: http://100.77.157.73:2283
+              valueFrom:
+                secretKeyRef: { name: jarvis-secrets, key: immich-url, optional: true }
             - name: IMMICH_API_KEY
               valueFrom:
                 secretKeyRef: { name: jarvis-integrations, key: immich-api-key, optional: true }
@@ -151,7 +149,7 @@ spec:
       volumes:
         - name: casaos-session
           hostPath:
-            path: /home/root2023/Codes/Projects/Jarvis/.local/m3-production-casaos
+            path: /var/lib/jarvis/casaos
             type: Directory
         - name: host
           hostPath:

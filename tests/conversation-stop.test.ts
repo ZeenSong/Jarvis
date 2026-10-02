@@ -5,7 +5,7 @@ import { database, migrate } from "../apps/server/src/persistence.js";
 import { ConversationService } from "../packages/conversation/src/index.js";
 import { HermesClient } from "../packages/hermes-bridge/src/index.js";
 
-test("stop is owner-scoped, atomically cancels queued work, and is idempotent", { skip: !process.env.TEST_DATABASE_URL }, async (t) => {
+test("stop is owner-scoped, atomically cancels queued work, and is idempotent", { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const admin = database(process.env.TEST_DATABASE_URL!);
   const name = `stop_test_${randomUUID().replaceAll("-", "")}`;
   await admin.query(`CREATE DATABASE "${name}"`);

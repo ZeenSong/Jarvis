@@ -1,5 +1,7 @@
 # M3 implementation and acceptance ledger
 
+> 历史里程碑记录，不是当前操作手册。命令、镜像标签和环境状态只代表当时版本；部署请以 [`docs/guides/deployment.md`](../../guides/deployment.md) 为准。
+
 > 当前进度请先阅读 [2026-09-13 发布后进度与 M3 差距表](m3-status-and-gap-2026-09-13.md)。
 > 本文是按时间追加的历史流水；下方初始状态表及早期“未部署”等结论已被后续实现和 `v0.3.0-preview.1` 发布更新，不代表当前快照。M3 仍未完成验收。
 

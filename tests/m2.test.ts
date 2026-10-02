@@ -9,7 +9,6 @@ import {
   childDepth,
   RuntimeRegistry,
   type AgentRuntime,
-  type AgentEvent,
 } from "../packages/agent-runtime/src/index.js";
 import { transaction } from "../packages/agent-manager/src/index.js";
 import {

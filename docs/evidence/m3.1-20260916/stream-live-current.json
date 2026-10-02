@@ -1,8 +1,0 @@
-{
-  "entrypoint": "http://100.77.157.73:8080",
-  "test": "real WebSocket conversation event stream",
-  "login_status": 200,
-  "reply_completed": true,
-  "conversation_message_delta_count": 6,
-  "topics": ["gateway.status", "conversation.updated", "conversation.status", "conversation.tool.started", "conversation.tool.completed", "conversation.message.delta", "llm.usage.changed"]
-}

@@ -1,13 +1,14 @@
 # Jarvis 文档中心
 
-这里是 Jarvis 的统一文档入口。项目根目录只保留面向使用者的产品 README；设计、需求、实施记录与证据按用途归档在本目录。
+这里是 Jarvis 的统一文档入口。项目根目录只保留面向使用者的产品 README；设计、需求与实施记录按用途归档在本目录。包含家庭拓扑、真实网络地址、账号信息或原始日志的验收证据不进入公开仓库。
 
 ## 从这里开始
 
 - [产品总览](../README.md)：能力介绍、截图、快速启动与当前边界
 - [系统架构](reference/architecture.md)：服务边界、身份模型与工程决策
 - [API / WebSocket 协议](reference/protocol.md)：客户端与服务端通信约定
-- [部署指南](guides/deployment.md)：单节点 K3s 构建、Secret、验证与恢复
+- [部署指南](guides/deployment.md)：当前 Docker / CasaOS 路径与 Kubernetes 上线检查
+- [家庭服务接入](guides/family-integrations.md)：Home Assistant、Immich 与摄像头服务的安全配置原则
 - [当前 M3.3 状态](milestones/m3/m3.3-progress.md)：已实现能力、验证证据和未完成项
 
 ## 目录说明
@@ -17,10 +18,9 @@
 | [`product/`](product/) | 产品愿景、体验设计、架构蓝图、里程碑构想和概念图 | 产品、设计、贡献者 |
 | [`specifications/`](specifications/) | M3.1、M3.2、M3.3 的正式需求与实施范围 | 开发、测试、评审者 |
 | [`milestones/`](milestones/) | 各版本进度、验收问题、修复记录和发布说明 | 开发、运维、发布负责人 |
-| [`guides/`](guides/) | 部署、主机配置、家庭服务和摄像头接入操作 | 使用者、运维 |
+| [`guides/`](guides/) | 当前部署与家庭服务安全接入操作 | 使用者、运维 |
 | [`reference/`](reference/) | 当前架构与协议参考 | 开发、集成方 |
 | [`adr/`](adr/) | 关键技术决策记录 | 架构与维护人员 |
-| [`evidence/`](evidence/) | 历史验收截图、日志和机器可读证据 | 审计、回归验证 |
 | [`assets/`](assets/) | README 等文档使用的静态资源 | 文档维护者 |
 
 ## 产品与设计
@@ -53,5 +53,6 @@
 1. 新的产品愿景放入 `product/`，可执行的需求基线放入 `specifications/`。
 2. 阶段性进度、验收与发布记录放入对应的 `milestones/<版本>/`。
 3. 可复用的操作步骤放入 `guides/`；稳定接口与架构事实放入 `reference/`。
-4. 原始验证材料放入 `evidence/`，正文只链接必要证据，不复制大文件。
+4. 原始验证材料保存在仓库外的受控位置；公开文档只记录结论与可复现方法，不提交真实地址、日志、截图或家庭数据。
 5. 部署组件自己的 README 保留在 `deploy/<组件>/`，因为它们与对应配置共同维护。
+6. 旧版本文档必须明确标为历史记录，不得包含可直接复制执行的失效生产命令。

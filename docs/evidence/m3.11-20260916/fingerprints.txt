@@ -1,8 +1,0 @@
-ca57d6fe010c429a848e8220a06308872bd486491b1ff93791d3db22e83f10bb  apps/server/src/app.ts
-bec8d39a8acbf0781b1b2d29080d88c2dd86d2f389263e17ad1eea790482052c  apps/server/src/m2.ts
-9bd4e790eab23aa68b5a44eb13eb92b21cbd46b0cda437a2e9a5bdd25dc53387  apps/web/src/gateway.ts
-a9efe32fd6bfdbd4dd4e0c69db6915b4ff2e9e17ff3cd27ca51dd57fb82331d8  apps/hermes-mcp/jarvis_provider.py
-f8fc7a2743fea0dcbf3e0e6dedd6cf8c8994f2abbb5e8cae35678018da23265c  packages/hermes-bridge/src/index.ts
-e3be9034e5508ae17c11cc4c756fa70ba240bca67c457aa1c2d2b9737bc80c00  packages/conversation/src/index.ts
-5b8fc105e7e9366a1ba8ef1310311778d72471ed794f3a67f26dd88ec33e796d  apps/web/src/workspace-panel.tsx
-9d693ded7d3da6bd606504eca08563356bf8775839a24487dab44dc3d5a6abbc  apps/android/app/build/outputs/apk/debug/app-debug.apk

@@ -29,7 +29,7 @@ import {
 import { ownerUserId } from "./ownership.js";
 import { contextAllows, verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
 import { householdIdForOwner } from "./households.js";
-import { installedApplications, casaosLogin, casaosAccount } from "./applications.js";
+import { casaosLogin, casaosAccount } from "./applications.js";
 import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
 import { homeAssistantState, immichSearch } from "./hermes-integrations.js";
 import { canUseMcpTool, setUserCapability, userCapabilities, type McpProvider } from "./mcp-access.js";

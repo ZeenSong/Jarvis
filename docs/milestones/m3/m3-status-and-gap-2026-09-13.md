@@ -1,5 +1,7 @@
 # M3 开发进度与验收差距（2026-09-13）
 
+> 历史里程碑记录，不是当前操作手册。命令、镜像标签和环境状态只代表当时版本；部署请以 [`docs/guides/deployment.md`](../../guides/deployment.md) 为准。
+
 ## 1. 当前结论与统计口径
 
 **当前阶段：M3 预览版已上线，进入实际使用反馈阶段；M3 尚未完成，也未进入最终 Demo Freeze。**
@@ -132,17 +134,17 @@
 | CasaOS | [Adapter](../../../packages/integration-casaos/src/index.ts)、[服务端桥接](../../../apps/server/src/applications.ts) |
 | Immich / 媒体 | [Immich Adapter](../../../packages/integration-immich/src/index.ts)、[临时媒体接口基础](../../../apps/server/src/media.ts)、[Gallery](../../../apps/web/src/gallery-view.tsx) |
 | 数据模型 | [M2 增量表](../../../apps/server/src/m2-migration.ts) |
-| 发布 | [发布说明](../../../deploy/m3/release-notes.md)、[预览部署脚本](../../../deploy/m3/deploy-preview.mjs)、[打包脚本](../../../deploy/m3/package.mjs) |
+| 发布 | 历史发布脚本已移除；发布事实以 GitHub Release 和本记录为准 |
 
 发布产物：[GitHub v0.3.0-preview.1](https://github.com/ZeenSong/Jarvis/releases/tag/v0.3.0-preview.1)。
 
 以下证据仅存在开发主机的 git-ignored `.local`，不包含在公共源码包；新克隆仓库中链接不可用。生产截图可能含私人活动，未上传公共 Release：
 
-- [生产 Web 首页](../../../.local/m3-release-0.3.0-preview.1/production-web-home.png)
-- [生产 Immich 详情](../../../.local/m3-release-0.3.0-preview.1/production-web-immich.png)
-- [生产 smoke 记录](../../../.local/m3-release-0.3.0-preview.1/smoke.json)
-- [Android 真实 CasaOS 测试首页](../../../.local/evidence/m3-android-live-home.png)
-- [Android 真实 CasaOS 测试详情](../../../.local/evidence/m3-android-live-app-detail.png)
+- 生产 Web 首页（内部验收证据未纳入公开仓库）
+- 生产 Immich 详情（内部验收证据未纳入公开仓库）
+- 生产 smoke 记录（内部验收证据未纳入公开仓库）
+- Android 真实 CasaOS 测试首页（内部验收证据未纳入公开仓库）
+- Android 真实 CasaOS 测试详情（内部验收证据未纳入公开仓库）
 
 ## 9. 下一轮建议（待实际使用反馈确定，不代表本次开始实施）
 

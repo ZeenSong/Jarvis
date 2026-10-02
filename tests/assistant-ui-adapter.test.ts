@@ -29,7 +29,7 @@ test("transient reconnect snapshot failure retries without resubmitting the acce
   const adapter = new JarvisAssistantAdapter(gateway, conversationId);
   const result = adapter.model.run({ messages: [{ content: "继续任务" }], abortSignal: controller.signal } as any) as AsyncIterable<any>;
   const run = result[Symbol.asyncIterator]();
-  const started = await run.next();
+  await run.next();
   assert.equal(messageAdmissions, 1);
 
   gateway.dispatchEvent(new CustomEvent("connection", { detail: "已连接" }));

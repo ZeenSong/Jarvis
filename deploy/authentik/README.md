@@ -1,24 +1,10 @@
 # Authentik 部署
 
-## 当前主机的持久化部署
+## 部署边界
 
-入口：`http://100.77.157.73:9000/`（仅绑定 Tailnet 地址）。Jarvis 登录页的
-“使用 Authentik 登录”通过 OIDC 返回 `http://100.77.157.73:8080/`。
-
-```bash
-node scripts/authentik-live.mjs up
-node scripts/authentik-live.mjs status
-node scripts/authentik-live.mjs configure
-```
-
-`up` 首次生成数据库密钥、服务密钥和管理员 `akadmin` 的随机初始密码，保存在
-`jarvis` namespace 的 `jarvis-authentik` Secret。后续运行复用这些值，不重置密码。
-`configure` 创建 Jarvis OIDC 应用并更新 Jarvis 部署的认证环境变量，不改变其镜像。
-数据库位于 `jarvis-authentik_authentik-postgres` 持久卷，不能按临时测试数据清理。
-密码字段为 `AUTHENTIK_BOOTSTRAP_PASSWORD`；通过集群管理权限读取后首次登录应修改。
-Authentik 管理员身份不会自动提升为 Jarvis 管理员，本地 Jarvis 管理员账号继续保留。
-
-以下为其他环境部署和隔离验证说明。
+本目录只提供不含环境地址和凭据的 Compose 基线。生产入口、回调 URL、管理员密码和
+OIDC Client Secret 必须在目标环境配置，不应写回仓库。Authentik 管理员身份不会自动
+提升为 Jarvis 管理员，本地 Jarvis 管理员账号继续作为故障恢复入口。
 
 M3.2 的身份提供商边界已落到 Jarvis 配置和 OIDC Contract：Authentik 负责
 认证、MFA 和 OIDC；Jarvis 仍负责 `admin/member`、Household、Capability、Approval

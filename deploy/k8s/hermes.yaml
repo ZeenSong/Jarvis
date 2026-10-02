@@ -517,7 +517,7 @@ spec:
             - name: JARVIS_PROFILE_API_KEY
               valueFrom: { secretKeyRef: { name: hermes-api, key: JARVIS_API_SERVER_KEY, optional: true } }
             - name: JARVIS_INTERNAL_URL
-              value: http://10.43.191.204:8080
+              value: http://jarvis-server:8080
             - name: JARVIS_BRIDGE_KEY
               valueFrom: { secretKeyRef: { name: hermes-bridge, key: bridge-key } }
           securityContext: { runAsUser: 0, runAsGroup: 0 }
@@ -553,7 +553,7 @@ spec:
             - name: DEEPSEEK_API_KEY
               valueFrom: { secretKeyRef: { name: hermes-provider, key: DEEPSEEK_API_KEY } }
             - name: JARVIS_INTERNAL_URL
-              value: http://10.43.191.204:8080
+              value: http://jarvis-server:8080
             - name: JARVIS_BRIDGE_KEY
               valueFrom: { secretKeyRef: { name: hermes-bridge, key: bridge-key } }
             # Hermes native Skills, toolsets and configured MCP servers are
