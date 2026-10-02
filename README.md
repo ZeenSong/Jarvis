@@ -1,92 +1,137 @@
-# Jarvis
+<div align="center">
 
-个人私有云：TypeScript 模块化单体 + PostgreSQL + Kotlin/Compose Android。当前发布为 M3.1，版本 `v0.3.1`；实现目标与验收边界见 [M3.1 发布记录](docs/m3.1-release.md)。
+# JARVIS
 
-M2 预发布版本 `0.2.0-rc.1` 已增加真实对话、分层 Agent、隔离 Worker 与 Web/Android 动态界面。交付与启动见 [M2 操作指导](deploy/m2/README.md)，通过项和上线前剩余检查见 [M2 验收记录](docs/m2/acceptance.md)。下方 v0.1.0 Release 仍为已验收的正式版本。
+### 把散落在家里的应用、设备与数据，变成一个真正能行动的私人 AI 云
 
-## 下载与镜像
+**一句话交代目标，Jarvis 负责理解、规划、调用工具、持续执行并呈现结果。**
 
-- M3.1 `v0.3.1`：Android APK 与服务镜像见 [GitHub Release](https://github.com/ZeenSong/Jarvis/releases/tag/v0.3.1)
-- 容器镜像：`jarvis-server:0.3.1`（可导入目标 K3s 节点）
+[快速开始](#快速开始) · [核心能力](#不止是聊天更是行动) · [系统架构](#为私有云而生) · [部署文档](docs/deployment.md)
 
-当前 APK 是 M3.1 调试签名构建，适合自用测试；升级正式签名版本前应先卸载它，或使用相同签名密钥。
+</div>
 
-## 本地运行
+![Jarvis 私人云首页](docs/assets/readme/home.webp)
 
-需要 Node.js 22+、Docker。命令在仓库根目录执行：
+Jarvis 是一个面向家庭与个人场景的开源 AI 工作台。它把 Hermes Agent、Skills、MCP、家庭服务和你的私有数据放进统一体验：对话不是终点，而是任务的入口；回答不只是文字，还可以是照片、监控画面、可交互工作区和可追踪的执行过程。
+
+> 当前版本：`0.3.2`。项目处于积极开发阶段，适合自托管体验、二次开发与家庭实验环境。
+
+## 不止是聊天，更是行动
+
+| 能力 | Jarvis 能做什么 |
+| --- | --- |
+| **多步 Agent 执行** | 拆解目标、调用工具、展示推理与执行阶段；任务状态可持久化并在断线后恢复 |
+| **照片智能检索** | 连接 Immich，结合语义、时间、地点与媒体元数据查找照片，并以内联画廊呈现 |
+| **家庭状态感知** | 通过 Home Assistant 与摄像头服务读取家庭状态、事件和画面，汇总成自然语言结果 |
+| **Skills + MCP** | 按任务选择 Hermes Skills，通过受控 MCP 能力桥接外部服务；权限与 Household 上下文随请求传递 |
+| **动态工作区** | 同一套语义结果可渲染为图库、图表、任务卡片、日志或 Workspace，而不局限于聊天气泡 |
+| **私有与可控** | 数据、身份、会话、媒体和集成凭据留在自己的基础设施中；敏感凭据加密保存，能力默认收敛 |
+| **跨端体验** | Web 与 Kotlin/Compose Android 客户端，共享协议、任务状态和动态界面能力 |
+
+## 你的照片，会真正变得可检索
+
+不必记住文件名或相册。你可以说“找出赛里木湖的照片”，Jarvis 会使用媒体元数据定位结果；也可以让它从大量照片中筛选最符合描述的几张。
+
+![按地点查找私人照片](docs/assets/readme/location-search.webp)
+
+## 你的家庭，会真正变得可理解
+
+Jarvis 不只是打开一个设备面板。它可以组合摄像头画面、Home Assistant 状态和任务上下文，用一次对话完成跨服务查询，并把每一步执行过程清晰展示出来。
+
+![查看家庭摄像头最新画面](docs/assets/readme/camera-monitoring.webp)
+
+## 结果不只是一段文字
+
+来自 Immich 的图片以受保护的媒体资源进入当前会话；结果可以继续“查看更多”“收藏”或安全跳转到原应用。媒体访问与用户、设备和会话范围绑定。
+
+![Immich 智能选片与内联画廊](docs/assets/readme/immich-gallery.webp)
+
+## 为私有云而生
+
+```text
+Web / Android
+      │
+      ▼
+Jarvis Gateway ─── PostgreSQL（身份、会话、任务、媒体、审计）
+      │
+      ▼
+Hermes Agent ─── Skills / MCP ─── Immich · Home Assistant · 摄像头 · 更多服务
+      │
+      └── Agent Runtime / Worker（隔离执行、能力路由、状态恢复）
+```
+
+- **TypeScript 模块化单体**：服务端、协议、能力注册、Agent Runtime 与 UI 协议可独立演进。
+- **Hermes 原生执行链路**：支持持久 Run、流式回复、推理强度、按轮 Skills 与停止任务。
+- **最小权限桥接**：工具按能力、用户、Household、会话和 scope 约束，不把第三方密钥交给模型。
+- **可恢复体验**：任务、活动、问题、审批和结果均有持久状态，刷新或短暂掉线不等于任务丢失。
+- **多形态交付**：同一结果可以在桌面端展开为 Workspace，也可以在移动端降级为适合触屏的操作界面。
+
+进一步了解：[架构说明](docs/architecture.md) · [API / WebSocket 协议](docs/protocol.md) · [M3.3 实施记录](docs/M3.3-progress.md)
+
+## 快速开始
+
+### 环境要求
+
+- Node.js 22+
+- Docker（用于 PostgreSQL）
+- 可选：Hermes、Immich、Home Assistant 等家庭服务
+
+### 启动本地服务
 
 ```bash
+git clone https://github.com/ZeenSong/Jarvis.git
+cd Jarvis
 npm ci
+
 POSTGRES_PASSWORD=change-me docker compose -f deploy/compose.yaml up -d
 export DATABASE_URL=postgres://jarvis:change-me@127.0.0.1:5432/jarvis
+
 npm run build
 npm start
 ```
 
-默认只监听 `127.0.0.1:8080`。从 Android 访问时设置 `HOST=<服务器 Tailscale IPv4>`，并确认手机、服务器在同一 Tailnet。应用不依赖公网 IPv6。Node 不自动读取 `.env`，请由 shell 或服务管理器传入环境变量；配置项见 [.env.example](.env.example)。
+打开 `http://127.0.0.1:8080`，首次注册的账户会成为管理员。默认服务仅监听本机；远程访问推荐使用 Tailscale 等受保护网络，不要把明文 HTTP / WebSocket 端口直接暴露到公网。
 
-首次启动后打开 `http://<服务器地址>:8080`。在登录页选择“首次注册 Jarvis 账户”创建第一个账户；第一个注册账户自动成为管理员。之后使用 Jarvis 用户名和密码登录，管理员在“用户”页面邀请其他成员。Android 同样只使用服务器地址、用户名和密码登录。
-
-一次性配对码、网页登录配对会话和 Authentik 登录入口已停用。不要在公网直接暴露明文 HTTP/WS 端口；Tailnet 内传输由 Tailscale 加密。
-
-## 测试 Agent 与 LLM
-
-将预先配置的 Agent Token 仅配置给 Agent：
-
-```bash
-export JARVIS_URL=http://127.0.0.1:8080
-export JARVIS_AGENT_TOKEN='<返回的 token>'
-npm run demo
-```
-
-示例每 10 秒心跳，停止后 30 秒 degraded、90 秒 offline。配置 `LLM_API_KEY`（或 `LLM_API_KEY_FILE`）、`LLM_MODEL`（可选 `LLM_BASE_URL`、`LLM_PROVIDER`）后，按 Enter 发起一次真实模型请求并自动计量。不会自动发起付费调用。兼容接口也支持 DeepSeek 的 `prompt_cache_hit_tokens`，字段依据 [DeepSeek API 文档](https://api-docs.deepseek.com/api/create-chat-completion/)。
-
-服务端通过 `PRICES_FILE` 读取 JSON：
-
-```json
-{
-  "your-provider": {
-    "your-model": {
-      "input_per_million": 2,
-      "output_per_million": 8,
-      "cached_input_per_million": 0.2,
-      "valid_from": "2026-01-01"
-    }
-  }
-}
-```
-
-数值只是格式示例，不是供应商报价。请填写实际模型价格；未配置价格时费用显示未知，历史费用不会因改价重算。统计日期以 UTC 为准。
+完整配置项见 [.env.example](.env.example)。Docker / CasaOS 与 Hermes 组合部署见 [部署说明](deploy/docker/README.md)，K3s 生产部署见 [部署手册](docs/deployment.md)。
 
 ## Android
 
-Android Studio 打开 `apps/android`，使用 JDK 17、SDK 35。首次构建前确认 SDK 路径（`ANDROID_HOME` 或 `local.properties`）。
+使用 Android Studio 打开 `apps/android`，需要 JDK 17 与 Android SDK 35：
 
 ```bash
 cd apps/android
 ./gradlew assembleDebug testDebugUnitTest
 ```
 
-APK 输出在 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。应用支持启动/前台/网络变化自动连接、指数退避和心跳超时，断线显示最近缓存。Home 可开启带常驻通知的后台连接服务；Android 系统休眠、强制停止仍可能暂停 Socket，前台恢复后会重连并刷新快照。
+客户端支持前台与网络恢复后自动重连、指数退避、状态缓存和后台连接服务。Android 系统强制停止应用后仍需重新打开应用恢复连接。
 
-## 验证
+## 开发与验证
 
 ```bash
 npm run typecheck
+npm run typecheck:web
 npm test
-TEST_DATABASE_URL=postgres://jarvis:password@127.0.0.1:5432/jarvis_test npm test
-npm run build
-kubectl kustomize deploy/k8s
+npm run build:web
 ```
 
-不传 TEST_DATABASE_URL 时明确跳过数据库集成测试。应使用独立测试数据库，测试会写入唯一标识的设备、Agent 和请求记录。
-
-Android 端到端测试需先启动独立测试服务、模拟器并构建 `assembleDebug assembleDebugAndroidTest`，再运行：
+如需运行 PostgreSQL 集成测试，请提供独立测试数据库：
 
 ```bash
-ADB=/path/to/adb TEST_DATABASE_URL=postgres://jarvis:password@127.0.0.1:5432/jarvis_test npm run test:android-e2e
+TEST_DATABASE_URL=postgres://jarvis:password@127.0.0.1:5432/jarvis_test npm test
 ```
 
-默认模拟器访问 `http://10.0.2.2:18080`，可通过 `ANDROID_TEST_SERVER` 修改。此测试会清空模拟器中 Jarvis 应用数据以验证首次配对，不应在日常使用的手机执行。服务恢复检查脚本 `tests/check-android-recovery.ts` 只操作名为 `jarvis-m1-test-server` 的测试容器。`tests/check-live-llm.ts` 是显式调用的真实供应商检查，会产生少量 API 用量，不包含在 npm test 中。
+未提供 `TEST_DATABASE_URL` 时，数据库集成用例会明确跳过。真实上游服务检查和模型调用不会包含在默认测试中，避免意外访问家庭数据或产生 API 费用。
 
-部署步骤见 [部署手册](docs/deployment.md)，协议见 [API/WS](docs/protocol.md)，架构与边界见 [工程决策](docs/architecture.md)。
+## 当前边界
+
+Jarvis 已具备核心对话、任务、动态 UI、Hermes、Skills/MCP 和家庭服务适配能力，但仍在持续收尾。部分端到端家庭场景需要使用者提供自己的服务与凭据；浏览器协议夹具不代表真实家庭数据已验证。生产部署前请阅读 [M3.3 未完成项](docs/M3.3-progress.md#尚未完成必须继续) 与安全配置说明。
+
+## 参与项目
+
+欢迎通过 Issue 提交场景、问题与集成建议。提交代码前请至少运行类型检查与默认测试，并避免提交 `.env`、API Key、数据库转储、构建产物或家庭数据。
+
+<div align="center">
+
+**More Life. Less Work.**
+
+</div>
