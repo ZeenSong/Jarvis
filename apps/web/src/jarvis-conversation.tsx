@@ -129,7 +129,7 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
       requested = true;
       void gateway.request("conversation.composer.options").then((value) => {
         if (!active) return;
-        const allowed = new Set<ReasoningEffort>(["low", "medium", "high"]);
+        const allowed = new Set<ReasoningEffort>(["low", "medium", "high", "max"]);
         const efforts = Array.isArray(value?.reasoning_efforts)
           ? value.reasoning_efforts.filter((item: unknown): item is ReasoningEffort => typeof item === "string" && allowed.has(item as ReasoningEffort))
           : [];
@@ -279,7 +279,7 @@ function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, 
           <span><strong>{skill.name}</strong>{skill.description && <small>{skill.description}</small>}</span>
         </label>)}
       </div>
-    </details>}{reasoningEfforts.length > 0 && <label className="reasoning-control">推理强度<select aria-label="推理强度" value={reasoningEffort} onChange={(event) => onReasoningEffortChange(event.currentTarget.value as ReasoningEffort)}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{({ low: "快速", medium: "标准", high: "深度" })[effort]}</option>)}</select><span aria-hidden="true">⌄</span></label>}<span role={stopping || running ? "status" : undefined}>{stopping ? "正在停止任务……" : running ? queued ? "任务排队中 · 可随时停止" : "正在处理 · 可随时停止" : "让想法成为行动"}</span></div><div>{running ? <button type="button" aria-label="停止任务" disabled={stopping || !turnId} onClick={() => void stop()}>■</button> : <ComposerPrimitive.Send aria-label="发送消息">↑</ComposerPrimitive.Send>}</div></div>
+    </details>}{reasoningEfforts.length > 0 && <label className="reasoning-control">推理强度<select aria-label="推理强度" value={reasoningEffort} onChange={(event) => onReasoningEffortChange(event.currentTarget.value as ReasoningEffort)}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{({ low: "快速", medium: "标准", high: "深度", max: "极深" } as Record<string, string>)[effort]}</option>)}</select><span aria-hidden="true">⌄</span></label>}<span role={stopping || running ? "status" : undefined}>{stopping ? "正在停止任务……" : running ? queued ? "任务排队中 · 可随时停止" : "正在处理 · 可随时停止" : "让想法成为行动"}</span></div><div>{running ? <button type="button" aria-label="停止任务" disabled={stopping || !turnId} onClick={() => void stop()}>■</button> : <ComposerPrimitive.Send aria-label="发送消息">↑</ComposerPrimitive.Send>}</div></div>
     {stopError && <p className="inline-error" role="alert">{stopError}</p>}
   </ComposerPrimitive.Root>;
 }

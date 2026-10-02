@@ -13,15 +13,15 @@ import { activityGroupKey, canTransitionActivity, summarizeActivityGroup, type A
 import { visibleActivities, activityPresentation, activityTitle } from "./activity.js";
 import type { ExecutionKind } from "./execution.js";
 import { HermesActivityIds, terminalHermesEvents } from "./hermes-events.js";
-import { modelSupportsReasoning, reasoningEfforts } from "./model-options.js";
-export { modelSupportsReasoning, reasoningEfforts } from "./model-options.js";
+import { modelSupportsReasoning, reasoningEfforts, reasoningEffortsForModel } from "./model-options.js";
+export { modelSupportsReasoning, reasoningEfforts, reasoningEffortsForModel } from "./model-options.js";
 export * from "./model.js";
 export const messageInput = z
   .object({
     conversation_id: z.uuid(),
     content: z.string().trim().min(1).max(16000),
     idempotency_key: z.string().min(1).max(128),
-    reasoning_effort: z.enum(reasoningEfforts).optional(),
+    reasoning_effort: z.enum([...reasoningEfforts, "max"] as [string, ...string[]]).optional(),
     skills: z.array(z.string().trim().min(1).max(128)).max(16).optional(),
   })
   .strict()
@@ -77,7 +77,9 @@ export class ConversationService {
           ? modelOptions.value.model : "hermes-agent";
         if (modelSupportsReasoning(
           modelOptions.value, activeModel, typeof modelOptions.value.provider === "string" ? modelOptions.value.provider : undefined,
-        )) value.reasoning_efforts = [...reasoningEfforts];
+        )) value.reasoning_efforts = reasoningEffortsForModel(
+          modelOptions.value, activeModel, typeof modelOptions.value.provider === "string" ? modelOptions.value.provider : undefined,
+        );
       }
       if (skills.status === "fulfilled") value.skills = skills.value;
     }
