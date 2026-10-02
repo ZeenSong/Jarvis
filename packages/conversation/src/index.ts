@@ -49,6 +49,15 @@ export class ConversationService {
     private manager: AgentManager,
     private push: Push,
   ) {}
+  private async activeHermesModel(client: HermesClient, signal: AbortSignal) {
+    const configured = process.env.HERMES_MODEL || process.env.CORE_MODEL;
+    if (configured) return configured;
+    try {
+      const options = await client.modelOptions(signal);
+      if (typeof options.model === "string" && options.model.trim()) return options.model.trim();
+    } catch { /* Tests and degraded control planes may not expose model options. */ }
+    return "hermes-agent";
+  }
   async list(owner?: string) {
     if (!owner) return (await this.db.query("SELECT * FROM conversations ORDER BY updated_at DESC LIMIT 100")).rows;
     const userId = await ownerUserId(this.db, owner);
@@ -410,6 +419,7 @@ export class ConversationService {
         throw Error("hermes_not_configured");
       const hermes = new HermesClient(hermesConfig.url, hermesConfig.apiKey);
       const signal = this.abort.signal;
+      const activeModel = await this.activeHermesModel(hermes, signal);
       const contextToken = createHermesContextToken(process.env.HERMES_BRIDGE_KEY, job.device_id, id, 600, {
         actor: String(job.owner_user_id ?? job.device_id),
         household: String(await householdIdForOwner(this.db, job.device_id) ?? "default-household"),
@@ -422,6 +432,7 @@ export class ConversationService {
           sessionId: id,
           sessionKey: `jarvis:${job.device_id}`,
           idempotencyKey: `jarvis:${job.id}`,
+          model: activeModel,
           ...(job.request.reasoning_effort ? { modelOptions: { reasoning_effort: job.request.reasoning_effort } } : {}),
           ...(job.request.skills?.length ? { skills: job.request.skills } : {}),
           instructions,
@@ -549,13 +560,15 @@ export class ConversationService {
     const config = hermesAgentConfig();
     if (process.env.HERMES_ENABLED !== "1" || !config) return;
     try {
+      const client = new HermesClient(config.url, config.apiKey);
+      const model = await this.activeHermesModel(client, this.abort.signal);
       const context = (await this.db.query(`SELECT c.title,
           (SELECT content FROM conversation_messages WHERE turn_id=$2 AND role='user' ORDER BY sequence LIMIT 1) AS input,
           (SELECT content FROM conversation_messages WHERE id=$3 AND role='jarvis') AS answer
         FROM conversations c JOIN conversation_turns current_turn ON current_turn.id=$2 AND current_turn.conversation_id=c.id
         WHERE c.id=$1 AND current_turn.id=(SELECT id FROM conversation_turns WHERE conversation_id=c.id ORDER BY created_at,id LIMIT 1)`, [conversationId, turnId, replyId])).rows[0];
       if (!context || context.title !== "新会话" || !context.input || !context.answer) return;
-      const raw = await new HermesClient(config.url, config.apiKey).suggestTitle(String(context.input), String(context.answer), { signal: this.abort.signal });
+      const raw = await client.suggestTitle(String(context.input), String(context.answer), { model, signal: this.abort.signal });
       const title = Array.from(raw.replace(/[\r\n"'“”‘’`*#]/g, " ").replace(/\s+/g, " ").trim()).slice(0, 32).join("");
       if (!title) return;
       const updated = (await this.db.query(`UPDATE conversations SET title=$2,updated_at=now()
