@@ -147,12 +147,12 @@ export class HermesClient {
     });
   }
   /** Generate a concise conversation label without giving the model tools. */
-  async suggestTitle(input: string, answer: string, options: { model: string; signal?: AbortSignal }) {
+  async suggestTitle(input: string, answer: string, options: { model?: string; signal?: AbortSignal }) {
     const response = await this.fetcher(endpoint(this.baseUrl, "v1/chat/completions"), {
       method: "POST", signal: options.signal,
       headers: { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: options.model,
+        model: options.model ?? "hermes-agent",
         stream: false,
         temperature: 0.2,
         max_tokens: 40,

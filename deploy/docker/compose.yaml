@@ -67,7 +67,7 @@ services:
       hermes-dashboard: { condition: service_healthy }
 
   jarvis-server:
-    image: jarvis-server:0.3.2-task-routing-20261002-r2
+    image: jarvis-server:0.3.2-profile-main-model-20261002
     container_name: jarvis-server
     restart: unless-stopped
     env_file: [/DATA/AppData/jarvis/config/server.env]
@@ -105,8 +105,9 @@ services:
     network_mode: host
     env_file: [/DATA/AppData/jarvis/config/node-bridge.env]
     volumes:
-      - ${CODEX_SEED_DIR:?set CODEX_SEED_DIR}:/seed-codex:ro
-      - ${JARVIS_WORKSPACE_DIR:?set JARVIS_WORKSPACE_DIR}:/workspace:ro
+      # CasaOS imports this file directly, so keep these host paths explicit.
+      - /home/root2023/.codex:/seed-codex:ro
+      - /home/root2023/Codes/Projects/Jarvis:/workspace:ro
     depends_on:
       jarvis-server: { condition: service_healthy }
     healthcheck:

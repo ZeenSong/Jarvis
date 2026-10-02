@@ -56,8 +56,7 @@ export class ConversationService {
   }
   async composerOptions() {
     const config = hermesAgentConfig();
-    const model = process.env.HERMES_MODEL || process.env.CORE_MODEL || "deepseek-flash";
-    const key = `${config?.url ?? ""}:${config?.profile ?? ""}:${model}`;
+    const key = `${config?.url ?? ""}:${config?.profile ?? ""}`;
     if (this.composerOptionsCache?.key === key && this.composerOptionsCache.expiresAt > Date.now()) return this.composerOptionsCache.value;
     let value: { reasoning_efforts: string[]; skills: HermesSkill[] } = { reasoning_efforts: [], skills: [] };
     if (process.env.HERMES_ENABLED === "1" && config) {
@@ -66,9 +65,13 @@ export class ConversationService {
         client.modelOptions(AbortSignal.timeout(3000)),
         client.skills(AbortSignal.timeout(4000)),
       ]);
-      if (modelOptions.status === "fulfilled" && modelSupportsReasoning(
-        modelOptions.value, model, typeof modelOptions.value.provider === "string" ? modelOptions.value.provider : undefined,
-      )) value.reasoning_efforts = [...reasoningEfforts];
+      if (modelOptions.status === "fulfilled") {
+        const activeModel = typeof modelOptions.value.model === "string" && modelOptions.value.model
+          ? modelOptions.value.model : "hermes-agent";
+        if (modelSupportsReasoning(
+          modelOptions.value, activeModel, typeof modelOptions.value.provider === "string" ? modelOptions.value.provider : undefined,
+        )) value.reasoning_efforts = [...reasoningEfforts];
+      }
       if (skills.status === "fulfilled") value.skills = skills.value;
     }
     this.composerOptionsCache = { key, expiresAt: Date.now() + 60_000, value };
@@ -419,7 +422,6 @@ export class ConversationService {
           sessionId: id,
           sessionKey: `jarvis:${job.device_id}`,
           idempotencyKey: `jarvis:${job.id}`,
-          model: process.env.HERMES_MODEL || process.env.CORE_MODEL || "deepseek-flash",
           ...(job.request.reasoning_effort ? { modelOptions: { reasoning_effort: job.request.reasoning_effort } } : {}),
           ...(job.request.skills?.length ? { skills: job.request.skills } : {}),
           instructions,
@@ -512,7 +514,7 @@ export class ConversationService {
       }
       const usage = terminalEvent.usage as any;
       if (usage && !coreUsageIds.length) {
-        coreUsageIds.push(await this.manager.recordUsage({ provider: "hermes", model: String(terminalEvent.model ?? process.env.HERMES_MODEL ?? hermesConfig.profile), input_tokens: Number(usage.input_tokens ?? 0), output_tokens: Number(usage.output_tokens ?? 0), cached_input_tokens: Number(usage.cached_input_tokens ?? 0) }, id, undefined));
+        coreUsageIds.push(await this.manager.recordUsage({ provider: "hermes", model: String(terminalEvent.model ?? hermesConfig.profile), input_tokens: Number(usage.input_tokens ?? 0), output_tokens: Number(usage.output_tokens ?? 0), cached_input_tokens: Number(usage.cached_input_tokens ?? 0) }, id, undefined));
       }
       await flush(true);
       const output = (await this.db.query("SELECT content,workspace_id,view_id,run_id FROM conversation_messages WHERE id=$1", [job.id])).rows[0];
@@ -546,7 +548,6 @@ export class ConversationService {
   private async refreshSemanticTitle(conversationId: string, turnId: string, replyId: string) {
     const config = hermesAgentConfig();
     if (process.env.HERMES_ENABLED !== "1" || !config) return;
-    const model = process.env.HERMES_MODEL || process.env.CORE_MODEL || "deepseek-flash";
     try {
       const context = (await this.db.query(`SELECT c.title,
           (SELECT content FROM conversation_messages WHERE turn_id=$2 AND role='user' ORDER BY sequence LIMIT 1) AS input,
@@ -554,7 +555,7 @@ export class ConversationService {
         FROM conversations c JOIN conversation_turns current_turn ON current_turn.id=$2 AND current_turn.conversation_id=c.id
         WHERE c.id=$1 AND current_turn.id=(SELECT id FROM conversation_turns WHERE conversation_id=c.id ORDER BY created_at,id LIMIT 1)`, [conversationId, turnId, replyId])).rows[0];
       if (!context || context.title !== "新会话" || !context.input || !context.answer) return;
-      const raw = await new HermesClient(config.url, config.apiKey).suggestTitle(String(context.input), String(context.answer), { model, signal: this.abort.signal });
+      const raw = await new HermesClient(config.url, config.apiKey).suggestTitle(String(context.input), String(context.answer), { signal: this.abort.signal });
       const title = Array.from(raw.replace(/[\r\n"'“”‘’`*#]/g, " ").replace(/\s+/g, " ").trim()).slice(0, 32).join("");
       if (!title) return;
       const updated = (await this.db.query(`UPDATE conversations SET title=$2,updated_at=now()
