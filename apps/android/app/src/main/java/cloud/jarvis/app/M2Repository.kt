@@ -13,6 +13,7 @@ private fun JsonObject?.str(key: String) = (this?.get(key) as? JsonPrimitive)?.c
 class M2Repository(private val gateway: GatewayClient, private val scope: CoroutineScope, private val cache: SnapshotDao, private val error: MutableStateFlow<String?>) {
     val semanticView = MutableStateFlow<JsonObject?>(null)
     suspend fun thumbnail(path:String)=gateway.thumbnail(path)
+    suspend fun media(path:String)=gateway.media(path)
     val applications = MutableStateFlow<JsonObject?>(null)
     val notifications = MutableStateFlow<List<JsonObject>>(emptyList())
     val approvals = MutableStateFlow<List<JsonObject>>(emptyList())
@@ -40,6 +41,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     val toolStates = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
     val draft = MutableStateFlow("")
     fun askAboutApp(name: String) { draft.value = "请读取并总结 $name 当前状态，同时告诉我下一步可以做什么。" }
+    fun prefill(text: String) { draft.value = text }
     fun clearDraft() { draft.value = "" }
     private var selected: String? = null
     private var pendingWorkspaceId: String? = null
@@ -101,8 +103,19 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
         save("m4-notifications", JsonArray(result))
         return result
     }
-    private suspend fun loadConversation(id: String) { val result = gateway.request("conversation.get", buildJsonObject { put("conversation_id",id) }).jsonObject; if(id == selected) { conversation.value = result; save("m2-conversation",result) } }
+    private suspend fun loadConversation(id: String) {
+        val result = gateway.request("conversation.get", buildJsonObject { put("conversation_id",id) }).jsonObject
+        if(id == selected) {
+            conversation.value = result; save("m2-conversation",result)
+            result["results"]?.jsonArray?.mapNotNull { (it as? JsonObject)?.get("view") as? JsonObject }?.forEach { loadSemanticResources(it) }
+        }
+    }
     fun selectConversation(id: String?) { selected = id; conversation.value = null; if(id != null) task { loadConversation(id) } }
+    fun deleteConversation(id:String) { task {
+        gateway.request("conversation.delete",buildJsonObject { put("conversation_id",id) })
+        if(selected==id) { selected=null;conversation.value=null;save("m2-conversation",buildJsonObject {}) }
+        conversations.value=gateway.request("conversation.list").jsonArray.map{it.jsonObject};save("m2-conversations",JsonArray(conversations.value))
+    } }
     fun openWorkspace(workspaceId: String? = null) {
         if (workspaceId != null) pendingWorkspaceId = workspaceId
         selected?.let { id -> task {
@@ -131,7 +144,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     fun send(text: String, reasoningEffort: String? = null, skills: Set<String> = emptySet()) { if(text.isBlank() || sending.value) return; sending.value = true; task {
         try {
             var id = selected
-            if(id == null) { val c = gateway.request("conversation.create", buildJsonObject { put("title", text.take(40)) }).jsonObject; id = c.getValue("id").jsonPrimitive.content; selected = id }
+            if(id == null) { val c = gateway.request("conversation.create", buildJsonObject { put("title", "新会话") }).jsonObject; id = c.getValue("id").jsonPrimitive.content; selected = id }
             val request = pending ?: buildJsonObject { put("conversation_id", id); put("content",text); put("idempotency_key",UUID.randomUUID().toString()); reasoningEffort?.let { put("reasoning_effort", it) }; if(skills.isNotEmpty()) put("skills", JsonArray(skills.sorted().map(::JsonPrimitive))) }
             check(request["content"]?.jsonPrimitive?.content == text && request["conversation_id"]?.jsonPrimitive?.content == id) { "上一条消息尚未确认，请重试原消息" }
             pending = request; save("m2-pending", request)
@@ -154,6 +167,11 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     }
     private suspend fun loadResources(spec: JsonObject) {
         spec["blocks"]?.jsonArray?.mapNotNull { it.jsonObject["resource"]?.jsonPrimitive?.content }?.distinct()?.forEach { name -> accept(gateway.request("resource.get",buildJsonObject { put("resource",name) }).jsonObject) }
+    }
+    private suspend fun loadSemanticResources(view:JsonObject) {
+        view["sections"]?.jsonArray?.mapNotNull { (it as? JsonObject)?.get("source")?.jsonPrimitive?.contentOrNull }?.distinct()?.forEach { name ->
+            runCatching { accept(gateway.request("resource.get",buildJsonObject { put("resource",name) }).jsonObject) }
+        }
     }
     fun show(intent: String, resource: String? = null, refreshingView: Boolean = false) {
       val generation = ++viewGeneration
@@ -185,7 +203,9 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     fun event(topic: String, value: JsonElement) {
         when(topic) {
             "resource.updated" -> task { accept(value.jsonObject) }
-            "conversation.updated", "conversation.execution.updated", "conversation.result.updated", "conversation.question.created", "conversation.question.answered", "approval.created", "approval.resolved" -> task { refresh() }
+            "conversation.updated", "conversation.execution.updated", "conversation.result.updated", "conversation.question.created", "conversation.question.answered",
+            "conversation.activity.started", "conversation.activity.waiting_approval", "conversation.activity.completed", "conversation.activity.failed", "conversation.activity.cancelled",
+            "approval.created", "approval.resolved" -> task { refresh() }
             "notification.created" -> task { loadControlPlane() }
             "workspace.created", "workspace.updated", "workspace.artifact.updated" -> task { openWorkspace() }
             "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled",

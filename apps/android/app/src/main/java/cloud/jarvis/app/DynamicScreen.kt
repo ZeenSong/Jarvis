@@ -27,7 +27,7 @@ private fun path(data: JsonElement?, path: String?): JsonElement? = if(path.isNu
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("usage_analysis" to "用量分析", "system_overview" to "系统趋势", "network_overview" to "服务器网络").forEach { (i,t) -> TextButton(onClick = { repo.show(i) }) { Text(t) } }
         }
-        if(semantic != null) cloud.jarvis.app.dynamicui.SemanticView(semantic!!,resources,imageLoader=repo::thumbnail) { a -> if(a.text("type") == "run.open") openRun(a.text("target")) else repo.action(a) }
+        if(semantic != null) cloud.jarvis.app.dynamicui.SemanticView(semantic!!,resources,imageLoader=repo::thumbnail,followup=repo::prefill) { a -> if(a.text("type") == "run.open") openRun(a.text("target")) else repo.action(a) }
         else view?.let { DynamicBlocks(it, resources, { a -> if(a.text("type") == "run.open") openRun(a.text("target")) else repo.action(a) }) } ?: Text("选择一个视图查看实时数据")
     }
 }

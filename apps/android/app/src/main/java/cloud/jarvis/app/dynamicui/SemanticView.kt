@@ -18,7 +18,7 @@ val mobileRenderer = buildJsonObject {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun SemanticView(view: JsonObject, liveResources: Map<String,JsonObject> = emptyMap(), imageLoader:suspend(String)->ByteArray = { error("媒体服务未连接") }, action: (JsonObject) -> Unit) {
+@Composable fun SemanticView(view: JsonObject, liveResources: Map<String,JsonObject> = emptyMap(), imageLoader:suspend(String)->ByteArray = { error("媒体服务未连接") }, followup: (String) -> Unit = {}, action: (JsonObject) -> Unit) {
     if(view.str("ui_protocol")!="2.0") { Text(view.str("fallback").ifBlank { "请更新客户端以显示此视图" });return }
     val sections=(view["sections"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.map { section ->
         val resource=liveResources[section.str("source")]
@@ -35,17 +35,17 @@ val mobileRenderer = buildJsonObject {
     val main=sections.filter { it.str("role") !in listOf("detail","actions") }.sortedBy { order.indexOf(it.str("role")) }
     var expanded by remember(view.str("id")) { mutableStateOf(false) }
     Text(view.str("title"),style=MaterialTheme.typography.headlineSmall)
-    main.forEach { SemanticSection(it,action,imageLoader) }
+    main.forEach { SemanticSection(it,action,imageLoader,followup) }
     if(sheet.isNotEmpty()) Button(onClick={expanded=true},modifier=Modifier.fillMaxWidth()) { Text("查看操作与详情") }
     if(expanded) ModalBottomSheet(onDismissRequest={expanded=false}) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
             Text("操作与详情",style=MaterialTheme.typography.titleLarge)
-            sheet.forEach { SemanticSection(it,action,imageLoader) }
+            sheet.forEach { SemanticSection(it,action,imageLoader,followup) }
         }
     }
 }
 
-@Composable private fun SemanticSection(section: JsonObject, action: (JsonObject) -> Unit, imageLoader:suspend(String)->ByteArray) {
+@Composable private fun SemanticSection(section: JsonObject, action: (JsonObject) -> Unit, imageLoader:suspend(String)->ByteArray, followup:(String)->Unit) {
     val component=section.str("component")
     if(component !in components || (section["component_version"] as? JsonPrimitive)?.intOrNull != 2) {
         Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(section.str("title"));Text(section.str("fallback")) } };return
@@ -53,12 +53,12 @@ val mobileRenderer = buildJsonObject {
     if(component == "log") { LogView(section.str("title"), section["data"], section.str("fallback"));return }
     if(component == "list") { ListView(section.str("title"), section["data"], section.str("fallback"));return }
     if(component == "task") { TaskView(section.str("title"), section["data"], section.str("fallback"));return }
-    if(component in listOf("gallery","photo_grid")) { GalleryView(section.str("title"),section["data"],section.str("fallback"),imageLoader);return }
+    if(component in listOf("gallery","photo_grid")) { GalleryView(section.str("title"),section["data"],section.str("fallback"),imageLoader,action,followup);return }
     if(component == "timeline") { TimelineView(section.str("title"), section["data"], section.str("fallback").ifBlank { "此面板数据格式不兼容" });return }
     val actions = section["actions"] as? JsonArray
     if (component == "action" && actions != null && actions.size > 1) {
         actions.take(20).mapNotNull { it as? JsonObject }.forEach { item ->
-            key(item.str("id")) { SemanticSection(JsonObject(section + mapOf("title" to JsonPrimitive(item.str("label")), "actions" to JsonArray(listOf(item)))), action,imageLoader) }
+            key(item.str("id")) { SemanticSection(JsonObject(section + mapOf("title" to JsonPrimitive(item.str("label")), "actions" to JsonArray(listOf(item)))), action,imageLoader,followup) }
         }
         return
     }

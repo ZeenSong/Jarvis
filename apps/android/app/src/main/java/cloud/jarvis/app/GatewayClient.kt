@@ -12,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.random.Random
+import java.net.URI
+import java.net.URLDecoder
 
 enum class ConnectionState { connecting, online, reconnecting, offline, unauthorized }
 class GatewayClient(private val scope: CoroutineScope, private val onEvent: (String, JsonElement) -> Unit, private val onConnected: () -> Unit, private val onCredentialsUpdated: (Credentials) -> Unit = {}) {
@@ -26,7 +28,7 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonElement>>()
-    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "conversation.execution.updated", "conversation.result.updated", "conversation.question.created", "conversation.question.answered", "conversation.question.cancelled", "conversation.tool.started", "conversation.tool.completed", "conversation.tool.failed", "conversation.status", "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled", "agent.run.created", "agent.run.updated", "resource.updated", "view.updated", "workspace.created", "workspace.updated", "workspace.opened", "workspace.artifact.updated", "approval.created", "approval.resolved", "notification.created", "schedule.created")
+    private val m2Topics = listOf("conversation.updated", "conversation.message.delta", "conversation.execution.updated", "conversation.result.updated", "conversation.question.created", "conversation.question.answered", "conversation.question.cancelled", "conversation.activity.started", "conversation.activity.waiting_approval", "conversation.activity.completed", "conversation.activity.failed", "conversation.activity.cancelled", "conversation.status", "task.created", "task.started", "task.waiting", "task.completed", "task.failed", "task.cancelled", "agent.run.created", "agent.run.updated", "resource.updated", "workspace.created", "workspace.updated", "workspace.artifact.updated", "approval.created", "approval.resolved", "notification.created")
     private var topics = listOf("network.public_ipv6.changed", "agent.status.changed", "llm.usage.changed")
 
     suspend fun login(server: String, username: String, password: String): Credentials = withContext(Dispatchers.IO) {
@@ -112,8 +114,19 @@ class GatewayClient(private val scope: CoroutineScope, private val onEvent: (Str
             return withTimeout(10_000) { result.await() }
         } finally { pending.remove(id) }
     }
-    suspend fun thumbnail(path:String):ByteArray = withContext(Dispatchers.IO) {
+    suspend fun thumbnail(path:String):ByteArray {
         require(cloud.jarvis.app.dynamicui.mediaPath.matches(path))
+        return media(path)
+    }
+    suspend fun media(path:String):ByteArray = withContext(Dispatchers.IO) {
+        val uri=URI(path)
+        require(uri.scheme==null && uri.host==null && uri.fragment==null)
+        val direct=Regex("^/api/media/[a-zA-Z0-9_-]{1,100}/(?:thumbnail|content)$").matches(uri.path)
+        val legacy=if(uri.path=="/api/media/file" && uri.rawQuery?.startsWith("path=")==true && !uri.rawQuery!!.substringAfter("path=").contains('&')) {
+            val decoded=URLDecoder.decode(uri.rawQuery!!.substringAfter("path="),"UTF-8")
+            Regex("^/opt/data/[A-Za-z0-9._/-]+\\.(?:png|jpe?g|webp)$",RegexOption.IGNORE_CASE).matches(decoded)
+        } else false
+        require(direct || legacy)
         val auth=credentials ?: error("尚未登录")
         val client=http.newBuilder().followRedirects(false).followSslRedirects(false).build()
         client.newCall(Request.Builder().url(auth.server+path).header("Authorization","Bearer ${auth.token}").build()).execute().use { response ->
