@@ -1,7 +1,7 @@
 # M4 交付记录
 
 > 日期：2026-10-02
-> 状态：Release Candidate（功能与构建验证完成，等待真实 Android 设备验收）
+> 状态：已发布 `v0.4.0`；完整真实 Android Daily Driver 门禁仍作为已知边界保留
 
 ## 已交付
 
@@ -20,6 +20,6 @@
 - 使用仓库 `.local` 中已有的 Android SDK / JDK 17 与 `jarvis-m1` 模拟器完成 Conversation 视觉与交互验收：新会话、消息发送、流式处理中止态、Execution Stream、完成态自动跟随与连续追问均通过；布局已与 Web Conversation 对照。
 - Debug APK：`apps/android/app/build/outputs/apk/debug/app-debug.apk`。
 
-## 发布门禁
+## 发布边界
 
-M4-AC-19 要求真实 Android Daily Driver 端到端实机验收。本次构建环境没有连接 Android 设备，因此不能把自动构建冒充为实机证据。发布前需在连接到真实 Jarvis 服务的 Android 设备上走通：启动长任务 → App 退后台 → 收到通知 → Deep Link 打开 Result / Workspace，以及 Question / Approval 后原任务继续。
+M4-AC-19 要求真实 Android Daily Driver 端到端实机验收。本次模拟器验收和用户提供的真机 Conversation 截图不能替代完整通知链路证据。`v0.4.0` 依据用户发布决定交付，但仍需在连接到真实 Jarvis 服务的 Android 设备上补充走通：启动长任务 → App 退后台 → 收到通知 → Deep Link 打开 Result / Workspace，以及 Question / Approval 后原任务继续。

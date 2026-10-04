@@ -47,6 +47,7 @@
 - [M3.1 发布记录](milestones/m3/m3.1-release.md) · [M3.1 修复后状态](milestones/m3/m3.1-status-and-plan.md)
 - [M3.2 实施记录](milestones/m3/m3.2-progress.md)
 - [M3.3 实施与验收记录](milestones/m3/m3.3-progress.md)
+- [M4 交付记录](milestones/m4/m4-delivery.md) · [v0.4.0 发布记录](milestones/m4/m4-release.md)
 
 ## 文档维护约定
 
