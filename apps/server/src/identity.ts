@@ -187,8 +187,13 @@ export async function updateUserRole(db: Database, adminId: string, userId: stri
 
 export async function authenticateUserAccess(db: Database, value?: string) {
   if (!value?.startsWith("Bearer ")) return null;
-  const identity = (await db.query("SELECT s.user_id,u.username,u.role,s.device_id,s.household_id,s.id AS session_id FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND s.last_seen_at>now()-interval '15 minutes'", [hash(value.slice(7))])).rows[0];
+  const identity = (await db.query("SELECT s.user_id,u.username,u.role,s.device_id,s.household_id,s.id AS session_id,s.last_seen_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND s.last_seen_at>now()-interval '15 minutes'", [hash(value.slice(7))])).rows[0];
   if (!identity) return null;
-  await db.query("UPDATE user_sessions SET last_seen_at=now() WHERE id=$1 AND revoked_at IS NULL", [identity.session_id]);
+  // The idle window is 15 minutes, so refreshing at most once a minute is
+  // sufficient. Writing on every request turned each authenticated GET into an
+  // UPDATE on user_sessions.
+  if (Date.now() - new Date(identity.last_seen_at).getTime() > 60_000) {
+    await db.query("UPDATE user_sessions SET last_seen_at=now() WHERE id=$1 AND revoked_at IS NULL", [identity.session_id]);
+  }
   return identity;
 }
