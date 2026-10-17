@@ -18,7 +18,14 @@ import { ProductTasks } from "./tasks";
 import { ControlPlanePanel } from "./control-plane-panel";
 import { JarvisConversation } from "./jarvis-conversation";
 import { SettingsPage } from "./settings";
+import { jarvisStyles, type JarvisStyle } from "./appearance";
 import "./design.css";
+const readSetting = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
+const savedStyle = readSetting("jarvis-style");
+const initialStyle: JarvisStyle = jarvisStyles.some((item) => item.id === savedStyle) ? savedStyle as JarvisStyle : "lantern";
+const initialTheme = readSetting("jarvis-theme") === "light" ? "light" : "dark";
+document.documentElement.dataset.style = initialStyle;
+document.documentElement.dataset.theme = initialTheme;
 const gateway = new Gateway();
 const nav = [
   ["home", "首页"],
@@ -54,8 +61,10 @@ function restoredNavigation() {
 function App() {
   const viewRequest = useRef(0);
   const developerMode = new URLSearchParams(location.search).get("developer") === "1";
-  const [theme, setTheme] = useState(() => localStorage.getItem("jarvis-theme") === "light" ? "light" : "dark");
+  const [style, setStyle] = useState<JarvisStyle>(initialStyle);
+  const [theme, setTheme] = useState<"dark" | "light">(initialTheme);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("jarvis-theme", theme); }, [theme]);
+  useEffect(() => { document.documentElement.dataset.style = style; localStorage.setItem("jarvis-style", style); }, [style]);
   const [paired, setPaired] = useState(false),
     [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
@@ -456,7 +465,7 @@ function App() {
               <WorkspacePanel gateway={gateway} conversationId={workspaceConversation ?? selected} workspaceId={workspaceTarget} developer={developerMode} action={action} fallbackView={semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view ? <Blocks view={view} resources={resources} action={action} /> : undefined} onError={fail} />
             </aside>}
           </div>
-        ) : page === "settings" || page === "users" ? <SettingsPage gateway={gateway} onError={fail} />
+        ) : page === "settings" || page === "users" ? <SettingsPage gateway={gateway} onError={fail} style={style} onStyleChange={setStyle} theme={theme} onThemeChange={setTheme} />
         : page === "agents" ? (
           <>
             <section className="agent-tier">

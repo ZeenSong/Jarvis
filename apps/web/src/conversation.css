@@ -1224,22 +1224,22 @@
   width: 18px;
   height: 18px;
   flex: 0 0 18px;
-  border: 1px solid rgba(147, 171, 141, 0.35);
+  border: 1px solid rgba(var(--sage-rgb), 0.35);
   border-radius: 50%;
-  background: rgba(147, 171, 141, 0.08);
+  background: rgba(var(--sage-rgb), 0.08);
   color: var(--sage);
   font-size: 10px;
 }
 
 .execution-stream.is-running .execution-glyph {
-  border-color: rgba(226, 181, 109, 0.45);
+  border-color: rgba(var(--accent-rgb), 0.45);
   background: var(--accent-soft);
 }
 
 .execution-stream .execution-spinner {
   width: 9px;
   height: 9px;
-  border: 1.5px solid rgba(226, 181, 109, 0.2);
+  border: 1.5px solid rgba(var(--accent-rgb), 0.2);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: execution-spin 0.9s linear infinite;
@@ -1320,14 +1320,14 @@
 
 .execution-stream [data-status="completed"] .execution-node {
   color: var(--sage);
-  border-color: rgba(147, 171, 141, 0.35);
-  background: rgba(147, 171, 141, 0.08);
+  border-color: rgba(var(--sage-rgb), 0.35);
+  background: rgba(var(--sage-rgb), 0.08);
 }
 .execution-stream [data-status="running"] .execution-node {
   color: var(--accent);
-  border-color: rgba(226, 181, 109, 0.5);
+  border-color: rgba(var(--accent-rgb), 0.5);
   background: var(--accent-soft);
-  box-shadow: 0 0 0 3px rgba(226, 181, 109, 0.08);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.08);
 }
 .execution-stream [data-status="failed"] .execution-node {
   color: var(--danger);
@@ -1429,21 +1429,22 @@
   padding: 13px 15px 9px;
   border: 1px solid var(--line-2);
   border-radius: 15px;
-  background: rgba(18, 20, 23, 0.86);
+  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
   backdrop-filter: blur(20px);
   box-shadow: 0 18px 55px rgba(0, 0, 0, 0.3);
 }
 .assistant-ui-composer:focus-within {
-  border-color: rgba(226, 181, 109, 0.55);
+  border-color: rgba(var(--accent-rgb), 0.55);
   box-shadow: 0 0 0 4px var(--accent-soft), 0 18px 55px rgba(0, 0, 0, 0.32);
 }
 .assistant-ui-composer textarea { color: var(--text); font-size: 13.5px; }
 .assistant-ui-composer textarea::placeholder { color: var(--muted-2); }
 .composer-footer button {
-  border: 1px solid rgba(226, 181, 109, 0.5);
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
   background: var(--accent);
   color: var(--accent-ink);
-  box-shadow: 0 4px 16px rgba(226, 181, 109, 0.18);
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.18);
 }
 .composer-footer button:hover { background: var(--accent-strong); }
 .composer-footer > span { color: var(--muted-2); }
@@ -1472,7 +1473,7 @@
   font-size: 11.5px;
 }
 .welcome-prompts button span { color: var(--muted-2); font-size: 10px; }
-.welcome-prompts button:hover { border-color: rgba(226, 181, 109, 0.35); background: var(--accent-soft); color: var(--text); }
+.welcome-prompts button:hover { border-color: rgba(var(--accent-rgb), 0.35); background: var(--accent-soft); color: var(--text); }
 
 /* Sidebar history */
 .page-jarvis .sidebar-history, .page-workspace .sidebar-history { margin-top: 22px; padding-top: 14px; }

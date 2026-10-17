@@ -19,7 +19,7 @@ type Approval = { id: string; turn_id: string; capability: string; status: strin
 type Message = { id: string; turn_id: string; role: string; content: string; sequence?: number; revision?: number; status?: string; workspace_id?: string };
 type SkillOption = { name: string; description: string; category?: string };
 export type ConversationSnapshot = { conversation?: { title?: string }; messages?: Message[]; events?: ExecutionEvent[]; activities?: Activity[]; questions?: Question[]; approvals?: Approval[]; results?: ConversationResult[] };
-type ConversationContextValue = { gateway: Gateway; developer: boolean; snapshot: ConversationSnapshot; messages: Message[]; liveTurns: Set<string>; onWorkspaceOpen?: (id: string, conversationId?: string) => void; action: (value: any) => void; followup: (text: string) => void };
+type ConversationContextValue = { gateway: Gateway; developer: boolean; snapshot: ConversationSnapshot; messages: Message[]; onWorkspaceOpen?: (id: string, conversationId?: string) => void; action: (value: any) => void; followup: (text: string) => void };
 const ConversationContext = createContext<ConversationContextValue | null>(null);
 const emptySnapshot: ConversationSnapshot = {};
 
@@ -52,7 +52,7 @@ const kindLabel = (kind: string) => ({ reasoning: "思考", skill: "技能", too
 
 const formatDuration = (ms: number) => ms < 1000 ? `${Math.round(ms)} 毫秒` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`;
 
-export function ExecutionStream({ events, activities, developer, live }: { events: ExecutionEvent[]; activities: Activity[]; developer: boolean; live?: boolean }) {
+export function ExecutionStream({ events, activities, developer }: { events: ExecutionEvent[]; activities: Activity[]; developer: boolean }) {
   const visible = visibleActivities(activities, developer);
   const ordered = events.filter((event) => !event.activity_id || visible.some((activity) => activity.id === event.activity_id));
   // Existing conversations predate durable execution segments; keep their real activities.
@@ -68,12 +68,9 @@ export function ExecutionStream({ events, activities, developer, live }: { event
     ? Math.max(0, Math.max(...finishes) - Math.min(...starts))
     : undefined;
   const durationLabel = running ? "实时" : duration === undefined ? "过程记录" : `耗时 ${formatDuration(duration)}`;
-  // Historical runs stay collapsed; a live run opens once and stays open so its
-  // reasoning remains readable after completion. The user can fold it manually.
-  const [open, setOpen] = useState(running || !!live);
-  useEffect(() => {
-    if (running || live) setOpen(true);
-  }, [running, live]);
+  // Every execution summary starts folded. The user opens it when they want the
+  // step-by-step record; live updates keep flowing into the open timeline.
+  const [open, setOpen] = useState(false);
   if (!steps.length) return null;
   return <section className={`execution-stream${running ? " is-running" : " is-done"}`} aria-label="执行过程" aria-busy={running}>
     <details className="execution-disclosure" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -121,7 +118,6 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
   const selectedSkillsPreference = useRef<string[]>([]);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   const composerPrefill = useRef<((text: string) => void) | undefined>(undefined);
-  const liveTurns = useRef(new Set<string>());
   const registerComposerPrefill = useCallback((apply: ((text: string) => void) | undefined) => { composerPrefill.current = apply; }, []);
   const setSkillSelection = useCallback((value: string[]) => { selectedSkillsPreference.current = value; setSelectedSkills(value); }, []);
   const consumeSkillSelection = useCallback(() => setSkillSelection([]), [setSkillSelection]);
@@ -181,14 +177,12 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
     };
     const offs = [gateway.subscribe<ExecutionEvent>("conversation.execution.updated", (event) => {
       if (conversationId && event.conversation_id !== conversationId) return;
-      liveTurns.current.add(event.turn_id);
       setSnapshot((old) => ({ ...old, events: mergeExecution(old.events ?? [], event) }));
     }), ...["created", "answered"].map((status) => gateway.subscribe("conversation.question." + status, (question) => {
       if (conversationId && question.conversation_id !== conversationId) return;
       setSnapshot((old) => ({ ...old, questions: mergeQuestions(old.questions ?? [], [question]) }));
     })), ...["started", "completed", "failed", "cancelled", "waiting_approval"].map((status) => gateway.subscribe("conversation.activity." + status, (activity) => {
       if (conversationId && activity.conversation_id !== conversationId) return;
-      if (activity.turn_id) liveTurns.current.add(activity.turn_id);
       setSnapshot((old) => ({ ...old, activities: [...(old.activities ?? []).filter((item) => item.id !== activity.activity_id), { ...activity, id: activity.activity_id }] }));
       refreshDeveloperEvidence(activity);
     })), gateway.subscribe("conversation.question.cancelled", (question) => {
@@ -234,7 +228,7 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
     synced.current = fingerprint;
     runtime.thread.reset(initialMessages);
   }, [initialMessages, runtime]);
-  const context = useMemo(() => ({ gateway, developer, snapshot, messages, liveTurns: liveTurns.current, onWorkspaceOpen, action, followup }), [gateway, developer, snapshot, messages, onWorkspaceOpen, action, followup]);
+  const context = useMemo(() => ({ gateway, developer, snapshot, messages, onWorkspaceOpen, action, followup }), [gateway, developer, snapshot, messages, onWorkspaceOpen, action, followup]);
   return <ConversationContext.Provider value={context}><AssistantRuntimeProvider runtime={runtime}>
     <div className="jarvis-conversation">
       <header className="conversation-header"><span className="jarvis-mark">◇</span><div><h2>{initial.conversation?.title || "与 Jarvis 对话"}</h2><p>私人对话 · 仅你可见</p></div></header>
@@ -345,11 +339,10 @@ function JarvisTurn() {
     }
   }, [custom.results, context.onWorkspaceOpen]);
   const [error, setError] = useState("");
-  const live = typeof turnId === "string" && context.liveTurns.has(turnId);
   const invoke = async (topic: string, payload: unknown) => { try { setError(""); await context.gateway.request(topic, payload); } catch (cause) { setError(cause instanceof Error ? cause.message : "操作未完成，请重试"); } };
   return <MessagePrimitive.Root className="message assistant jarvis-turn">
     <div className="turn-author"><span className="jarvis-mark">◇</span><strong>Jarvis</strong>{running && <span className="turn-working" role="status">{serverStatus === "queued" && !runtimeRunning ? "排队中" : "正在处理"}<span>…</span></span>}</div>
-    <ExecutionStream events={events} activities={activities} developer={context.developer} live={live} />
+    <ExecutionStream events={events} activities={activities} developer={context.developer} />
     <MessagePrimitive.Content components={{ Text: AssistantText, Image: AssistantImage, File: AssistantFile, tools: { Fallback: HiddenTool } }} />
     {(context.snapshot.questions ?? []).filter((question) => question.turn_id === turnId && question.status === "pending").map((question) => <section className="inline-question" key={question.id}><strong>{question.prompt}</strong><div>{(question.kind === "boolean" ? [{ value: true, label: "是" }, { value: false, label: "否" }] : question.options ?? []).map((option) => <button key={String(option.value)} onClick={() => void invoke("conversation.question.answer", { question_id: question.id, answer: option.value })}>{option.label}</button>)}</div></section>)}
     {(context.snapshot.approvals ?? []).filter((approval) => approval.turn_id === turnId && approval.status === "pending").map((approval) => <section className="inline-approval" key={approval.id}><strong>需要你的确认</strong><p>{capabilityLabel(approval.capability)}</p><button onClick={() => void invoke("approval.resolve", { approval_id: approval.id, status: "approved" })}>批准一次</button><button onClick={() => void invoke("approval.resolve", { approval_id: approval.id, status: "rejected" })}>取消</button></section>)}
