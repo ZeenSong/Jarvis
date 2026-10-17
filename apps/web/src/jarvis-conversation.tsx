@@ -308,7 +308,17 @@ function UserText({ text }: { text: string }) {
   if (!answer) return <span>{text}</span>;
   return <span className="question-answer-chip"><small>对「{answer[1]}」的回答</small><strong>{answer[2]}</strong></span>;
 }
-function AssistantImage({ image, filename }: { image: string; filename?: string }) { return <figure className="assistant-media"><img src={image} alt={filename ?? "返回的照片"} loading="lazy" decoding="async" /></figure>; }
+function AssistantImage({ image, filename }: { image: string; filename?: string }) {
+  // The thumbnail is a preview: opening the original keeps the full frame
+  // available without a second request path.
+  return (
+    <figure className="assistant-media">
+      <a className="assistant-media-link" href={image} target="_blank" rel="noreferrer" title="打开原图">
+        <img src={image} alt={filename ?? "返回的照片"} loading="lazy" decoding="async" />
+      </a>
+    </figure>
+  );
+}
 function AssistantFile({ data, filename }: { data: string; filename?: string }) { return <AssistantImage image={data} filename={filename} />; }
 function AssistantText({ text }: { text: string }) { return <div className="streaming-answer"><MarkdownContent value={text} /></div>; }
 function HiddenTool() { return null; }

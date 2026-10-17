@@ -505,6 +505,27 @@ export async function buildApp(options: {
       return reply.code(503).send({ error: "web_not_built" });
     }
   });
+  /**
+   * Client routes are rendered by the SPA, which falls back to the home page for
+   * anything it does not know. Without this, a mistyped or stale link rendered the
+   * server's raw JSON 404 instead of the application. API, internal and static
+   * prefixes keep their machine-readable 404 so a wrong endpoint never looks like
+   * a working page.
+   */
+  const shellPrefixes = ["/api/", "/internal/", "/assets/", "/app-icons/", "/artwork/", "/fonts-terminal/", "/media/", "/api/media/", "/hermes-dashboard"];
+  app.setNotFoundHandler(async (req, reply) => {
+    const html = req.method === "GET"
+      && (req.headers.accept ?? "").includes("text/html")
+      && !shellPrefixes.some((prefix) => req.url.startsWith(prefix));
+    if (html) {
+      try {
+        return reply.type("text/html").send(await readFile(resolve("apps/web/dist/index.html")));
+      } catch {
+        return reply.code(503).send({ error: "web_not_built" });
+      }
+    }
+    return reply.code(404).send({ message: `Route ${req.method}:${req.url.split("?")[0]} not found`, error: "Not Found", statusCode: 404 });
+  });
   app.get<{ Params: { "*": string } }>("/assets/*", async (req, reply) => {
     const name = req.params["*"];
     if (!/^[a-zA-Z0-9_.-]+$/.test(name)) return reply.code(404).send();
