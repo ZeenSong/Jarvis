@@ -331,9 +331,11 @@ export async function buildApp(options: {
       if (toolEvent) push("conversation.tool.failed", { ...toolEvent, error: error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "tool_failed" });
       if (turnId && toolEvent && contextOwner) await m2.conversations.recordActivity(contextOwner, turnId, "failed", { tool_call_id: toolEvent.tool_call_id, capability: toolEvent.capability, error: error instanceof Error ? error.message : "tool_failed" });
       // The MCP provider receives the HTTP error body and Hermes can report it
-      // as a failed capability call without exposing bridge credentials.
-      const message = error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "hermes_capability_invalid";
-      return reply.code(message === "mcp_capability_forbidden" || message === "hermes_scope_forbidden" ? 403 : 400).send({ error: message, ...(error instanceof z.ZodError ? { issues: error.issues } : {}) });
+      // as a failed capability call without exposing bridge credentials. The
+      // status comes from the shared error contract: an unknown tool code is a
+      // bug (500/`request_failed`), a known one keeps its documented status.
+      const mapped = toErrorResponse(error);
+      return reply.code(mapped.status).send(mapped.body);
     }
   });
   app.post<{ Body: { context_token?: string; content_type?: string; source?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {

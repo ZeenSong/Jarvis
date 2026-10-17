@@ -186,7 +186,7 @@ test("M3.2 identity, MCP authorization, Activity, Approval and Question integrat
       headers: { "x-jarvis-bridge-key": process.env.HERMES_BRIDGE_KEY },
       payload: { tool: "home_assistant_state", arguments: {}, context_token: createHermesContextToken(process.env.HERMES_BRIDGE_KEY!, deviceId, conversation.id, 600, { actor: first.user.id, household: first.household.id, scopes: ["system.read"] }) },
     });
-    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.statusCode, 403, denied.body);
   } finally {
     await ctx.app.close();
     if (oldBridgeKey === undefined) delete process.env.HERMES_BRIDGE_KEY;

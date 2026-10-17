@@ -2,6 +2,7 @@ import { estimateCost, type Prices } from "../../llm-usage/src/index.js";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { Database } from "../../../apps/server/src/persistence.js";
+import { LeaseStore, workerIdentity } from "../../leases/src/index.js";
 import {
   RuntimeRegistry,
   canTransition,
@@ -84,9 +85,16 @@ export async function transaction<T>(
   }
 }
 export class AgentManager {
+  /**
+   * Local concurrency accounting only. It is not a correctness mechanism: the
+   * database claim and the run lease are what make two processes safe.
+   */
   private active = new Map<string, Promise<void>>();
   private stopped = false;
   private lastCleanup = Date.now();
+  /** Long enough to absorb a slow start, short enough to failover quickly. */
+  private static readonly LEASE_TTL = 60;
+  private readonly workerId = workerIdentity();
   constructor(
     readonly db: Database,
     readonly registry: RuntimeRegistry,
@@ -94,6 +102,7 @@ export class AgentManager {
     readonly prices: Prices = {},
     readonly onApproval?: (run: { id: string; requested_by: string }, event: AgentEvent) => Promise<void>,
     readonly onTaskStatus?: (runId: string, status: string, payload: Record<string, unknown>) => Promise<void>,
+    readonly leases: LeaseStore = new LeaseStore(db),
   ) {}
   async selectExecutor(c: PoolClient, request: TaskRequest) {
     const definitions = (await c.query("SELECT * FROM agent_definitions WHERE enabled=true AND tier='managed' ORDER BY id")).rows;
@@ -496,11 +505,13 @@ export class AgentManager {
     return { resumed: true };
   }
   /**
-   * Startup recovery, split into two responsibilities that used to share one
-   * query and one failure branch.
+   * Recovery, split into two responsibilities that used to share one query and
+   * one failure branch.
    *
-   * 1. Runs that were in flight when the process died can never be resumed
-   *    (runtime state is process-local), so they are failed explicitly.
+   * 1. Runs that nobody holds can never be resumed (runtime state is
+   *    process-local), so they are failed explicitly. "Nobody holds" is decided
+   *    by the lease, not by "I just started": another replica may legitimately be
+   *    running a task while this one boots.
    * 2. Instances whose run is already terminal but never recorded `stopped_at`
    *    are cleaned up with bounded, backed-off attempts.
    *
@@ -510,20 +521,30 @@ export class AgentManager {
    * over 30 days in production. Cleanup is now idempotent, bounded and silent.
    */
   async recover(terminalOnly = false) {
-    if (!terminalOnly) await this.failInterruptedRuns();
+    if (!terminalOnly) await this.sweepOrphanedRuns();
     await this.sweepInstanceCleanup();
   }
 
-  private async failInterruptedRuns() {
+  /**
+   * Fail executions whose lease expired. Queued runs are left alone — they were
+   * never claimed, so they should simply be picked up by whichever worker is
+   * alive. Waiting states are left alone too: they are not executing.
+   */
+  private async sweepOrphanedRuns() {
     const rows = (
       await this.db.query(
-        "SELECT r.* FROM agent_runs r WHERE r.status NOT IN ('completed','failed','cancelled')",
+        `SELECT r.id FROM agent_runs r
+          WHERE r.status IN ('starting','running')
+            AND NOT EXISTS (
+              SELECT 1 FROM leases l
+               WHERE l.kind='agent-run:'||r.id::text AND l.expires_at > now()
+            )`,
       )
     ).rows;
     for (const r of rows) {
       await this.transition(r.id, "failed", {
-        code: "server_restarted",
-        summary: "服务重启，任务未能恢复；请检查已归档结果后重新提交。",
+        code: "worker_lost",
+        summary: "执行进程已退出，任务未能恢复；请重新提交。",
       });
     }
   }
@@ -603,29 +624,61 @@ export class AgentManager {
     if (Date.now() - this.lastCleanup > 60000) {
       this.lastCleanup = Date.now();
       await this.recover(true);
+      // Claimed executions from a dead worker must not stay 'running' forever.
+      await this.sweepOrphanedRuns();
     }
     for (const type of this.registry.types()) {
       if (this.active.has(type)) continue;
+      const run = await this.claim(type);
+      if (!run) continue;
+      const kind = `agent-run:${run.id}`;
+      const guard = this.leases.guard(kind, this.workerId, AgentManager.LEASE_TTL);
+      const task = this.execute(run)
+        .catch(() => {})
+        .finally(async () => {
+          guard.stop();
+          this.active.delete(type);
+          await this.leases.release(kind, this.workerId).catch(() => {});
+        });
+      this.active.set(type, task);
+    }
+  }
+
+  /**
+   * Claim one queued run and take its lease in a single transaction. Taking the
+   * lease in the same transaction as the status change removes the window where
+   * a run looks claimed but unowned — the shape that made the orphan sweep and
+   * the claimer race against each other.
+   *
+   * `SKIP LOCKED` also means two processes never even look at the same row.
+   */
+  private async claim(type: string) {
+    return transaction(this.db, async (c) => {
       const row = (
-        await this.db.query(
-          "SELECT * FROM agent_runs WHERE runtime_type=$1 AND status='queued' ORDER BY created_at LIMIT 1",
+        await c.query(
+          "SELECT * FROM agent_runs WHERE runtime_type=$1 AND status='queued' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
           [type],
         )
       ).rows[0];
-      if (row) {
-        const task = this.execute(row)
-          .catch(() => {})
-          .finally(() => this.active.delete(type));
-        this.active.set(type, task);
-      }
-    }
+      if (!row) return undefined;
+      const lease = await this.leases.acquire(`agent-run:${row.id}`, this.workerId, AgentManager.LEASE_TTL, {
+        agent_id: row.agent_id,
+        runtime_type: type,
+      });
+      if (!lease.acquired) return undefined;
+      await c.query(
+        "UPDATE agent_runs SET status='starting',updated_at=now() WHERE id=$1 AND status='queued'",
+        [row.id],
+      );
+      return { ...row, status: "starting" };
+    });
   }
+
   private async execute(run: any) {
     let runtime;
     let runtimeRunId: string | undefined;
     try {
       runtime = this.registry.get(run.runtime_type);
-      if (!(await this.transition(run.id, "starting"))) return;
       const instance = randomUUID();
       await this.db.query(
         "INSERT INTO agent_instances(id,agent_definition_id,runtime_type,status) VALUES($1,$2,$3,'starting')",
@@ -707,9 +760,14 @@ export class AgentManager {
   }
   async close() {
     this.stopped = true;
+    // Cancel only what this process holds. The old query cancelled every
+    // non-terminal run, including ones another replica was executing.
     for (const row of (
       await this.db.query(
-        "SELECT id FROM agent_runs WHERE status NOT IN ('completed','failed','cancelled')",
+        `SELECT r.id FROM agent_runs r
+           JOIN leases l ON l.kind='agent-run:'||r.id::text AND l.owner=$1
+          WHERE r.status NOT IN ('completed','failed','cancelled')`,
+        [this.workerId],
       )
     ).rows)
       await this.cancel(row.id);

@@ -1,4 +1,23 @@
-import type { Database } from "../../../apps/server/src/persistence.js";
+import { randomBytes } from "node:crypto";
+import { hostname } from "node:os";
+
+/**
+ * Anything that can run a query: a pool or a transaction client. Widening to this
+ * shape lets callers take a lease *inside* the same transaction that claims the
+ * work, so a crash can never leave "claimed but unleased" work behind.
+ */
+export interface Queryable {
+  query(text: string, values?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
+}
+
+/**
+ * Stable-enough identity for this process. Leases are cooperative: the owner is a
+ * name, not a credential, so host + pid + a short random suffix is enough to keep
+ * two processes on the same host apart.
+ */
+export function workerIdentity(): string {
+  return `${hostname()}:${process.pid}:${randomBytes(4).toString("hex")}`;
+}
 
 /**
  * Cooperative, database-backed leases.
@@ -24,10 +43,34 @@ export type AcquireResult =
 
 export class LeaseStore {
   constructor(
-    private readonly db: Database,
+    private readonly db: Queryable,
     /** Injectable clock so tests can advance time without sleeping. */
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  /**
+   * Renew a lease every third of its TTL. Best-effort by design: renewal failures
+   * are reported through `onLost` instead of thrown, because losing a lease is not
+   * a reason to crash the work that may still be completing.
+   */
+  guard(kind: string, owner: string, ttlSeconds: number, onLost?: () => void): { stop(): void } {
+    const every = Math.max(1000, Math.floor((ttlSeconds * 1000) / 3));
+    let stopped = false;
+    const timer = setInterval(() => {
+      void this.renew(kind, owner, ttlSeconds)
+        .then((held) => {
+          if (!held && !stopped) onLost?.();
+        })
+        .catch(() => {});
+    }, every);
+    timer.unref?.();
+    return {
+      stop() {
+        stopped = true;
+        clearInterval(timer);
+      },
+    };
+  }
 
   /**
    * Try to take `kind`. Succeeds when the lease is free, already ours (so a

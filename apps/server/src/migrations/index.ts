@@ -83,9 +83,18 @@ export async function runMigrations(
 
     // Adopt a database that was created by the legacy boot-time script: it already
     // has the baseline shape, and re-running it is a no-op but slow.
+    //
+    // The probe must be unqualified (so it honours search_path) and must cover more
+    // than one table: a schema that merely happens to contain `conversations` — a
+    // half-built database, or a different schema on the same server — would
+    // otherwise be adopted and then fail later on a table 0001 would have created.
     if (recorded.size === 0) {
-      const existing = await client.query("SELECT to_regclass('public.conversations') AS table");
-      if (existing.rows[0]?.table) {
+      const existing = await client.query(
+        `SELECT to_regclass('conversations') IS NOT NULL
+            AND to_regclass('agent_instances') IS NOT NULL
+            AND to_regclass('run_events') IS NOT NULL AS legacy`,
+      );
+      if (existing.rows[0]?.legacy) {
         for (const migration of migrations) {
           if (migration.version !== "0001") break;
           await client.query(

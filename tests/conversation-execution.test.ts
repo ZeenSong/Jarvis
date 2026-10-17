@@ -50,6 +50,10 @@ test("provider reasoning and execution phases persist in actual order across ser
     yield { event: "message.delta", delta: "分析" };
     yield { event: "run.completed", output: "分析完成。" };
   });
+  // The title refresh resolves the active model first. Without this mock the
+  // unmocked control-plane call outlives the poll below, which is a test gap
+  // rather than a product behaviour.
+  t.mock.method(HermesClient.prototype, "modelOptions", async () => ({ model: "hermes-agent" }) as any);
   t.mock.method(HermesClient.prototype, "suggestTitle", async () => "猫咪活动趋势");
   try {
     await migrate(db);
