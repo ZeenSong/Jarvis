@@ -27,6 +27,7 @@ import {
 import { WorkspaceStore } from "./workspaces.js";
 import { ControlPlane } from "./control-plane.js";
 import { appDescriptorSchema, resolveAppLink } from "../../../packages/app-bridge/src/index.js";
+import { IntegrationRegistry, builtinManifests } from "../../../packages/integrations/src/index.js";
 
 const taskCapabilitySchema = z.string().regex(/^[a-z][a-z0-9.*_-]{1,199}$/);
 const taskCreateSchema = z.object({
@@ -78,6 +79,7 @@ export const m2Topics = [
   "integration.credential.revoke",
   "capability.list",
   "mcp.catalog.list",
+  "integration.list",
   "conversation.create",
   "conversation.list",
   "conversation.get",
@@ -170,10 +172,6 @@ const capabilityCatalog: Capability[] = [
   { id: "system.metrics.read", kind: "kernel", risk: "read", approval_required: false },
   { id: "agent.list", kind: "kernel", risk: "read", approval_required: false },
   { id: "agent.run.read", kind: "kernel", risk: "read", approval_required: false },
-  { id: "homeassistant.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
-  { id: "homeassistant.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
-  { id: "immich.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
-  { id: "immich.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
   { id: "schedule.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
   { id: "conversation.question.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
   { id: "ui.view.show", kind: "kernel", risk: "write", approval_required: false },
@@ -191,7 +189,10 @@ export class M2 {
   readonly integrationCredentials: IntegrationCredentialStore;
   private timer?: NodeJS.Timeout;
   private busy = false;
-  private capabilities() { return mergeCapabilities(capabilityCatalog, parseCapabilityCatalog()); }
+  private capabilities() {
+    // MCP provider entries are derived from manifests, not hand-maintained here.
+    return mergeCapabilities([...capabilityCatalog, ...this.integrations.capabilities()], parseCapabilityCatalog());
+  }
   constructor(
     readonly db: Database,
     readonly push: Push,
@@ -199,6 +200,11 @@ export class M2 {
     registry = new RuntimeRegistry(),
     prices: Prices = {},
     readonly invokeNode?: (owner: string, nodeId: string, capability: string, input: Record<string, unknown>) => Promise<unknown>,
+    /**
+     * Declarative integrations. Defaults to the built-ins so unit tests and
+     * embedders keep working without wiring a directory.
+     */
+    readonly integrations: IntegrationRegistry = new IntegrationRegistry(builtinManifests),
   ) {
     this.control = new ControlPlane(db, push);
     this.integrationCredentials = new IntegrationCredentialStore(db);
@@ -482,26 +488,52 @@ export class M2 {
         return this.workspaces.upsertArtifact(device, p);
       case "workspace.bind":
         return this.workspaces.bind(device, p.workspace_id, p.resource, p.revision, p.metadata);
+      case "integration.list": {
+        return {
+          version: 1,
+          integrations: this.integrations.list().flatMap((manifest) => {
+            const descriptor = IntegrationRegistry.appDescriptor(manifest);
+            if (!descriptor) return [];
+            return [{
+              id: descriptor.id,
+              name: descriptor.name,
+              description: descriptor.description,
+              status: descriptor.status,
+              launch: descriptor.launch.web ?? null,
+              icon: descriptor.icon ?? null,
+              capabilities: descriptor.capabilities,
+              resources: descriptor.resources,
+              read_scope: manifest.readScope,
+              write_scope: manifest.writeScope,
+              risk: manifest.risk,
+            }];
+          }),
+        };
+      }
       case "app.resolve": {
-        const input = z.object({ app_id: z.enum(["home-assistant", "immich"]), kind: z.string().max(80).optional(), id: z.string().max(300).optional(), platform: z.enum(["web", "android"]) }).strict().parse(p);
-        const candidate = input.app_id === "home-assistant" ? process.env.HOME_ASSISTANT_URL : process.env.IMMICH_URL;
-        // The deployment is intentionally reachable through the user's
-        // Tailscale address over HTTP; the operator supplied these URLs, so
-        // keep the resolver constrained to http(s) URLs and never accept a
-        // client supplied target.
-        const base = candidate && /^https?:\/\//.test(candidate) ? candidate.replace(/\/$/, "") : undefined;
-        const deep_links = base ? input.app_id === "immich" ? { photo: `${base}/photos/{id}`, album: `${base}/albums/{id}`, search: `${base}/search` } : { entity: `${base}/config/entities?entity_id={id}`, dashboard: `${base}/lovelace/{id}` } : {};
-        const descriptor = appDescriptorSchema.parse({
-          id: input.app_id,
-          name: input.app_id === "immich" ? "Immich" : "Home Assistant",
-          launch: { web: base },
-          deep_links,
-          capabilities: input.app_id === "immich" ? ["immich.photo.search", "immich.album.read"] : ["homeassistant.entity.read", "homeassistant.dashboard.read"],
-          resources: input.app_id === "immich" ? ["photo", "album", "search"] : ["entity", "dashboard"],
-          icon: `/app-icons/${input.app_id === "immich" ? "immich.svg" : "homeassistant.svg"}`,
-          status: base ? "ready" : "unknown",
+        const input = z.object({
+          app_id: z.string().trim().regex(/^[a-z][a-z0-9-]{1,39}$/),
+          kind: z.string().max(80).optional(),
+          id: z.string().max(300).optional(),
+          platform: z.enum(["web", "android"]),
+        }).strict().parse(p);
+        const manifest = this.integrations.get(input.app_id);
+        if (!manifest) throw Error("app_not_found");
+        const descriptor = IntegrationRegistry.appDescriptor(manifest);
+        if (!descriptor) throw Error("app_not_found");
+        // Keep the wire contract of packages/app-bridge unchanged; the registry's
+        // richer status ("unconfigured") maps onto the schema's "unknown".
+        const app = appDescriptorSchema.parse({
+          id: descriptor.id,
+          name: descriptor.name,
+          launch: descriptor.launch,
+          deep_links: descriptor.deep_links,
+          capabilities: descriptor.capabilities,
+          resources: descriptor.resources,
+          ...(descriptor.icon ? { icon: descriptor.icon } : {}),
+          status: descriptor.status === "ready" ? "ready" : "unknown",
         });
-        return { app: descriptor, link: resolveAppLink(descriptor, input, input.platform) };
+        return { app, link: resolveAppLink(app, input, input.platform) };
       }
       case "approval.list": return this.control.approvals(device);
       case "approval.create": return this.control.createApproval(device, p);

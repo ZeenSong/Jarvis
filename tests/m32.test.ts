@@ -7,7 +7,6 @@ import { activityGroupKey, canTransitionActivity, canTransitionTurn, summarizeAc
 import { oidcAuthorizationUrl, upsertOidcIdentity } from "../apps/server/src/oidc.js";
 import { readFileSync } from "node:fs";
 import { JarvisAssistantAdapter } from "../apps/web/src/assistant-ui-adapter.js";
-import { homeAssistantState, immichSearch } from "../apps/server/src/hermes-integrations.js";
 
 test("M3.2 context token carries actor, household, session and scopes", () => {
   const token = createHermesContextToken("secret", "device-1", "session-1", 600, { actor: "user-1", household: "household-1", run: "run-1", scopes: ["home.read"] });
@@ -195,33 +194,3 @@ test("M3.2 identity, MCP authorization, Activity, Approval and Question integrat
   }
 });
 
-test("M3.2 Hermes adapters exercise bounded HA and Immich provider contracts", async () => {
-  const oldEnv = { HOME_ASSISTANT_URL: process.env.HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN: process.env.HOME_ASSISTANT_TOKEN, IMMICH_URL: process.env.IMMICH_URL, IMMICH_API_KEY: process.env.IMMICH_API_KEY };
-  const oldFetch = globalThis.fetch;
-  process.env.HOME_ASSISTANT_URL = "http://ha.test";
-  process.env.HOME_ASSISTANT_TOKEN = "ha-service-secret";
-  process.env.IMMICH_URL = "http://immich.test";
-  process.env.IMMICH_API_KEY = "immich-service-secret";
-  globalThis.fetch = (async (input, init) => {
-    const url = String(input);
-    if (url.endsWith("/api/states")) {
-      assert.equal((init?.headers as Record<string, string>)?.Authorization, "Bearer ha-service-secret");
-      return Response.json([{ entity_id: "light.kitchen", state: "on", attributes: { friendly_name: "Kitchen" } }]);
-    }
-    if (url.endsWith("/api/search/metadata")) {
-      assert.equal((init?.headers as Record<string, string>)?.["x-api-key"], "immich-service-secret");
-      return Response.json({ assets: { items: [{ id: "00000000-0000-4000-8000-000000000001", type: "IMAGE", originalFileName: "front.jpg", fileCreatedAt: "2026-01-01T00:00:00.000Z", isFavorite: false, exifInfo: null }], nextPage: null, total: 1 } });
-    }
-    throw Error(`unexpected_provider_url:${url}`);
-  }) as typeof fetch;
-  try {
-    assert.equal((await homeAssistantState()).entities[0].entity_id, "light.kitchen");
-    assert.equal((await immichSearch({ page: 1, size: 1 })).photos[0].name, "front.jpg");
-  } finally {
-    globalThis.fetch = oldFetch;
-    for (const [key, value] of Object.entries(oldEnv)) {
-      if (value === undefined) delete process.env[key as keyof typeof process.env];
-      else process.env[key as keyof typeof process.env] = value;
-    }
-  }
-});

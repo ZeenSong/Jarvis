@@ -17,17 +17,23 @@ export const DEFAULT_MEMBER_CAPABILITIES = [
   "mcp.immich.read",
 ] as const;
 
-export type McpProvider = "homeassistant" | "immich";
+/** Any integration id declared by the registry; no union to keep in sync. */
+export type McpProvider = string;
 
 function capability(provider: McpProvider, readOnly: boolean) {
   return `mcp.${provider}.${readOnly ? "read" : "write"}`;
 }
 
-async function memberPolicy(db: Database, userId: string, householdId: string) {
+async function memberPolicy(
+  db: Database,
+  userId: string,
+  householdId: string,
+  defaults: readonly string[] = DEFAULT_MEMBER_CAPABILITIES,
+) {
   const user = (await db.query("SELECT role FROM users WHERE id=$1", [userId])).rows[0];
   if (!user) throw Error("user_not_found");
   if (user.role === "admin") return new Set<string>(["*"]);
-  const values = new Set<string>(DEFAULT_MEMBER_CAPABILITIES);
+  const values = new Set<string>(defaults);
   const rows = (await db.query(
     "SELECT capability,allowed FROM household_member_capabilities WHERE household_id=$1 AND user_id=$2",
     [householdId, userId],
@@ -39,11 +45,16 @@ async function memberPolicy(db: Database, userId: string, householdId: string) {
   return values;
 }
 
-export async function userCapabilities(db: Database, userId: string, householdId?: string) {
+export async function userCapabilities(
+  db: Database,
+  userId: string,
+  householdId?: string,
+  defaults?: readonly string[],
+) {
   const household = householdId
     ? { id: householdId }
     : await householdForUser(db, userId);
-  const values = await memberPolicy(db, userId, household.id);
+  const values = await memberPolicy(db, userId, household.id, defaults);
   return { household_id: household.id, capabilities: [...values].sort() };
 }
 
@@ -53,8 +64,9 @@ export async function canUseMcpTool(
   householdId: string,
   provider: McpProvider,
   readOnly: boolean,
+  defaults?: readonly string[],
 ) {
-  const values = await memberPolicy(db, userId, householdId);
+  const values = await memberPolicy(db, userId, householdId, defaults);
   return values.has("*") || values.has(`mcp.${provider}.*`) || values.has(capability(provider, readOnly))
     // A member who may write still needs to inspect the upstream schema first.
     // Listing schemas does not grant access to read the service data.

@@ -31,10 +31,10 @@ import { contextAllows, verifyHermesContextToken } from "../../../packages/herme
 import { householdIdForOwner } from "./households.js";
 import { casaosLogin, casaosAccount } from "./applications.js";
 import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
-import { homeAssistantState, immichSearch } from "./hermes-integrations.js";
-import { canUseMcpTool, setUserCapability, userCapabilities, type McpProvider } from "./mcp-access.js";
+import { canUseMcpTool, setUserCapability, userCapabilities } from "./mcp-access.js";
 import { readPackageVersion, toErrorResponse } from "../../../packages/core/src/index.js";
 import { registerSecurityHeaders } from "./http/security.js";
+import { IntegrationRegistry } from "../../../packages/integrations/src/index.js";
 import { LoginGuard, clientAddress, loginIdentity } from "./security/login-guard.js";
 const SERVER_VERSION = readPackageVersion(import.meta.url);
 export async function buildApp(options: {
@@ -133,6 +133,10 @@ export async function buildApp(options: {
       options.offlineSeconds,
     ),
     usage = new UsageCollector(db, options.prices ?? {}, push);
+  const integrations = await IntegrationRegistry.create({
+    dir: process.env.INTEGRATIONS_DIR?.trim() || undefined,
+  });
+  app.log.info({ integrations: integrations.ids() }, "integrations_loaded");
   const m2 = new M2(
     db,
     push,
@@ -144,7 +148,24 @@ export async function buildApp(options: {
     options.runtimes,
     options.prices,
     invokeNode,
+    integrations,
   );
+  /**
+   * Resolve a provider secret for one owner. Stored household credentials win
+   * over the process environment so a member can connect their own account
+   * without editing deployment files.
+   */
+  const resolveProviderSecret = async (manifest: import("../../../packages/integrations/src/index.js").CompiledManifest, owner: string) => {
+    if (process.env.INTEGRATION_CREDENTIAL_KEY) {
+      const stored = await m2.integrationCredentials
+        .readProviderSecret(owner, IntegrationRegistry.storeProvider(manifest))
+        .catch(() => undefined);
+      if (stored) return { secret: stored, source: "store" as const };
+    }
+    const envName = IntegrationRegistry.credentialEnv(manifest);
+    const value = envName ? process.env[envName]?.trim() : undefined;
+    return value ? { secret: value, source: "env" as const } : undefined;
+  };
   const hermesBridgeKey = process.env.HERMES_BRIDGE_KEY?.trim() ?? "";
   const hermesCapabilityInput = z.object({
     tool: z.string().min(1).max(100),
@@ -163,20 +184,27 @@ export async function buildApp(options: {
       if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
       contextOwner = context.owner;
       const args = input.arguments;
-      const mcpProvider = input.tool === "mcp_authorize" && (input.arguments.provider === "homeassistant" || input.arguments.provider === "immich")
-        ? input.arguments.provider as McpProvider : undefined;
-      const mcpReadOnly = mcpProvider ? input.arguments.read_only === true : undefined;
-      const mcpToolName = mcpProvider && typeof args.tool_name === "string" ? args.tool_name : "";
-      const mcpListing = Boolean(mcpProvider && mcpToolName === "__tools_list__");
-      const requiredScope = input.tool === "mcp_authorize" && mcpProvider && !mcpListing ? `mcp.${mcpProvider}.${mcpReadOnly ? "read" : "write"}`
+      const requestedProvider = input.tool === "mcp_authorize" && typeof input.arguments.provider === "string"
+        ? input.arguments.provider : undefined;
+      const mcpManifest = requestedProvider ? integrations.get(requestedProvider) : undefined;
+      if (requestedProvider && !mcpManifest) throw Error("mcp_provider_unknown");
+      const mcpToolName = mcpManifest && typeof args.tool_name === "string" ? args.tool_name : "";
+      const mcpListing = Boolean(mcpManifest && mcpToolName === "__tools_list__");
+      // Classify from the manifest instead of trusting the caller's read_only flag.
+      // An unclassified tool is a write, so new upstream tools fail closed.
+      const classification = mcpManifest && mcpToolName && !mcpListing
+        ? integrations.authorizeTool(mcpManifest.id, mcpToolName)
+        : undefined;
+      if (classification?.denied) return reply.code(403).send({ error: "mcp_capability_forbidden" });
+      const effectiveReadOnly = mcpListing
+        || (classification ? classification.level === "read" : input.arguments.read_only === true);
+      const requiredScope = mcpManifest
+        ? (mcpListing ? mcpManifest.readScope : (effectiveReadOnly ? mcpManifest.readScope : mcpManifest.writeScope))
         : input.tool === "task_create" || input.tool === "schedule_create" || input.tool === "conversation_question_create" ? "conversation.write"
         : input.tool === "ui_view_show" ? "conversation.write"
-            : input.tool === "home_assistant_state" ? "home.read"
-            : input.tool === "immich_photo_search" ? "photo.read"
           : input.tool.startsWith("system_") || input.tool === "agent_list" || input.tool === "agent_run_status" ? "system.read"
             : input.tool.startsWith("schedule_") ? "schedule.write" : undefined;
-      const mcpListingAllowed = !mcpListing || contextAllows(context, `mcp.${mcpProvider}.read`) || contextAllows(context, `mcp.${mcpProvider}.write`);
-      if ((requiredScope && !contextAllows(context, requiredScope)) || !mcpListingAllowed) return reply.code(403).send({ error: "hermes_scope_forbidden" });
+      if (requiredScope && !contextAllows(context, requiredScope)) return reply.code(403).send({ error: "hermes_scope_forbidden" });
       const toolCallId = `mcp-${randomBytes(12).toString("hex")}`;
       const actorUser = z.uuid().safeParse(context.actor).success
         ? (await db.query("SELECT id FROM users WHERE id=$1", [context.actor])).rows[0]?.id as string | undefined
@@ -202,24 +230,26 @@ export async function buildApp(options: {
       let result: unknown;
       switch (input.tool) {
         case "mcp_authorize": {
-          if (!mcpProvider || typeof args.tool_name !== "string" || !args.tool_name) throw Error("mcp_tool_invalid");
+          if (!mcpManifest || typeof args.tool_name !== "string" || !args.tool_name) throw Error("mcp_tool_invalid");
           if (!contextUser || !contextHousehold) throw Error("user_login_required");
-          if (!(await canUseMcpTool(db, contextUser, contextHousehold, mcpProvider, args.read_only === true)))
+          if (!(await canUseMcpTool(db, contextUser, contextHousehold, mcpManifest.id, effectiveReadOnly, integrations.defaultMemberCapabilities())))
             throw Error("mcp_capability_forbidden");
-          const credentialProvider = mcpProvider === "homeassistant" ? "home-assistant" : mcpProvider;
-          const token = process.env.INTEGRATION_CREDENTIAL_KEY
-            ? await m2.integrationCredentials.readProviderSecret(context.owner, credentialProvider)
-            : mcpProvider === "homeassistant" ? process.env.HOME_ASSISTANT_TOKEN : process.env.IMMICH_API_KEY;
-          if (!token) throw Error(`${mcpProvider}_not_configured`);
-          if (mcpProvider === "homeassistant") {
-            const base = process.env.HOME_ASSISTANT_URL?.replace(/\/$/, "");
-            if (!base) throw Error("home_assistant_not_configured");
-            result = { provider: mcpProvider, endpoint: `${base}/api/mcp`, token };
-          } else if (mcpProvider === "immich") {
-            const base = process.env.IMMICH_URL?.replace(/\/$/, "");
-            if (!base) throw Error("immich_not_configured");
-            result = { provider: mcpProvider, base_url: base, token };
-          }
+          const resolved = await resolveProviderSecret(mcpManifest, context.owner);
+          if (!resolved) throw Error("mcp_provider_not_configured");
+          const connection = IntegrationRegistry.connection(mcpManifest, resolved.secret);
+          // The descriptor is uniform for every provider: transport + policy.
+          // Legacy fields stay so an older provider image keeps working during rollout.
+          const launchBase = mcpManifest.app.launch_env ? process.env[mcpManifest.app.launch_env]?.replace(/\/$/, "") : undefined;
+          result = {
+            provider: mcpManifest.id,
+            transport: connection,
+            read_scope: mcpManifest.readScope,
+            write_scope: mcpManifest.writeScope,
+            credential_source: resolved.source,
+            ...(connection.type === "streamable-http" ? { endpoint: connection.endpoint } : {}),
+            ...(launchBase ? { base_url: launchBase } : {}),
+            token: resolved.secret,
+          };
           break;
         }
         case "system_status_read":
@@ -234,12 +264,8 @@ export async function buildApp(options: {
         case "llm_usage_read":
           result = await m2.readForAgent("llm.usage.read", undefined, context.owner);
           break;
-        case "home_assistant_state":
-          result = await homeAssistantState({ token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "home-assistant") : undefined });
-          break;
-        case "immich_photo_search":
-          result = await immichSearch(args as { query?: string; from?: string; to?: string; page?: number; size?: number }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "immich") : undefined });
-          break;
+        // Legacy direct fetchers were removed: every provider goes through
+        // mcp_authorize so that scope, classification and credentials have one path.
         case "schedule_create":
           if (!conversationId) throw Error("conversation_required");
           if (typeof args.next_run_at !== "string" || !Number.isFinite(Date.parse(args.next_run_at)) || Date.parse(args.next_run_at) <= Date.now()) {
@@ -873,10 +899,32 @@ export async function buildApp(options: {
       if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
       try {
         const credential = await m2.integrationCredentials.readCredential(identity.id, req.params.id);
-        if (credential.provider === "home-assistant") await homeAssistantState({ token: credential.secret });
-        else if (credential.provider === "immich") await immichSearch({}, { token: credential.secret });
-        else return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
-        return { credential_id: credential.id, provider: credential.provider, connected: true };
+        // Connectivity is declared by the manifest, so a new integration gets a
+        // working "test credential" button without any server code.
+        const manifest = integrations.findByStoreProvider(credential.provider);
+        const probe = manifest?.healthcheck;
+        if (!manifest || !probe) {
+          return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
+        }
+        const baseEnv = manifest.app.launch_env
+          ?? (manifest.transport.type === "streamable-http" ? manifest.transport.endpoint_env : undefined);
+        const base = baseEnv ? process.env[baseEnv]?.trim().replace(/\/$/, "") : undefined;
+        if (!base) {
+          return { credential_id: credential.id, provider: credential.provider, connected: false, error: "service_unavailable" };
+        }
+        const scheme = probe.scheme.trim();
+        const response = await fetch(`${base}${probe.path}`, {
+          method: probe.method,
+          headers: { [probe.header]: scheme ? `${scheme} ${credential.secret}` : credential.secret },
+          signal: AbortSignal.timeout(10_000),
+        });
+        const connected = probe.ok_status.includes(response.status);
+        return {
+          credential_id: credential.id,
+          provider: credential.provider,
+          connected,
+          ...(connected ? {} : { error: response.status === 401 || response.status === 403 ? "invalid_credentials" : "service_unavailable" }),
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : "integration_unavailable";
         if (message === "not_found") return reply.code(404).send({ error: "not_found" });
