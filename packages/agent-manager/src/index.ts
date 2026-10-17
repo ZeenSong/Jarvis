@@ -495,59 +495,109 @@ export class AgentManager {
     await this.transition(id, "running");
     return { resumed: true };
   }
+  /**
+   * Startup recovery, split into two responsibilities that used to share one
+   * query and one failure branch.
+   *
+   * 1. Runs that were in flight when the process died can never be resumed
+   *    (runtime state is process-local), so they are failed explicitly.
+   * 2. Instances whose run is already terminal but never recorded `stopped_at`
+   *    are cleaned up with bounded, backed-off attempts.
+   *
+   * The previous implementation retried step 2 every minute forever whenever
+   * `runtime.events()` threw `run_not_found`, which is *always* true after a
+   * restart. That appended one event per minute per leaked instance: 121k rows
+   * over 30 days in production. Cleanup is now idempotent, bounded and silent.
+   */
   async recover(terminalOnly = false) {
-    // Runtime reconnection is explicit; never silently rerun side effects.
+    if (!terminalOnly) await this.failInterruptedRuns();
+    await this.sweepInstanceCleanup();
+  }
+
+  private async failInterruptedRuns() {
     const rows = (
       await this.db.query(
-        "SELECT r.* FROM agent_runs r LEFT JOIN agent_instances i ON i.id=r.agent_instance_id WHERE ($1=false AND r.status NOT IN ('completed','failed','cancelled')) OR (r.status IN ('completed','failed','cancelled') AND i.stopped_at IS NULL AND i.id IS NOT NULL AND ($1=false OR r.updated_at<now()-interval '30 seconds'))",
-        [terminalOnly],
+        "SELECT r.* FROM agent_runs r WHERE r.status NOT IN ('completed','failed','cancelled')",
       )
     ).rows;
-    const pendingCleanup: string[] = [];
     for (const r of rows) {
       await this.transition(r.id, "failed", {
         code: "server_restarted",
         summary: "服务重启，任务未能恢复；请检查已归档结果后重新提交。",
       });
-      if (r.runtime_type !== "deepseek")
+    }
+  }
+
+  private static readonly CLEANUP_MAX_ATTEMPTS = 5;
+
+  private async sweepInstanceCleanup() {
+    const rows = (
+      await this.db.query(
+        `SELECT r.id, r.agent_id, r.runtime_type, r.runtime_run_id,
+                i.id AS instance_id, i.cleanup_attempts
+           FROM agent_runs r
+           JOIN agent_instances i ON i.id = r.agent_instance_id
+          WHERE r.status IN ('completed','failed','cancelled')
+            AND i.stopped_at IS NULL
+            AND i.cleanup_abandoned_at IS NULL
+            AND (i.cleanup_next_attempt_at IS NULL OR i.cleanup_next_attempt_at <= now())
+          ORDER BY i.cleanup_next_attempt_at NULLS FIRST
+          LIMIT 20`,
+      )
+    ).rows;
+
+    for (const r of rows) {
+      const attempts = Number(r.cleanup_attempts ?? 0) + 1;
+      let confirmed = false;
+      try {
+        const runtime = this.registry.get(r.runtime_type);
+        const workerId = r.runtime_run_id ?? r.id;
+        await runtime.cancel(workerId);
+        // Drain any surviving journal without repeating the original task.
         try {
-          const runtime = this.registry.get(r.runtime_type);
-          const workerId = r.runtime_run_id ?? r.id;
-          await runtime.cancel(workerId);
-          // Drain the surviving journal without repeating the original task.
-          // The failed state stays authoritative; late usage and exports persist.
-          for await (const event of runtime.events(
-            workerId,
-            AbortSignal.timeout(35000),
-          )) {
+          for await (const event of runtime.events(workerId, AbortSignal.timeout(10_000))) {
             await this.ingest(r.id, event);
           }
-          await runtime.dispose(workerId);
-        } catch {
-          if (r.agent_instance_id) pendingCleanup.push(r.agent_instance_id);
-          await this.db.query(
-            "INSERT INTO run_events(run_id,agent_id,type,payload) VALUES($1,$2,'agent.progress',$3)",
-            [
-              r.id,
-              r.agent_id,
-              {
-                code: "restart_cleanup_pending",
-                title: "Worker 归档或清理未确认，需检查控制器",
-              },
-            ],
-          );
+        } catch (error) {
+          // An unknown run has nothing to drain. This is the normal case after a
+          // restart and must not be reported as a cleanup failure.
+          if (!(error instanceof Error) || error.message !== "run_not_found") throw error;
         }
-    }
+        await runtime.dispose(workerId);
+        confirmed = true;
+      } catch {
+        confirmed = false;
+      }
 
-    await this.db.query(
-      "UPDATE agent_instances SET status='cleanup_pending' WHERE id=ANY($1::uuid[])",
-      [pendingCleanup],
-    );
-    await this.db.query(
-      "UPDATE agent_instances SET status='offline',stopped_at=now() WHERE id=ANY($2::uuid[]) AND NOT(id=ANY($1::uuid[]))",
-      [pendingCleanup, rows.map((r) => r.agent_instance_id).filter(Boolean)],
-    );
+      if (confirmed) {
+        await this.db.query(
+          "UPDATE agent_instances SET status='stopped', stopped_at=now(), cleanup_attempts=$2, cleanup_last_attempt_at=now(), cleanup_next_attempt_at=NULL WHERE id=$1",
+          [r.instance_id, attempts],
+        );
+      } else if (attempts >= AgentManager.CLEANUP_MAX_ATTEMPTS) {
+        await this.db.query(
+          "UPDATE agent_instances SET status='cleanup_abandoned', stopped_at=now(), cleanup_abandoned_at=now(), cleanup_attempts=$2, cleanup_last_attempt_at=now(), cleanup_next_attempt_at=NULL WHERE id=$1",
+          [r.instance_id, attempts],
+        );
+        // Exactly one event when we give up, never one per attempt.
+        await this.db.query(
+          "INSERT INTO run_events(run_id,agent_id,type,payload) VALUES($1,$2,'agent.progress',$3)",
+          [
+            r.id,
+            r.agent_id,
+            { code: "cleanup_abandoned", title: "执行实例清理未确认，已停止自动重试" },
+          ],
+        );
+      } else {
+        const delaySeconds = Math.min(3600, 60 * 2 ** (attempts - 1));
+        await this.db.query(
+          "UPDATE agent_instances SET status='cleanup_pending', cleanup_attempts=$2, cleanup_last_attempt_at=now(), cleanup_next_attempt_at=now()+$3*interval '1 second' WHERE id=$1",
+          [r.instance_id, attempts, delaySeconds],
+        );
+      }
+    }
   }
+
   async schedule() {
     if (this.stopped) return;
     if (Date.now() - this.lastCleanup > 60000) {

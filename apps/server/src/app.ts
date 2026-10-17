@@ -33,7 +33,10 @@ import { casaosLogin, casaosAccount } from "./applications.js";
 import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
 import { homeAssistantState, immichSearch } from "./hermes-integrations.js";
 import { canUseMcpTool, setUserCapability, userCapabilities, type McpProvider } from "./mcp-access.js";
-const SERVER_VERSION = "0.3.2";
+import { readPackageVersion, toErrorResponse } from "../../../packages/core/src/index.js";
+import { registerSecurityHeaders } from "./http/security.js";
+import { LoginGuard, clientAddress, loginIdentity } from "./security/login-guard.js";
+const SERVER_VERSION = readPackageVersion(import.meta.url);
 export async function buildApp(options: {
   databaseUrl: string;
   runtimes?: RuntimeRegistry;
@@ -61,7 +64,13 @@ export async function buildApp(options: {
     bodyLimit: 65536,
   });
   await app.register(websocket, { options: { maxPayload: 65536 } });
-  await migrate(db);
+  registerSecurityHeaders(app);
+  const migration = await migrate(db, {
+    info: (value, message) => app.log.info(value, message),
+    warn: (value, message) => app.log.warn(value, message),
+  });
+  for (const version of migration.drifted)
+    app.log.warn({ version }, "schema_migration_checksum_drift");
   const media = new MediaStore();
   const mediaResources = new MediaResources(db);
   const mediaFileRoot = resolve(process.env.HERMES_MEDIA_ROOT?.trim() || process.env.HERMES_DATA_ROOT?.trim() || resolve(options.hostRoot || "/", "opt/data"));
@@ -488,6 +497,9 @@ export async function buildApp(options: {
         .send(await readFile(resolve("apps/web/dist/app-icons", req.params.name)));
     } catch { return reply.code(404).send(); }
   });
+  // Brute-force protection for the only password-accepting endpoint.
+  const loginGuard = new LoginGuard();
+  const trustProxy = process.env.TRUST_PROXY === "1";
   const cookieValue = (req: any, name: string) => {
     const prefix = `${name}=`;
     return req.headers.cookie?.split(";").map((v: string) => v.trim()).find((v: string) => v.startsWith(prefix))?.slice(prefix.length);
@@ -660,13 +672,29 @@ export async function buildApp(options: {
     }
   });
   app.post("/api/v2/auth/login", async (req, reply) => {
+    const bodyUsername = (req.body as { username?: unknown } | null)?.username;
+    const username = typeof bodyUsername === "string" ? bodyUsername : "";
+    const address = clientAddress(req.headers as Record<string, unknown>, req.ip, trustProxy);
+    const identity = loginIdentity(username, address);
+    const retryAfterMs = loginGuard.retryAfter(identity, address);
+    if (retryAfterMs > 0) {
+      reply.header("Cache-Control", "no-store").header("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+      return reply.code(429).send({ error: "rate_limited", retry_after_ms: retryAfterMs });
+    }
     try {
       const device = await authenticate(db, req.headers.authorization);
-      let deviceId = device?.role === "device" ? device.id : undefined;
+      const deviceId = device?.role === "device" ? device.id : undefined;
       const result = await loginUser(db, req.body, deviceId);
+      loginGuard.recordSuccess(identity);
       reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
       return result;
-    } catch (e) { return reply.code(401).send({ error: e instanceof Error ? e.message : "invalid_credentials" }); }
+    } catch (e) {
+      const { status, body } = toErrorResponse(e);
+      // Only genuine credential failures consume the brute-force budget; a
+      // malformed body or a device conflict must not lock a real user out.
+      if (status === 401) loginGuard.recordFailure(identity, address);
+      return reply.code(status).send(body);
+    }
   });
   app.get("/api/v2/auth/oidc/status", async () => ({ configured: oidcConfigured() }));
   app.get("/api/v2/auth/oidc/start", async (req, reply) => {
@@ -804,44 +832,20 @@ export async function buildApp(options: {
       .parse(req.body);
     return m2.readForAgent(p.tool, p.args);
   });
+  /**
+   * The one and only throw -> HTTP mapping. Previously this ladder existed twice
+   * (here and in the encapsulated API plugin) and drifted; both now share it.
+   */
+  const sharedErrorHandler = (error: unknown, _req: unknown, reply: any) => {
+    const { status, body } = toErrorResponse(error);
+    if (status >= 500) app.log.error({ err: error }, "request_failed");
+    return reply.code(status).send(body);
+  };
   await app.register(async (api) => {
     // Routes in this encapsulated plugin need their own handler: the
     // websocket plugin captures the child error boundary before the root
     // handler is installed, otherwise ordinary HTTP RPC errors become 500s.
-    api.setErrorHandler((error, _req, reply) => {
-      if (error instanceof Error && /^(id_reused|invalid_parent|delegation_depth|invalid_run_state|invalid_activity_transition)/.test(error.message))
-        return reply.code(409).send({ error: error.message });
-      if (error instanceof Error && error.message === "not_found")
-        return reply.code(404).send({ error: error.message });
-      if (error instanceof Error && error.message === "approval_cannot_elevate_permissions")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "user_login_required")
-        return reply.code(401).send({ error: error.message });
-      if (error instanceof Error && error.message === "admin_required")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && /^(integration_credentials_key_)/.test(error.message))
-        return reply.code(503).send({ error: error.message });
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: "validation_error", issues: error.issues });
-      if (error instanceof Error && /^(custom_range_requires_from_to|invalid_time_range|invalid_usage|artifact_unsafe_source|artifact_network_forbidden|artifact_too_large)$/.test(error.message))
-        return reply.code(400).send({ error: error.message });
-      if (error instanceof Error && error.message === "agent_not_owned")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "approval_required")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "path_outside_allowed_root")
-        return reply.code(400).send({ error: error.message });
-      if (error instanceof Error && error.message === "node_not_found")
-        return reply.code(404).send({ error: error.message });
-      if (error instanceof Error && error.message === "node_capability_unavailable")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "node_bridge_unavailable")
-        return reply.code(503).send({ error: error.message });
-      if ((error as any).statusCode === 413)
-        return reply.code(413).send({ error: "payload_too_large" });
-      app.log.error({ err: error }, "request_failed");
-      return reply.code(500).send({ error: "request_failed" });
-    });
+    api.setErrorHandler(sharedErrorHandler);
     api.addHook("preValidation", async (req, reply) => {
       const cookieAuthenticated = Boolean(cookieValue(req, "jarvis_access")) && !req.headers.authorization;
       if (cookieAuthenticated && !["GET", "HEAD", "OPTIONS"].includes(req.method) && !validOrigin(req))
@@ -1100,15 +1104,7 @@ export async function buildApp(options: {
                       "error",
                       topic,
                       {
-                        error:
-                          e instanceof z.ZodError
-                            ? "validation_error"
-                            : e instanceof Error &&
-                                /^(agent_|node_|approval_|unknown_topic|invalid_|id_reused|not_found|custom_|integration_|user_login_required)/.test(
-                                  e.message,
-                                )
-                              ? e.message
-                              : "request_failed",
+                        error: toErrorResponse(e).body.error,
                       },
                       id,
                     ),
@@ -1123,55 +1119,7 @@ export async function buildApp(options: {
       });
     });
   });
-  app.setErrorHandler((error, _req, reply) => {
-    if (
-      error instanceof Error &&
-      /^(id_reused|invalid_parent|delegation_depth|invalid_run_state|invalid_activity_transition)/.test(
-        error.message,
-      )
-    )
-      return reply.code(409).send({ error: error.message });
-    if (error instanceof Error && error.message === "not_found")
-      return reply.code(404).send({ error: error.message });
-    if (
-      error instanceof Error &&
-      error.message === "approval_cannot_elevate_permissions"
-    )
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "user_login_required")
-      return reply.code(401).send({ error: error.message });
-    if (error instanceof Error && error.message === "admin_required")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && /^(integration_credentials_key_)/.test(error.message))
-      return reply.code(503).send({ error: error.message });
-    if (error instanceof z.ZodError)
-      return reply
-        .code(400)
-        .send({ error: "validation_error", issues: error.issues });
-    if (
-      error instanceof Error &&
-      /^(custom_range_requires_from_to|invalid_time_range|invalid_usage|artifact_unsafe_source|artifact_network_forbidden|artifact_too_large)$/.test(
-        error.message,
-      )
-    )
-      return reply.code(400).send({ error: error.message });
-    if (error instanceof Error && error.message === "agent_not_owned")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "approval_required")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "path_outside_allowed_root")
-      return reply.code(400).send({ error: error.message });
-    if (error instanceof Error && error.message === "node_not_found")
-      return reply.code(404).send({ error: error.message });
-    if (error instanceof Error && error.message === "node_capability_unavailable")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "node_bridge_unavailable")
-      return reply.code(503).send({ error: error.message });
-    if ((error as any).statusCode === 413)
-      return reply.code(413).send({ error: "payload_too_large" });
-    app.log.error({ err: error }, "request_failed");
-    return reply.code(500).send({ error: "request_failed" });
-  });
+  app.setErrorHandler(sharedErrorHandler);
   app.addHook("onClose", async () => {
     media.clear();
     clearInterval(timer);
