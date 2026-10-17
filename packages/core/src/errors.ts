@@ -204,6 +204,8 @@ export type ErrorBody = {
   error: string;
   issues?: unknown;
   detail?: Record<string, unknown>;
+  /** Actionable guidance for the model, e.g. "confirm the run time first". */
+  message?: string;
 };
 
 type ZodLikeError = { name?: string; issues?: unknown };
@@ -239,11 +241,15 @@ export function toErrorResponse(error: unknown): { status: number; body: ErrorBo
   const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
   if (statusCode === 413) return { status: 413, body: { error: "payload_too_large" } };
   if (error instanceof Error) {
-    // Legacy call sites still throw bare Error(code). Preserve the contract for
-    // known codes only; everything else stays opaque.
-    const code = error.message;
-    if (isKnownErrorCode(code)) {
-      return { status: statusForCode(code), body: { error: code } };
+    // Legacy call sites throw bare Error(code) or Error("code: guidance"). Preserve
+    // the contract for known codes only; everything else stays opaque.
+    const [code, ...rest] = error.message.split(": ");
+    if (code && isKnownErrorCode(code)) {
+      const guidance = rest.join(": ").trim();
+      return {
+        status: statusForCode(code),
+        body: { error: code, ...(guidance ? { message: guidance } : {}) },
+      };
     }
   }
   return { status: 500, body: { error: "request_failed" } };

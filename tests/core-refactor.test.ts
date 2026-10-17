@@ -115,3 +115,17 @@ test("product version comes from package.json", () => {
   assert.match(version, /^\d+\.\d+\.\d+/);
   assert.notEqual(version, "0.3.2", "the hardcoded stale version must be gone");
 });
+
+test("error mapping: guidance after the code reaches the caller intact", () => {
+  const mapped = toErrorResponse(
+    new Error("schedule_time_required: 请先确认执行时间与时区，再提供未来的 ISO 8601 时间；任务尚未创建。"),
+  );
+  assert.equal(mapped.status, 400);
+  assert.equal(mapped.body.error, "schedule_time_required");
+  assert.match(mapped.body.message ?? "", /请先确认执行时间/);
+});
+
+test("error mapping: an unknown prefix keeps the message opaque", () => {
+  const mapped = toErrorResponse(new Error("some_internal_detail: secret-ish context"));
+  assert.deepEqual(mapped, { status: 500, body: { error: "request_failed" } });
+});
