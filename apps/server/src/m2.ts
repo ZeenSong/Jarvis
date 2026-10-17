@@ -243,8 +243,28 @@ export class M2 {
         let conversationId = schedule.conversation_id;
         if (!conversationId) conversationId = (await this.db.query("INSERT INTO conversations(id,title,owner_device_id,owner_user_id,household_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3),$4) RETURNING id", [randomUUID(), `定时任务 · ${String(schedule.prompt).slice(0, 30)}`, schedule.owner_device_id, await householdIdForOwner(this.db, schedule.owner_device_id)])).rows[0].id;
         await this.conversations.createScheduled(schedule.owner_device_id, conversationId, schedule.prompt, `schedule:${schedule.id}:${new Date(schedule.next_run_at).toISOString()}`);
-        await this.db.query(schedule.cadence === "once" ? "UPDATE schedules SET enabled=false,conversation_id=$2,updated_at=now() WHERE id=$1" : "UPDATE schedules SET next_run_at=next_run_at + CASE cadence WHEN 'daily' THEN interval '1 day' ELSE interval '7 days' END,conversation_id=$2,updated_at=now() WHERE id=$1", [schedule.id, conversationId]);
-      } catch { /* leave the due row for the next scheduler pass */ }
+        await this.db.query(
+          schedule.cadence === "once"
+            ? "UPDATE schedules SET enabled=false,conversation_id=$2,failure_count=0,last_error=NULL,updated_at=now() WHERE id=$1"
+            : "UPDATE schedules SET next_run_at=next_run_at + CASE cadence WHEN 'daily' THEN interval '1 day' ELSE interval '7 days' END,conversation_id=$2,failure_count=0,last_error=NULL,updated_at=now() WHERE id=$1",
+          [schedule.id, conversationId],
+        );
+      } catch (error) {
+        // Back off instead of retrying on every 2s tick, and disable the schedule
+        // after five consecutive failures so one broken row cannot spam forever.
+        const failures = Number(schedule.failure_count ?? 0) + 1;
+        const message = error instanceof Error ? error.message : "schedule_failed";
+        const backoffMinutes = Math.min(360, 2 ** (failures - 1));
+        await this.db.query(
+          `UPDATE schedules SET failure_count=$2, last_error=$3,
+             enabled = CASE WHEN $2 >= 5 THEN false ELSE enabled END,
+             next_run_at = CASE WHEN $2 >= 5 OR cadence = 'once' THEN next_run_at
+               ELSE now() + make_interval(mins => $4) END,
+             updated_at=now() WHERE id=$1`,
+          [schedule.id, failures, message.slice(0, 500), backoffMinutes],
+        ).catch(() => {});
+        this.push("schedule.created", { schedule_id: schedule.id, failure_count: failures, enabled: failures < 5 });
+      }
     }
   }
   async definitions(owner?: string) {
