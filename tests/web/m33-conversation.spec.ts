@@ -82,7 +82,7 @@ test("turn execution streams without polling, survives reload and fits mobile", 
   await expect(secondTurn.locator('.execution-stream li[data-status="running"]')).toHaveCount(2);
   await expect(page.getByText("先读取今天的 Token 用量。")).toBeHidden();
   const streamedReasoning = secondTurn.locator(".execution-stream li").first();
-  await streamedReasoning.locator("summary").click();
+  await secondTurn.locator(".execution-disclosure > summary").click();
   await expect(page.getByText("先读取今天的 Token 用量。")).toBeVisible();
   await expect(page.getByText("正在核对小时趋势。", { exact: true })).toBeVisible();
   await expect(streamedReasoning).toHaveAttribute("data-status", "completed");
@@ -96,7 +96,7 @@ test("turn execution streams without polling, survives reload and fits mobile", 
   await expect(page.getByText("已核对小时趋势。")).toBeVisible();
   const restoredTurn = page.locator(".jarvis-turn").nth(1);
   await expect(restoredTurn.locator(".execution-stream li")).toHaveCount(4);
-  await expect(restoredTurn.locator(".execution-stream li .execution-body summary span")).toHaveText(["继续分析趋势", "读取小时趋势", "对齐小时数据", "更新分析界面"]);
+  await expect(restoredTurn.locator(".execution-stream li .execution-title")).toHaveText(["继续分析趋势", "读取小时趋势", "对齐小时数据", "更新分析界面"]);
   await expect(restoredTurn.getByText("测试提供方正在核对小时趋势。")).toBeHidden();
   expect(messageAdmissions).toBe(1);
   expect(calls.filter((topic) => topic === "conversation.get")).toHaveLength(reads + 1);
@@ -371,11 +371,11 @@ test("UI Protocol V2 gallery stays inline and a streaming workspace expands and 
   await expect(workspace.getByRole("heading", { name: "会话消耗排行 · Top 10" })).toBeVisible();
   const tokenTurn = page.locator(".jarvis-turn").last();
   await expect(tokenTurn.locator(".execution-stream li")).toHaveCount(6);
-  await expect(tokenTurn.locator(".execution-stream li .execution-body summary span")).toHaveText([
+  await expect(tokenTurn.locator(".execution-stream li .execution-title")).toHaveText([
     "分析用量问题", "读取模型用量", "核对会话用量", "计算会话排名", "整理分析结论", "生成分析视图",
   ]);
   await expect(tokenTurn.locator('.execution-stream li[data-status="running"]')).toHaveCount(0);
-  await tokenTurn.locator(".execution-stream li").first().locator("summary").click();
+  await tokenTurn.locator(".execution-disclosure > summary").click();
   await expect(page.getByText("我先汇总今天各会话的输入、输出与缓存 Token。", { exact: true })).toBeVisible();
   await expect(workspace.locator('.section-skeleton[aria-label="正在加载每小时 Token"]')).toBeVisible();
   const hourlySkeleton = workspace.locator('.section-skeleton[aria-label="正在加载每小时 Token"]');
@@ -481,10 +481,11 @@ test("today's cat activity keeps real service calls separate from timeline proce
   await page.goto(`${base}/jarvis`);
   await page.getByLabel("消息内容").fill("今天我家的猫咪都去过哪些地方，几点吃的东西，吃了多少？");
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator(".execution-stream").last().locator(".execution-disclosure > summary").click();
   await expect(page.getByText("Frigate", { exact: true })).toBeVisible();
   await expect(page.getByText("Home Assistant", { exact: true })).toBeVisible();
   await expect(page.getByText("整理活动时间线")).toBeVisible();
-  const labels = await page.locator(".execution-stream li .execution-body summary span").allTextContents();
+  const labels = await page.locator(".execution-stream li .execution-title").allTextContents();
   expect(labels).toEqual(["分析位置与进食", "Frigate", "核对进食", "Home Assistant", "整理活动时间线", "生成活动工作区"]);
   await expect(page.locator(".workspace-side")).toBeVisible();
   const workspace = page.locator(".workspace-side");
@@ -504,7 +505,9 @@ test("today's cat activity keeps real service calls separate from timeline proce
   expect(desktopScroll.scroll).toBeLessThanOrEqual(desktopScroll.width + 2);
   await page.screenshot({ path: ".local/evidence/m33-cat-activity-workspace.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByText("左右滑动查看更多 →")).toBeVisible();
+  const mobileSteps = page.locator(".execution-stream").last().locator(".execution-steps");
+  const mobileScroll = await mobileSteps.evaluate((element) => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+  expect(mobileScroll.scroll).toBeLessThanOrEqual(mobileScroll.width + 2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
   expect(errors).toEqual([]);
 });

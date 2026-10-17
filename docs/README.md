@@ -28,6 +28,7 @@
 - [整体产品规划](product/vision.md)
 - [产品架构 v2](product/architecture-v2.md)
 - [体验与动态 UI v2](product/experience-dynamic-ui-v2.md)
+- [视觉方向 v2 · Lantern](design/visual-refresh.md)
 - [M1 常驻服务与移动监控构想](product/m1-mobile-monitoring.md)
 - [M2 真实 Agent 与动态体验构想](product/m2-agent-experience.md)
 - [M3 Investor Demo 里程碑](product/m3-investor-demo.md)

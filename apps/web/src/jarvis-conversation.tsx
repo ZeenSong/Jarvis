@@ -50,9 +50,9 @@ function mergeQuestions(current: Question[], incoming: Question[]) {
 const statusLabel = (status: string) => ({ queued: "等待中", running: "进行中", waiting_approval: "等待确认", waiting_question: "等待选择", completed: "已完成", failed: "未完成", cancelled: "已停止" }[status] ?? status);
 const kindLabel = (kind: string) => ({ reasoning: "思考", skill: "技能", tool: "服务调用", processing: "整理", approval: "确认", question: "等待选择", render: "生成界面", answer: "回答", result: "结果" }[kind] ?? "执行阶段");
 
+const formatDuration = (ms: number) => ms < 1000 ? `${Math.round(ms)} 毫秒` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`;
+
 export function ExecutionStream({ events, activities, developer }: { events: ExecutionEvent[]; activities: Activity[]; developer: boolean }) {
-  const stepsRef = useRef<HTMLOListElement>(null);
-  const [stepsOverflow, setStepsOverflow] = useState(false);
   const visible = visibleActivities(activities, developer);
   const ordered = events.filter((event) => !event.activity_id || visible.some((activity) => activity.id === event.activity_id));
   // Existing conversations predate durable execution segments; keep their real activities.
@@ -67,35 +67,41 @@ export function ExecutionStream({ events, activities, developer }: { events: Exe
   const duration = starts.length && finishes.length === ordered.length && ordered.every((event) => ["completed", "failed", "cancelled"].includes(event.status))
     ? Math.max(0, Math.max(...finishes) - Math.min(...starts))
     : undefined;
-  const durationLabel = duration === undefined ? running ? "实时执行" : "过程记录" : `总耗时 ${duration < 1000 ? `${Math.round(duration)} 毫秒` : `${(duration / 1000).toFixed(1)} 秒`}`;
-  useEffect(() => {
-    const element = stepsRef.current;
-    if (!element) return;
-    const measure = () => setStepsOverflow(element.scrollWidth > element.clientWidth + 2);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [steps.length]);
+  const durationLabel = running ? "实时" : duration === undefined ? "过程记录" : `耗时 ${formatDuration(duration)}`;
+  // Every execution summary starts folded. The user opens it when they want the
+  // step-by-step record; live updates keep flowing into the open timeline.
+  const [open, setOpen] = useState(false);
   if (!steps.length) return null;
-  return <section className="execution-stream" aria-label="执行过程" aria-busy={running}>
-    <header><span className={running ? "execution-pulse" : "execution-done"} aria-hidden="true">{running ? "◌" : "✓"}</span><strong>执行过程</strong><span>{steps.length} 个阶段</span><div className="execution-meta">{stepsOverflow && <small>左右滑动查看更多 →</small>}<small>{durationLabel}</small></div></header>
-    <ol ref={stepsRef} className={`execution-steps${steps.length > 4 ? " many" : ""}`}>{steps.map(({ id, event, activity }, index) => {
-      const status = event?.status ?? activity?.status ?? "queued";
-      const kind = event?.kind ?? (activity ? activityPresentation(activity).category : "tool");
-      const title = event?.title ?? (activity ? activityTitle(activity) : "执行操作");
-      const content = event?.content ?? "";
-      const evidence = activity ?? event;
-      return <li key={id} data-status={status} data-kind={kind}>
-        <span className="execution-index" aria-hidden="true">{index + 1}</span>
-        <span className="execution-node" aria-label={statusLabel(status)}>{status === "completed" ? "✓" : status === "failed" ? "!" : status === "cancelled" ? "×" : status === "running" ? "◌" : "·"}</span>
-        <div className="execution-body"><span className="execution-kind">{kindLabel(kind)}</span><details>
-          <summary><span title={title}>{title}</span><small>{statusLabel(status)}</small></summary>
-          {content && <div className="reasoning-content"><MarkdownContent value={content} /></div>}
-          {developer && evidence && <pre>{JSON.stringify(evidence, null, 2)}</pre>}
-        </details></div>
-      </li>;
-    })}</ol>
+  return <section className={`execution-stream${running ? " is-running" : " is-done"}`} aria-label="执行过程" aria-busy={running}>
+    <details className="execution-disclosure" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        <span className="execution-glyph" aria-hidden="true">{running ? <span className="execution-spinner" /> : "✓"}</span>
+        <strong>{running ? "正在执行" : "执行过程"}</strong>
+        <span className="execution-count">{steps.length} 个步骤</span>
+        <span className="execution-duration">{durationLabel}</span>
+        <span className="execution-chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <ol className="execution-steps">{steps.map(({ id, event, activity }) => {
+        const status = event?.status ?? activity?.status ?? "queued";
+        const kind = event?.kind ?? (activity ? activityPresentation(activity).category : "tool");
+        const title = event?.title ?? (activity ? activityTitle(activity) : "执行操作");
+        const content = event?.content ?? "";
+        const evidence = activity ?? event;
+        return <li key={id} data-status={status} data-kind={kind}>
+          <span className="execution-node" aria-label={statusLabel(status)}>{status === "completed" ? "✓" : status === "failed" ? "!" : status === "cancelled" ? "×" : status === "running" ? "◌" : "·"}</span>
+          <div className="execution-body">
+            <div className="execution-row">
+              <span className="execution-kind">{kindLabel(kind)}</span>
+              <span className="execution-title" title={title}>{title}</span>
+              <span className="execution-state">{statusLabel(status)}</span>
+            </div>
+            {kind === "reasoning" && content && <div className="reasoning-content reasoning-open"><MarkdownContent value={content} /></div>}
+            {kind !== "reasoning" && content && <details className="execution-detail"><summary>查看详情</summary><div className="reasoning-content"><MarkdownContent value={content} /></div></details>}
+            {developer && evidence && <details className="execution-detail"><summary>原始数据</summary><pre>{JSON.stringify(evidence, null, 2)}</pre></details>}
+          </div>
+        </li>;
+      })}</ol>
+    </details>
   </section>;
 }
 
@@ -225,10 +231,10 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
   const context = useMemo(() => ({ gateway, developer, snapshot, messages, onWorkspaceOpen, action, followup }), [gateway, developer, snapshot, messages, onWorkspaceOpen, action, followup]);
   return <ConversationContext.Provider value={context}><AssistantRuntimeProvider runtime={runtime}>
     <div className="jarvis-conversation">
-      <header className="conversation-header"><span className="jarvis-mark">◇</span><div><h2>{initial.conversation?.title || "与 Jarvis 对话"}</h2><p>你的家庭 AI · 想到什么，就从这里开始</p></div></header>
+      <header className="conversation-header"><span className="jarvis-mark">◇</span><div><h2>{initial.conversation?.title || "与 Jarvis 对话"}</h2><p>私人对话 · 仅你可见</p></div></header>
       <ThreadPrimitive.Root className="conversation-thread">
         <ThreadPrimitive.Viewport className="assistant-ui-viewport">
-          <ThreadPrimitive.Empty><div className="conversation-welcome"><span className="jarvis-mark">◇</span><h2>今天，有什么我可以帮你？</h2><p>看看家里的近况，发现照片里的美好，或一起理清一个问题。</p></div></ThreadPrimitive.Empty>
+          <ThreadPrimitive.Empty><ConversationWelcome /></ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage: JarvisTurn }} />
           <ThreadPrimitive.ScrollToBottom className="conversation-scroll-bottom" aria-label="回到最新消息">↓</ThreadPrimitive.ScrollToBottom>
         </ThreadPrimitive.Viewport>
@@ -239,6 +245,18 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
       </ThreadPrimitive.Root>
     </div>
   </AssistantRuntimeProvider></ConversationContext.Provider>;
+}
+
+function ConversationWelcome() {
+  const context = useContext(ConversationContext);
+  const prompts = ["看看家里的近况", "帮我找几张赛里木湖的照片", "今天服务器状态怎么样"];
+  return <div className="conversation-welcome">
+    <span className="jarvis-orb welcome-orb" aria-hidden="true" />
+    <p className="eyebrow">JARVIS · PRIVATE CLOUD</p>
+    <h2>今天，想做点什么？</h2>
+    <p>一句话交代目标，Jarvis 会理解、调用工具，并把结果带回来。</p>
+    <div className="welcome-prompts">{prompts.map((prompt) => <button key={prompt} onClick={() => context?.followup(prompt)}>{prompt}<span aria-hidden="true">↗</span></button>)}</div>
+  </div>;
 }
 
 function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, onReasoningEffortChange, skills, selectedSkills, onSkillsChange, registerPrefill }: {
@@ -279,7 +297,7 @@ function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, 
           <span><strong>{skill.name}</strong>{skill.description && <small>{skill.description}</small>}</span>
         </label>)}
       </div>
-    </details>}{reasoningEfforts.length > 0 && <label className="reasoning-control">推理强度<select aria-label="推理强度" value={reasoningEffort} onChange={(event) => onReasoningEffortChange(event.currentTarget.value as ReasoningEffort)}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{({ low: "快速", medium: "标准", high: "深度", max: "极深" } as Record<string, string>)[effort]}</option>)}</select><span aria-hidden="true">⌄</span></label>}<span role={stopping || running ? "status" : undefined}>{stopping ? "正在停止任务……" : running ? queued ? "任务排队中 · 可随时停止" : "正在处理 · 可随时停止" : "让想法成为行动"}</span></div><div>{running ? <button type="button" aria-label="停止任务" disabled={stopping || !turnId} onClick={() => void stop()}>■</button> : <ComposerPrimitive.Send aria-label="发送消息">↑</ComposerPrimitive.Send>}</div></div>
+    </details>}{reasoningEfforts.length > 0 && <label className="reasoning-control">推理强度<select aria-label="推理强度" value={reasoningEffort} onChange={(event) => onReasoningEffortChange(event.currentTarget.value as ReasoningEffort)}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{({ low: "快速", medium: "标准", high: "深度", max: "极深" } as Record<string, string>)[effort]}</option>)}</select><span aria-hidden="true">⌄</span></label>}<span role={stopping || running ? "status" : undefined}>{stopping ? "正在停止任务……" : running ? queued ? "任务排队中 · 可随时停止" : "正在处理 · 可随时停止" : "Enter 发送 · Shift + Enter 换行"}</span></div><div>{running ? <button type="button" aria-label="停止任务" disabled={stopping || !turnId} onClick={() => void stop()}>■</button> : <ComposerPrimitive.Send aria-label="发送消息">↑</ComposerPrimitive.Send>}</div></div>
     {stopError && <p className="inline-error" role="alert">{stopError}</p>}
   </ComposerPrimitive.Root>;
 }

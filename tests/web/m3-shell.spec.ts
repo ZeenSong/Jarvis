@@ -22,26 +22,21 @@ test("personal cloud home, ordinary navigation, and command handoff", async ({ p
   for (const name of ["首页", "空间", "应用", "任务", "Jarvis", "设置"]) await expect(page.locator("nav").getByRole("button", { name, exact: true })).toBeVisible();
   await expect(page.locator("nav").getByRole("button", { name: "系统", exact: true })).toHaveCount(0);
   await expect(page.locator("nav").getByRole("button", { name: "Hermes", exact: true })).toHaveCount(0);
-  await expect(page.locator(".metric-tile").first().locator("strong")).toHaveText("—");
+  await expect(page.locator(".status-metric").first().locator("strong")).toHaveText("—");
   for (const name of ["alpine-dusk", "files", "knowledge", "family", "media", "development"]) {
     const response = await page.request.get(`${base}/artwork/${name}-v1.png`);
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("image/png");
   }
-  await page.evaluate(async () => {
-    await Promise.all([...document.querySelectorAll(".home-hero,.space-card")].map(async (element) => {
-      const url = getComputedStyle(element).backgroundImage.match(/url\("?([^"\)]+)"?\)/)?.[1];
-      if (!url) throw Error("Missing decorative cover");
-      const img = new Image(); img.src = url; await img.decode();
-    }));
-  });
+  await expect(page.locator(".home-hero")).toBeVisible();
+  for (const card of await page.locator(".space-card").all()) await expect(card.locator(".space-art")).toBeVisible();
   if (process.env.M3_LIVE_CASAOS === "1") {
     for (const name of ["Home Assistant", "Immich"]) {
       const card = page.locator(".application-card").filter({ has: page.getByRole("heading", { name, exact: true }) });
       await expect(card).toBeVisible();
       await expect(card.locator(".application-status")).toHaveText("运行中");
-      await expect(card.locator("img.application-icon")).toBeVisible();
-      await expect.poll(() => card.locator("img.application-icon").evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      await expect(card.locator(".application-icon img")).toBeVisible();
+      await expect.poll(() => card.locator(".application-icon img").evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     }
     await page.locator("nav").getByRole("button", { name: "应用", exact: true }).click();
     await expect(page.locator(".application-card")).toHaveCount(2);
@@ -59,14 +54,14 @@ test("personal cloud home, ordinary navigation, and command handoff", async ({ p
     await page.locator("nav").getByRole("button", { name: "首页", exact: true }).click();
     await expect(page.locator(".application-card")).toHaveCount(2);
   }
-  await expect(page.locator(".metric-tile").first().locator("strong")).toHaveText("—");
+  await expect(page.locator(".status-metric").first().locator("strong")).toHaveText("—");
   await expect(page.locator('nav button[aria-current="page"]')).toHaveText("首页");
   await page.screenshot({ path: ".local/evidence/m3-web-home.png", fullPage: true });
   await page.getByRole("button", { name: "切换浅色主题" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(page.locator(".metric-tile").first().locator("strong")).toHaveText("—");
+  await expect(page.locator(".status-metric").first().locator("strong")).toHaveText("—");
   await page.screenshot({ path: ".local/evidence/m3-web-home-light.png", fullPage: true });
   await page.getByRole("button", { name: "切换深色主题" }).click();
   await page.context().route(/http:\/\/127\.0\.0\.1:(2283|8123)\//, route => route.fulfill({body:"Domain application test fixture"}));
