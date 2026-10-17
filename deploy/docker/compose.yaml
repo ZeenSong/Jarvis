@@ -69,7 +69,7 @@ services:
   jarvis-server:
     # Set JARVIS_SERVER_IMAGE when deploying a locally built tag; the published
     # ghcr image from the release workflow is the default.
-    image: ${JARVIS_SERVER_IMAGE:-jarvis-server:0.4.0-visual-refresh-20261017}
+    image: ${JARVIS_SERVER_IMAGE:-jarvis-server:0.4.0-refactor}
     container_name: jarvis-server
     restart: unless-stopped
     env_file: [/DATA/AppData/jarvis/config/server.env]
