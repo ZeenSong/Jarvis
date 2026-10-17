@@ -35,6 +35,7 @@ import { canUseMcpTool, setUserCapability, userCapabilities } from "./mcp-access
 import { readPackageVersion, toErrorResponse } from "../../../packages/core/src/index.js";
 import { registerSecurityHeaders } from "./http/security.js";
 import { IntegrationRegistry } from "../../../packages/integrations/src/index.js";
+import { LeaseStore } from "../../../packages/leases/src/index.js";
 import { LoginGuard, clientAddress, loginIdentity } from "./security/login-guard.js";
 const SERVER_VERSION = readPackageVersion(import.meta.url);
 export async function buildApp(options: {
@@ -350,6 +351,16 @@ export async function buildApp(options: {
     }
   });
   await m2.start();
+  /**
+   * The housekeeping tick (metrics, agent sweep, retention, schedules) must run on
+   * exactly one process. It used to rely on "only one process exists"; it now takes
+   * a lease and renews it on every tick, so a restarted or additional instance can
+   * take over after the TTL instead of duplicating schedule firing.
+   */
+  const housekeeping = new LeaseStore(db);
+  const schedulerOwner = `server-${randomBytes(8).toString("hex")}`;
+  let holdsScheduler = (await housekeeping.acquire("server:housekeeping", schedulerOwner, 30)).acquired;
+  app.log.info({ owner: schedulerOwner, holdsScheduler }, "housekeeping_lease_acquired");
   let lastMetric = 0;
   let schedulerAt = Date.now(),
     busy = false,
@@ -359,6 +370,15 @@ export async function buildApp(options: {
     if (busy) return;
     busy = true;
     try {
+      if (holdsScheduler) {
+        holdsScheduler = await housekeeping.renew("server:housekeeping", schedulerOwner, 30);
+      } else {
+        holdsScheduler = (await housekeeping.acquire("server:housekeeping", schedulerOwner, 30)).acquired;
+      }
+      if (!holdsScheduler) {
+        schedulerAt = Date.now();
+        return;
+      }
       const old = monitor.state?.network.public_ipv6;
       await monitor.sample();
       if (Date.now() - lastMetric > 30000) {
@@ -1174,6 +1194,7 @@ export async function buildApp(options: {
   });
   app.setErrorHandler(sharedErrorHandler);
   app.addHook("onClose", async () => {
+    await housekeeping.release("server:housekeeping", schedulerOwner).catch(() => {});
     media.clear();
     clearInterval(timer);
     clearInterval(heartbeat);
