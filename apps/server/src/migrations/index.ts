@@ -4,6 +4,7 @@ import { sql as baseline } from "./0001-baseline.js";
 import { sql as hardening } from "./0002-hardening.js";
 import { sql as repairRestartNoise } from "./0003-repair-restart-noise.js";
 import { sql as closeStaleEvents } from "./0004-close-stale-events.js";
+import { sql as leases } from "./0005-leases.js";
 
 /**
  * Versioned schema migrations.
@@ -32,6 +33,7 @@ export const migrations: readonly Migration[] = [
   { version: "0002", name: "hardening", sql: hardening },
   { version: "0003", name: "repair-restart-noise", sql: repairRestartNoise },
   { version: "0004", name: "close-stale-events", sql: closeStaleEvents },
+  { version: "0005", name: "leases", sql: leases },
 ];
 
 export type MigrationLogger = {
