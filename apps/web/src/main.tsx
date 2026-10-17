@@ -18,6 +18,7 @@ import { ProductTasks } from "./tasks";
 import { ControlPlanePanel } from "./control-plane-panel";
 import { JarvisConversation } from "./jarvis-conversation";
 import { SettingsPage } from "./settings";
+import "./design.css";
 const gateway = new Gateway();
 const nav = [
   ["home", "首页"],

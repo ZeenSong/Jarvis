@@ -8,11 +8,7 @@ type SettingsPageProps = {
 
 export function SettingsPage({ gateway, onError }: SettingsPageProps) {
   return <div className="settings-page">
-    <section className="settings-hero">
-      <p className="eyebrow">JARVIS / SETTINGS</p>
-      <h2>设置</h2>
-      <p className="muted">管理家庭服务连接、账户信息和登录会话。</p>
-    </section>
+    <p className="settings-lead">管理家庭服务连接、账户信息和登录会话。</p>
     <FamilyServices gateway={gateway} onError={onError} />
     <UserManagement onError={onError} />
   </div>;
