@@ -420,8 +420,16 @@ export async function buildApp(options: {
   }, 15000);
   async function ready() {
     let database = "healthy";
+    let schema = { applied: 0, latest: "none" };
     try {
-      await db.query("SELECT 1");
+      // One round trip: liveness plus the schema version, so a deployment can be
+      // verified from /health/ready instead of container logs.
+      const probe = (
+        await db.query(
+          "SELECT (SELECT count(*) FROM schema_migrations)::int AS applied, (SELECT max(version) FROM schema_migrations) AS latest",
+        )
+      ).rows[0];
+      schema = { applied: Number(probe?.applied ?? 0), latest: String(probe?.latest ?? "none") };
     } catch {
       database = "unhealthy";
     }
@@ -437,6 +445,8 @@ export async function buildApp(options: {
         ? "healthy"
         : "unhealthy",
       components,
+      schema,
+      integrations: integrations.ids(),
     };
   }
   async function systemStatus() {
