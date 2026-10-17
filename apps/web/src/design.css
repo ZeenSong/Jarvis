@@ -1770,3 +1770,19 @@ table th, table td { border-bottom-color: var(--line); }
   .appearance-styles { grid-template-columns: 1fr; }
   .appearance-mode { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
+
+/* 设置 → 开发者：开发者入口是偏好设置，不再依赖 ?developer=1 */
+.settings-developer {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface, rgba(255, 255, 255, 0.02));
+}
+.settings-developer .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.settings-developer h2 { margin: 0; font-size: 15px; }
+.developer-toggle { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.developer-toggle input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent, #e2b56d); }
+.developer-toggle strong { display: block; font-size: 13px; color: var(--text); }
+.developer-toggle .muted { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.5; }

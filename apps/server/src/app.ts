@@ -458,7 +458,7 @@ export async function buildApp(options: {
     if (req.headers.origin && !validOrigin(req))
       return reply.code(403).send({ error: "origin_forbidden" });
   });
-  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/users", "/settings", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
+  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/agents", "/users", "/settings", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
     try {
       return reply
         .type("text/html")

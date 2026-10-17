@@ -60,7 +60,16 @@ function restoredNavigation() {
 }
 function App() {
   const viewRequest = useRef(0);
-  const developerMode = new URLSearchParams(location.search).get("developer") === "1";
+  // Developer surfaces are a persisted preference, reachable from 设置 → 开发者.
+  // `?developer=1` stays as a deep link for operators, but is no longer the only
+  // way in (M3.3 §26).
+  const [developerMode, setDeveloperMode] = useState(() => {
+    if (new URLSearchParams(location.search).get("developer") === "1") return true;
+    try { return localStorage.getItem("jarvis-developer") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("jarvis-developer", developerMode ? "1" : "0"); } catch { /* storage disabled */ }
+  }, [developerMode]);
   const [style, setStyle] = useState<JarvisStyle>(initialStyle);
   const [theme, setTheme] = useState<"dark" | "light">(initialTheme);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("jarvis-theme", theme); }, [theme]);
@@ -471,7 +480,7 @@ function App() {
               <WorkspacePanel gateway={gateway} conversationId={workspaceConversation ?? selected} workspaceId={workspaceTarget} developer={developerMode} action={action} fallbackView={semantic ? <DynamicView value={semantic} action={action} liveResources={resources} /> : view ? <Blocks view={view} resources={resources} action={action} /> : undefined} onError={fail} />
             </aside>}
           </div>
-        ) : page === "settings" || page === "users" ? <SettingsPage gateway={gateway} onError={fail} style={style} onStyleChange={setStyle} theme={theme} onThemeChange={setTheme} />
+        ) : page === "settings" || page === "users" ? <SettingsPage gateway={gateway} onError={fail} style={style} onStyleChange={setStyle} theme={theme} onThemeChange={setTheme} developer={developerMode} onDeveloperChange={setDeveloperMode} />
         : page === "agents" ? (
           <>
             <section className="agent-tier">
