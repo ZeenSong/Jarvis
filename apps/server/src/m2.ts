@@ -812,6 +812,13 @@ export class M2 {
       [Number(process.env.EVENT_RETENTION_DAYS ?? 30)],
     );
     await this.db.query("DELETE FROM web_sessions WHERE expires_at<now()");
+    // Every view request inserts a row; nothing used to prune them (310 rows for
+    // four distinct views in production). Keep recent views and any view a
+    // message still points at.
+    await this.db.query(
+      `DELETE FROM views v WHERE v.created_at < now() - interval '7 days'
+         AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.view_id = v.id)`,
+    );
   }
   async close() {
     if (this.timer) clearInterval(this.timer);
