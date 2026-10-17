@@ -44,7 +44,17 @@ export const viewSpecSchema = z.object({
   ui_protocol: z.literal(UI_PROTOCOL),
   id,
   revision: z.number().int().nonnegative(),
-  intent: z.enum(["overview", "investigate_failure", "manage_application", "search", "review_task", "review_integration"]),
+  /**
+   * Intents the host policy knows about. A view is free to use any other
+   * `snake_case` intent: only these four are treated as "this is a workspace
+   * report regardless of its shape", and a new result shape must not need a
+   * protocol release to describe itself.
+   */
+  intent: z
+    .string()
+    .min(1)
+    .max(60)
+    .regex(/^[a-z][a-z0-9_]*$/, "intent must be lower snake_case"),
   title: z.string().min(1).max(200),
   task_id: id.optional(),
   layout: z.object({
@@ -127,6 +137,8 @@ export function arrangeSections(view: ViewSpec, platform: Renderer["platform"]) 
 }
 
 export {
+  WORKSPACE_ONLY_INTENTS,
+  knownIntents,
   decideResultHost,
   decideViewHost,
   type HostCandidate,

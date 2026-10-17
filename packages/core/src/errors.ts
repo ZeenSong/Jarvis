@@ -34,6 +34,8 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   question_answer_invalid: 400,
   schedule_time_required: 400,
   validation_error: 400,
+  view_resource_required: 400,
+  view_intent_unknown: 400,
   hermes_tool_arguments_invalid: 400,
 
   // --- 401: identity is missing or stale ------------------------------------

@@ -31,12 +31,19 @@ export type HostDecision = {
 };
 
 /** Components that are meaningful only as a multi-part analysis surface. */
-const WORKSPACE_ONLY_INTENTS = new Set([
+export const WORKSPACE_ONLY_INTENTS: ReadonlySet<string> = new Set([
   "review_task",
   "investigate_failure",
   "manage_application",
   "review_integration",
 ]);
+
+/**
+ * Intents with documented host semantics. `intent` itself is open, so a new
+ * result shape can describe itself without a protocol release; these are the
+ * names that change the inline/workspace decision.
+ */
+export const knownIntents: readonly string[] = ["overview", "search", ...WORKSPACE_ONLY_INTENTS];
 
 const MEDIA_COMPONENTS = new Set(["gallery", "photo_grid", "file_list"]);
 const CHART_COMPONENTS = new Set(["line_chart", "bar_chart", "area_chart", "donut"]);
