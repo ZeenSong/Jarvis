@@ -67,7 +67,9 @@ services:
       hermes-dashboard: { condition: service_healthy }
 
   jarvis-server:
-    image: jarvis-server:0.4.0-visual-refresh-20261017
+    # Set JARVIS_SERVER_IMAGE when deploying a locally built tag; the published
+    # ghcr image from the release workflow is the default.
+    image: ${JARVIS_SERVER_IMAGE:-jarvis-server:0.4.0-visual-refresh-20261017}
     container_name: jarvis-server
     restart: unless-stopped
     env_file: [/DATA/AppData/jarvis/config/server.env]
@@ -105,9 +107,11 @@ services:
     network_mode: host
     env_file: [/DATA/AppData/jarvis/config/node-bridge.env]
     volumes:
-      # CasaOS imports this file directly, so keep these host paths explicit.
-      - /home/root2023/.codex:/seed-codex:ro
-      - /home/root2023/Codes/Projects/Jarvis:/workspace:ro
+      # CasaOS imports this file directly, so the host paths stay explicit but
+      # are parameterised: the previous hardcoded /home/root2023 paths made the
+      # file undeployable on any other machine.
+      - ${JARVIS_CODEX_DIR:-/home/root2023/.codex}:/seed-codex:ro
+      - ${JARVIS_WORKSPACE_DIR:-/home/root2023/Codes/Projects/Jarvis}:/workspace:ro
     depends_on:
       jarvis-server: { condition: service_healthy }
     healthcheck:
