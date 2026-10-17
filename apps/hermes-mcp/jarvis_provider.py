@@ -327,9 +327,15 @@ def agent_run_status(context_token: str, run_id: str) -> str:
 
 
 @server.tool()
-def ui_view_show(context_token: str, intent: str, resources: list[str] = [], target: Literal["inline", "workspace"] = "workspace", view: dict | None = None) -> str:
-    """交付 UI Protocol V2 结果。view 必须包含 ui_protocol='2.0', id, revision, intent='overview'或'search', title, layout={type:'workspace'}, sections 与 fallback。section 包含 id,role,component,component_version=2,title,data,actions=[],fallback。不要编造数据、设备、区域或工具；根据当前请求与实时工具结果生成通用视图。照片项引用工具结果中的 MEDIA_RESOURCE UUID，放入 resource_id，不要拼接文件系统路径。相同 intent 更新原工作区。"""
-    args = dict(intent=intent, resources=resources, target=target)
+def ui_view_show(context_token: str, intent: str, resources: list[str] = [], target: Literal["inline", "workspace"] | None = None, view: dict | None = None) -> str:
+    """交付结构化结果。优先只传 intent 与 resources，由服务端按真实数据生成视图；只有需要自定义呈现时才传 view。
+
+    view 若传，必须包含 ui_protocol='2.0', id, revision, intent, title, layout, sections 与 fallback；section 包含 id, role, component, component_version=2, title, data, actions=[], fallback。
+
+    呈现位置（对话内 or 工作区）由服务端按结果复杂度决定：照片画廊等一次看完的结果留在对话，多维分析进入工作区。不要用 target 或 layout 试图改变这个判断。不要编造数据、设备、区域或工具。照片项引用工具结果中的 MEDIA_RESOURCE UUID，放入 resource_id，不要拼接文件系统路径。"""
+    args: dict[str, object] = dict(intent=intent, resources=resources)
+    if target is not None:
+        args["target"] = target
     if view is not None:
         args["view"] = view
     return _call("ui_view_show", context_token, **args)

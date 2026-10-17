@@ -15,7 +15,7 @@ import { registerFirstUser, registrationStatus, loginUser, refreshUserSession, a
 import { MediaStore } from "./media.js";
 import { MediaResources } from "./media-resources.js";
 import { ConversationResults } from "../../../packages/conversation/src/results.js";
-import { viewSpecSchema, componentTypes } from "../../../packages/ui-protocol-v2/src/index.js";
+import { viewSpecSchema, componentTypes, decideViewHost } from "../../../packages/ui-protocol-v2/src/index.js";
 import {
   envelopeSchema,
   message,
@@ -294,16 +294,21 @@ export async function buildApp(options: {
           {
             if (!turnId) throw Error("conversation_required");
             const params = z.object({ intent: z.string().min(1).max(120), resources: z.array(z.string()).max(60).default([]), target: z.enum(["inline", "workspace"]).optional(), view: viewSpecSchema.optional() }).strict().parse(args);
-            const target = params.target ?? "workspace";
             const title = params.view?.title ?? (params.intent === "usage_analysis" ? "今日 Token 使用分析" : "分析结果");
             const results = new ConversationResults(db, m2.workspaces, push);
-            const pending = await results.begin(context.owner, turnId, params.intent, title, target);
+            let spec = params.view;
+            if (!spec) {
+              const generated = await m2.handle("view.v2.get", { intent: { type: "view.show", intent: params.intent, resources: params.resources }, renderer: { platform: "web", supports: { min: "2.0", max: "2.0" }, components: componentTypes.map((name) => `${name}@2`), features: ["charts", "gallery", "actions"] } }, context.owner) as any;
+              spec = viewSpecSchema.parse(generated.view);
+            }
+            // The host is decided from the result's shape, not by the model.
+            // A gallery stays inline; a multi-chart analysis opens the workspace.
+            const host = decideViewHost(spec, params.target);
+            const pending = await results.begin(context.owner, turnId, params.intent, title, host.target);
+            if (host.reason !== "caller_preference" && params.target && params.target !== host.target) {
+              app.log.info({ intent: params.intent, requested: params.target, target: host.target, reason: host.reason }, "result_host_overridden");
+            }
             try {
-              let spec = params.view;
-              if (!spec) {
-                const generated = await m2.handle("view.v2.get", { intent: { type: "view.show", intent: params.intent, resources: params.resources }, renderer: { platform: "web", supports: { min: "2.0", max: "2.0" }, components: componentTypes.map((name) => `${name}@2`), features: ["charts", "gallery", "actions"] } }, context.owner) as any;
-                spec = viewSpecSchema.parse(generated.view);
-              }
               // Resolve every named source under this user before publishing it.
               for (const source of new Set(spec.sections.flatMap((section) => section.source ? [section.source] : []))) await m2.resource(source, context.owner);
               result = await results.complete(context.owner, pending, spec);

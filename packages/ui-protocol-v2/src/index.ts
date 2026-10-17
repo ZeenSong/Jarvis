@@ -125,3 +125,11 @@ export function arrangeSections(view: ViewSpec, platform: Renderer["platform"]) 
     right: sections.filter((s) => ["resources", "detail", "actions"].includes(s.role)),
   };
 }
+
+export {
+  decideResultHost,
+  decideViewHost,
+  type HostCandidate,
+  type HostDecision,
+  type ResultHost,
+} from "./host-policy.js";

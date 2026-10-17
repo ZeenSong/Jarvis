@@ -286,6 +286,17 @@ export class ConversationService {
   private async finishTurn(turnId: string, status: "completed" | "failed") {
     await transaction(this.db, async (c) => {
       await c.query("SELECT id FROM conversation_turns WHERE id=$1 FOR UPDATE", [turnId]);
+      // A turn that reached a terminal state must not leave child events open.
+      // Previously a failed projection left a `reasoning` event in `running`, and
+      // the UI kept showing "正在执行 · N 个步骤" for a finished answer.
+      await c.query(
+        `UPDATE conversation_events SET status=CASE WHEN $2='failed' THEN 'failed' ELSE 'completed' END,
+           completed_at=now(), revision=revision+1
+         WHERE turn_id=$1 AND status IN ('queued','running','waiting','waiting_approval')
+           AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.turn_id=$1 AND m.role='jarvis' AND m.status IN ('queued','streaming'))
+           AND NOT EXISTS (SELECT 1 FROM conversation_questions q WHERE q.turn_id=$1 AND q.status='pending')`,
+        [turnId, status],
+      );
       await c.query(`UPDATE conversation_turns SET
         status=CASE WHEN EXISTS(SELECT 1 FROM conversation_questions WHERE turn_id=$1 AND status='pending') THEN 'waiting_question'
           WHEN EXISTS(SELECT 1 FROM conversation_messages WHERE turn_id=$1 AND role='jarvis' AND status IN ('queued','streaming')) THEN 'queued' ELSE $2 END,
