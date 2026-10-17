@@ -3,6 +3,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Rule
+import org.junit.Assume
 import org.junit.Test
 
 class M2EndToEndTest {
@@ -10,6 +11,7 @@ class M2EndToEndTest {
     private fun waitFor(text:String) {compose.waitUntil(25000){compose.onAllNodesWithText(text,substring=true).fetchSemanticsNodes().isNotEmpty()}}
     @Test fun conversationStreamingAndDynamicViewRestore(){
         val args=InstrumentationRegistry.getArguments()
+        requireLiveStack(args)
         compose.onNode(hasSetTextAction() and hasText("http://100.x.x.x:8080")).performTextInput(args.getString("server")!!)
         compose.onNode(hasSetTextAction() and hasText("配对码")).performTextInput(args.getString("pairingCode")!!)
         compose.onNodeWithText("配对并连接").performClick();waitFor("已连接")

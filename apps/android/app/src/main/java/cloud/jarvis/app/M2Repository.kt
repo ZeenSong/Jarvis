@@ -50,7 +50,7 @@ class M2Repository(private val gateway: GatewayClient, private val scope: Corout
     private var refreshing = false
     private var refreshAgain = false
     private var pending: JsonObject? = null
-    private fun task(block: suspend () -> Unit) { scope.launch { runCatching { block() }.onFailure { error.value = it.message } } }
+    private fun task(block: suspend () -> Unit) { scope.launch { runCatching { block() }.onFailure { error.value = friendlyError(it) } } }
     fun reset() {
         viewGeneration++; selected = null; pendingWorkspaceId = null; runId = null; pending = null
         conversations.value = emptyList(); conversation.value = null; hierarchy.value = null

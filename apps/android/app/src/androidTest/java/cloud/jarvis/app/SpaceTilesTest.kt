@@ -17,11 +17,11 @@ class SpaceTilesTest {
         var destination = ""
         compose.setContent { JarvisTheme { Column(Modifier.verticalScroll(rememberScrollState())) { SpaceTiles { destination=it } } } }
         listOf("照片","文件","知识","家庭","媒体","开发").forEach { compose.onNodeWithText(it).assertExists() }
+        // A tile opens its own space screen; the explanation lives there instead of
+        // expanding inside the grid.
         compose.onNodeWithText("照片").performClick()
-        compose.onNodeWithText("不是你的照片",substring=true).assertIsDisplayed()
-        compose.onNodeWithText("查看已安装应用").performClick()
-        compose.runOnIdle { assertEquals("apps",destination) }
+        compose.runOnIdle { assertEquals("space/photos",destination) }
         compose.onNodeWithText("开发").performScrollTo().performClick()
-        compose.runOnIdle { assertEquals("tasks",destination) }
+        compose.runOnIdle { assertEquals("space/development",destination) }
     }
 }
