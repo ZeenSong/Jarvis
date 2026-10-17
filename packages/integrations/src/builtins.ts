@@ -92,6 +92,19 @@ export const builtinManifests: readonly unknown[] = [
       resources: ["photo", "album", "search"],
     },
     healthcheck: { method: "GET", path: "/api/users/me", header: "x-api-key", scheme: "", ok_status: [200] },
+    // The MCP server returns this tool's bytes as an HTTP body rather than a JSON
+    // result, so the provider republishes it as a conversation media resource.
+    media: {
+      tool: "immich_assets_download_thumbnail",
+      id_argument: "id",
+      path: "/api/assets/{id}/thumbnail?size=preview",
+      header: "x-api-key",
+      scheme: "",
+      content_types: ["image/jpeg", "image/png", "image/webp"],
+      max_bytes: 2097152,
+      id_pattern:
+        "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    },
     risk: "read",
   },
 ];

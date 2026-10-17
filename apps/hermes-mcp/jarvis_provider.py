@@ -11,9 +11,8 @@ import base64
 import json
 import os
 import sys
-import uuid
 from contextlib import asynccontextmanager
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from typing import Literal
@@ -129,59 +128,89 @@ async def _authorize(context_token: str, provider: str, tool_name: str, read_onl
     )
 
 
-def _immich_preview(config: dict, asset_id: str) -> tuple[bytes, str]:
-    """Fetch a bounded authenticated preview without creating a shared link."""
-    try:
-        normalized_id = str(uuid.UUID(asset_id))
-    except (ValueError, TypeError, AttributeError):
-        raise RuntimeError("immich_asset_id_invalid")
-    request = Request(
-        f"{str(config['base_url']).rstrip('/')}/api/assets/{quote(normalized_id)}/thumbnail?size=preview",
-        headers={"Accept": "image/jpeg,image/png,image/webp", "x-api-key": str(config["token"])},
-    )
-    with urlopen(request, timeout=30) as response:
-        content_type = response.headers.get_content_type()
-        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-            raise RuntimeError("immich_preview_type_invalid")
-        data = response.read(2 * 1024 * 1024 + 1)
-    if not data or len(data) > 2 * 1024 * 1024:
-        raise RuntimeError("immich_preview_size_invalid")
-    return data, content_type
+def _transport(config: dict) -> dict:
+    """The uniform transport descriptor Jarvis returned for this provider."""
+    transport = config.get("transport")
+    if not isinstance(transport, dict):
+        raise RuntimeError("mcp_transport_missing")
+    return transport
 
 
-async def _immich_preview_resource(config: dict, context_token: str, arguments: dict[str, object]) -> str:
-    asset_id = arguments.get("id")
-    if not isinstance(asset_id, str):
-        raise RuntimeError("immich_asset_id_invalid")
-    data, content_type = await asyncio.to_thread(_immich_preview, config, asset_id)
-    resource_id = await asyncio.to_thread(_publish_media, context_token, data, content_type, "immich")
-    return json.dumps({"asset_id": asset_id, "media_resource": f"MEDIA_RESOURCE:{resource_id}"}, ensure_ascii=False)
+def _http_base(transport: dict) -> str:
+    """Application base URL derived from the MCP endpoint.
+
+    Every streamable-http manifest points at `<app-base><endpoint_path>`, and the
+    provider is the only place that needs the base for the optional HTTP helpers
+    (camera snapshots). Nothing here knows which application it is talking to.
+    """
+    endpoint = str(transport.get("endpoint") or "")
+    parsed = urlsplit(endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        raise RuntimeError("mcp_transport_invalid")
+    path = parsed.path
+    for suffix in ("/api/mcp", "/mcp"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return f"{parsed.scheme}://{parsed.netloc}{path}".rstrip("/")
 
 
-def _homeassistant_base(config: dict) -> str:
-    endpoint = str(config.get("endpoint", "")).rstrip("/")
-    suffix = "/api/mcp"
-    if not endpoint.endswith(suffix):
-        raise RuntimeError("homeassistant_endpoint_invalid")
-    return endpoint[:-len(suffix)]
+def _http_headers(transport: dict) -> dict[str, str]:
+    headers = transport.get("headers")
+    return {str(key): str(value) for key, value in headers.items()} if isinstance(headers, dict) else {}
 
 
-def _homeassistant_request(config: dict, path: str) -> tuple[bytes, str]:
-    request = Request(
-        f"{_homeassistant_base(config)}{path}",
-        headers={"Authorization": f"Bearer {config['token']}", "Accept": "application/json,image/jpeg,image/png,image/webp"},
-    )
+def _http_get(config: dict, path: str, accept: str = "application/json") -> tuple[bytes, str]:
+    transport = _transport(config)
+    headers = {**_http_headers(transport), "Accept": accept}
+    request = Request(f"{_http_base(transport)}{path}", headers=headers)
     with urlopen(request, timeout=30) as response:
         content_type = response.headers.get_content_type()
         data = response.read(2 * 1024 * 1024 + 1)
     if not data or len(data) > 2 * 1024 * 1024:
-        raise RuntimeError("homeassistant_response_size_invalid")
+        raise RuntimeError("media_size_invalid")
     return data, content_type
 
 
-async def _homeassistant_cameras(context_token: str) -> str:
-    config = await _authorize(context_token, "homeassistant", "camera_entities_list", True)
-    data, content_type = await asyncio.to_thread(_homeassistant_request, config, "/api/states")
+def _fetch_media(media: dict, provider: str, media_id: str) -> tuple[bytes, str]:
+    """Fetch a declared media endpoint with the credential the bridge resolved.
+
+    The manifest owns the URL template, the header and the size/type limits, so
+    this reads a descriptor instead of branching on the provider id.
+    """
+    import re
+
+    if not isinstance(media_id, str) or not re.fullmatch(str(media.get("id_pattern") or "[A-Za-z0-9._-]{1,80}"), media_id):
+        raise RuntimeError("media_id_invalid")
+    template = str(media.get("url_template") or "")
+    if "{id}" not in template:
+        raise RuntimeError("mcp_transport_invalid")
+    headers = {str(key): str(value) for key, value in (media.get("headers") or {}).items()}
+    headers["Accept"] = ", ".join(str(item) for item in media.get("content_types") or [])
+    request = Request(template.replace("{id}", quote(media_id, safe="")), headers=headers)
+    limit = int(media.get("max_bytes") or 2 * 1024 * 1024)
+    with urlopen(request, timeout=30) as response:
+        content_type = response.headers.get_content_type()
+        data = response.read(limit + 1)
+    if content_type not in (media.get("content_types") or []):
+        raise RuntimeError("media_type_invalid")
+    if not data or len(data) > limit:
+        raise RuntimeError("media_size_invalid")
+    return data, content_type
+
+
+async def _media_resource(config: dict, media: dict, context_token: str, arguments: dict[str, object]) -> str:
+    media_id = arguments.get(str(media.get("id_argument") or "id"))
+    if not isinstance(media_id, str):
+        raise RuntimeError("media_id_invalid")
+    data, content_type = await asyncio.to_thread(_fetch_media, media, str(config.get("provider") or ""), media_id)
+    resource_id = await asyncio.to_thread(_publish_media, context_token, data, content_type, str(config.get("provider") or "mcp"))
+    return json.dumps({str(media.get("id_argument") or "id"): media_id, "media_resource": f"MEDIA_RESOURCE:{resource_id}"}, ensure_ascii=False)
+
+
+async def _camera_entities(context_token: str, provider: str) -> str:
+    config = await _authorize(context_token, provider, "camera_entities_list", True)
+    data, content_type = await asyncio.to_thread(_http_get, config, "/api/states")
     if content_type != "application/json":
         raise RuntimeError("homeassistant_states_type_invalid")
     value = json.loads(data)
@@ -198,19 +227,19 @@ async def _homeassistant_cameras(context_token: str) -> str:
             "state": item.get("state"),
             "supported_features": attributes.get("supported_features"),
         })
-    return json.dumps({"provider": "homeassistant", "cameras": cameras}, ensure_ascii=False)
+    return json.dumps({"provider": provider, "cameras": cameras}, ensure_ascii=False)
 
 
-async def _homeassistant_camera_snapshot(context_token: str, entity_id: str) -> str:
+async def _camera_snapshot(context_token: str, provider: str, entity_id: str) -> str:
     if not isinstance(entity_id, str) or not entity_id.startswith("camera.") or not all(char.isalnum() or char in "_." for char in entity_id):
         raise RuntimeError("homeassistant_camera_entity_invalid")
-    config = await _authorize(context_token, "homeassistant", "camera_snapshot_read", True)
+    config = await _authorize(context_token, provider, "camera_snapshot_read", True)
     data, content_type = await asyncio.to_thread(
-        _homeassistant_request, config, f"/api/camera_proxy/{quote(entity_id, safe='.')}",
+        _http_get, config, f"/api/camera_proxy/{quote(entity_id, safe='.')}", "image/jpeg,image/png,image/webp",
     )
     if content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise RuntimeError("homeassistant_camera_type_invalid")
-    resource_id = await asyncio.to_thread(_publish_media, context_token, data, content_type, "homeassistant")
+    resource_id = await asyncio.to_thread(_publish_media, context_token, data, content_type, provider)
     return json.dumps({"entity_id": entity_id, "media_resource": f"MEDIA_RESOURCE:{resource_id}"}, ensure_ascii=False)
 
 
@@ -219,37 +248,40 @@ async def _upstream(provider: str, config: dict):
     """Open the real upstream MCP server with the household credential.
 
     This is a transport gateway, not a Home Assistant or Immich adapter. The
-    upstream server owns the tool names, schemas and results; Jarvis only
-    supplies the household credential after its member policy has approved the
-    request.
+    upstream server owns the tool names, schemas and results; Jarvis supplies the
+    household credential and says *how* to connect. Adding an integration is a
+    manifest edit on the server, never a change here.
     """
-    if provider == "homeassistant":
-        async with create_mcp_http_client(headers={"Authorization": f"Bearer {config['token']}"}) as client:
-            async with streamable_http_client(config["endpoint"], http_client=client) as streams:
+    transport = _transport(config)
+    kind = transport.get("type")
+    if kind == "streamable-http":
+        endpoint = str(transport.get("endpoint") or "")
+        parsed = urlsplit(endpoint)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise RuntimeError("mcp_transport_invalid")
+        async with create_mcp_http_client(headers=_http_headers(transport)) as client:
+            async with streamable_http_client(str(transport["endpoint"]), http_client=client) as streams:
                 async with ClientSession(*streams) as session:
                     await session.initialize()
                     yield session
         return
-    if provider == "immich":
-        env = {
+    if kind == "stdio":
+        child_env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "LANG": os.environ.get("LANG", "C.UTF-8"),
-            "DOTNET_ROOT": os.environ.get("DOTNET_ROOT", "/usr/share/dotnet"),
-            "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": os.environ.get("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "1"),
-            "IMMICH_BASE_URL": str(config["base_url"]),
-            "IMMICH_API_KEY": str(config["token"]),
         }
+        child_env.update({str(key): str(value) for key, value in (transport.get("env") or {}).items()})
         params = StdioServerParameters(
-            command=os.environ.get("IMMICH_MCP_COMMAND", "/usr/share/dotnet/dotnet"),
-            args=[os.environ.get("IMMICH_MCP_DLL", "/opt/immich-mcp/ImmichMCP.dll"), "--stdio"],
-            env=env,
+            command=str(transport["command"]),
+            args=[str(item) for item in transport.get("args") or []],
+            env=child_env,
         )
         async with stdio_client(params) as streams:
             async with ClientSession(*streams) as session:
                 await session.initialize()
                 yield session
         return
-    raise RuntimeError("mcp_provider_invalid")
+    raise RuntimeError("mcp_transport_invalid")
 
 
 async def _mcp_tools(provider: str, context_token: str) -> str:
@@ -262,6 +294,11 @@ async def _mcp_call(provider: str, context_token: str, tool_name: str, arguments
     # The schema and annotations come from the upstream server. We do not trust
     # a model-supplied read_only flag to authorize a write operation.
     read_config = await _authorize(context_token, provider, "__tools_list__", True)
+    # A manifest may declare that one tool returns bytes rather than JSON. Jarvis
+    # resolves the URL, header and limits, so this stays provider-agnostic.
+    media = read_config.get("media")
+    if isinstance(media, dict) and media.get("tool") == tool_name:
+        return await _media_resource(read_config, media, context_token, arguments)
     async with _upstream(provider, read_config) as session:
         tools = await session.list_tools()
         selected = next((tool for tool in tools.tools if tool.name == tool_name), None)
@@ -269,11 +306,6 @@ async def _mcp_call(provider: str, context_token: str, tool_name: str, arguments
             raise RuntimeError("mcp_tool_not_found")
         annotations = getattr(selected, "annotations", None)
         read_only = bool(getattr(annotations, "read_only_hint", False)) if annotations is not None else False
-        # Immich MCP v0.4.0 does not annotate this read-only URL helper. Treat
-        # this one audited operation as read-only and convert it into a Jarvis
-        # media resource so displaying a photo never requires a shared link.
-        if provider == "immich" and tool_name == "immich_assets_download_thumbnail":
-            return await _immich_preview_resource(read_config, context_token, arguments)
         if read_only:
             return await _dump_tool_result(await session.call_tool(tool_name, arguments), context_token, provider)
 

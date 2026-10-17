@@ -4,6 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  builtinManifests,
   IntegrationRegistry,
   classifyTool,
   compileManifest,
@@ -176,4 +177,51 @@ test("connection refuses a non-http endpoint and never leaks the secret", () => 
     () => IntegrationRegistry.connection(registry.require("jellyfin"), "key", {} as NodeJS.ProcessEnv),
     /jellyfin_not_configured/,
   );
+});
+
+test("media fetch is declared by the manifest, never by the provider name", () => {
+  const registry = new IntegrationRegistry([
+    {
+      ...jellyfin,
+      media: {
+        tool: "get_poster",
+        id_argument: "item_id",
+        path: "/Items/{id}/Images/Primary",
+        header: "x-emby-token",
+        scheme: "",
+        content_types: ["image/png"],
+        max_bytes: 4096,
+        id_pattern: "[A-Za-z0-9]{1,40}",
+      },
+    },
+  ]);
+  const descriptor = IntegrationRegistry.media(registry.require("jellyfin"), "jellyfin-key", env);
+  assert.deepEqual(descriptor, {
+    tool: "get_poster",
+    id_argument: "item_id",
+    url_template: "http://jellyfin.local:8096/Items/{id}/Images/Primary",
+    headers: { "x-emby-token": "jellyfin-key" },
+    content_types: ["image/png"],
+    max_bytes: 4096,
+    id_pattern: "[A-Za-z0-9]{1,40}",
+  });
+
+  // The built-in Immich manifest reproduces the previous hardcoded behaviour.
+  const builtins = new IntegrationRegistry(builtinManifests);
+  const immich = IntegrationRegistry.media(builtins.require("immich"), "immich-key", env);
+  assert.equal(immich?.tool, "immich_assets_download_thumbnail");
+  assert.equal(immich?.url_template, "http://immich.local:2283/api/assets/{id}/thumbnail?size=preview");
+  assert.deepEqual(immich?.headers, { "x-api-key": "immich-key" });
+
+  // No declaration, or no base URL, means no media fetch at all.
+  assert.equal(IntegrationRegistry.media(builtins.require("homeassistant"), "ha-token", env), undefined);
+  assert.equal(IntegrationRegistry.media(builtins.require("immich"), "immich-key", {} as NodeJS.ProcessEnv), undefined);
+});
+
+test("media declarations are validated at load time", () => {
+  const base = { ...jellyfin, media: { tool: "get_poster", path: "/x/{id}" } };
+  assert.throws(() => compileManifest({ ...base, media: { ...base.media, path: "relative/{id}" } }), /path/);
+  assert.throws(() => compileManifest({ ...base, media: { ...base.media, id_pattern: "([a-z" } }), /id_pattern/);
+  assert.throws(() => compileManifest({ ...base, media: { ...base.media, content_types: ["text/html"] } }));
+  assert.equal(compileManifest(base).media?.id_argument, "id", "defaults keep manifests short");
 });

@@ -55,17 +55,30 @@ test("M3.2 deployed Hermes provider exposes the kernel and transparent upstream 
   const serverManifest = readFileSync(new URL("../deploy/k8s/server.yaml", import.meta.url), "utf8");
   assert.match(serverManifest, /HERMES_MEDIA_ROOT/);
   assert.match(serverManifest, /subPath: media/);
-  for (const tool of ["mcp_tools_list", "mcp_tool_call", "schedule_create", "conversation_question_create"]) {
-    assert.match(manifest, new RegExp(`def ${tool}\\(`));
-  }
-  assert.match(jarvisSource, /def _homeassistant_cameras\(/);
+  const upstreamSource = readFileSync(new URL("../apps/hermes-mcp/upstream_provider.py", import.meta.url), "utf8");
+  for (const tool of ["mcp_tools_list", "mcp_tool_call"]) assert.match(upstreamSource, new RegExp(`def ${tool}\\(`));
+  for (const tool of ["schedule_create", "conversation_question_create"]) assert.match(jarvisSource, new RegExp(`def ${tool}\\(`));
+  // The ConfigMap entries delegate to the image instead of embedding a second
+  // copy of the provider, so the two can never drift apart.
+  assert.match(manifest, /jarvis_provider\.py: \|[\s\S]{0,400}run_path\("\/opt\/jarvis-source\/jarvis_provider\.py"/);
+  assert.match(manifest, /upstream_provider\.py: \|[\s\S]{0,400}run_path\("\/opt\/jarvis-source\/upstream_provider\.py"/);
+  assert.doesNotMatch(manifest, /def _mcp_call\(provider: str/);
+  assert.match(jarvisSource, /def _camera_entities\(/);
   assert.match(jarvisSource, /\/api\/camera_proxy\//);
-  assert.doesNotMatch(manifest, /def home_assistant_state\(/);
-  assert.doesNotMatch(manifest, /def immich_photo_search\(/);
-  assert.match(manifest, /mcp_authorize/);
-  assert.match(jarvisSource, /immich_assets_download_thumbnail/);
+  assert.doesNotMatch(jarvisSource + upstreamSource, /def home_assistant_state\(/);
+  assert.doesNotMatch(jarvisSource + upstreamSource, /def immich_photo_search\(/);
+  assert.match(jarvisSource, /"mcp_authorize"/);
+  // The provider is a transport gateway: transport and media come from the
+  // server's descriptor, so no provider is named in the bridge any more.
+  assert.match(jarvisSource, /def _upstream\(provider: str, config: dict\)/);
+  assert.match(jarvisSource, /mcp_transport_invalid/);
+  assert.doesNotMatch(jarvisSource, /provider == "immich"|provider == "homeassistant"/);
   assert.match(jarvisSource, /MEDIA_RESOURCE:/);
-  assert.match(jarvisSource, /thumbnail\?size=preview/);
+  // Media fetch is declared by the manifest, not by the provider.
+  const builtinManifests = readFileSync(new URL("../packages/integrations/src/builtins.ts", import.meta.url), "utf8");
+  assert.match(builtinManifests, /immich_assets_download_thumbnail/);
+  assert.match(builtinManifests, /thumbnail\?size=preview/);
+  assert.match(manifest, /MCP_EXTRAS: camera/);
 });
 
 test("M3.2 Authentik PoC is Docker-first and keeps secrets in environment", () => {

@@ -115,6 +115,50 @@ export const appSchema = z
   })
   .strict();
 
+/**
+ * Turn one upstream tool into a conversation media resource.
+ *
+ * Some photo servers expose their bytes through a plain HTTP endpoint instead of
+ * an MCP result (Immich's thumbnail helper is one). That used to be a conditional
+ * in the Python provider keyed on the provider name. Declaring it here means the
+ * provider only applies a descriptor, and a new photo app needs no code.
+ */
+export const mediaSchema = z
+  .object({
+    /** Upstream tool whose response is a binary body rather than JSON. */
+    tool: z.string().trim().min(1).max(120),
+    /** Argument carrying the media id. */
+    id_argument: z.string().trim().min(1).max(64).default("id"),
+    /** Path template on the app base URL. `{id}` is replaced by the URL-encoded id. */
+    path: z.string().trim().min(1).max(300).regex(/^\/[A-Za-z0-9._/{}-]*(\?[A-Za-z0-9._=&%{}-]*)?$/),
+    /** Env var holding the app base URL. Defaults to the app launch env. */
+    base_env: envName.optional(),
+    header: z.string().trim().min(1).max(64).default("Authorization"),
+    scheme: z.string().trim().max(32).default("Bearer"),
+    content_types: z
+      .array(z.enum(["image/jpeg", "image/png", "image/webp"]))
+      .min(1)
+      .max(8)
+      .default(["image/jpeg", "image/png", "image/webp"]),
+    max_bytes: z.number().int().min(1024).max(10 * 1024 * 1024).default(2 * 1024 * 1024),
+    /** Regular expression the id must fully match before it is put in a URL. */
+    id_pattern: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .default("[A-Za-z0-9._-]{1,80}")
+      .refine((value) => {
+        try {
+          new RegExp(value);
+          return true;
+        } catch {
+          return false;
+        }
+      }, "id_pattern must be a valid regular expression"),
+  })
+  .strict();
+
 export const integrationManifestSchema = z
   .object({
     id: identifier,
@@ -137,6 +181,8 @@ export const integrationManifestSchema = z
     capabilities: z.array(z.string().trim().regex(/^[a-z][a-z0-9.*_-]{1,79}$/)).max(40).default([]),
     app: appSchema.default({ deep_links: {}, capabilities: [], resources: [] }),
     healthcheck: healthcheckSchema.optional(),
+    /** Optional tool whose bytes become a conversation media resource. */
+    media: mediaSchema.optional(),
     /** Risk of a successful *write* call; used by the approval surface. */
     risk: z.enum(["read", "write", "execute"]).default("read"),
     enabled: z.boolean().default(true),
@@ -145,6 +191,7 @@ export const integrationManifestSchema = z
 
 export type IntegrationManifest = z.infer<typeof integrationManifestSchema>;
 export type IntegrationTransport = z.infer<typeof transportSchema>;
+export type IntegrationMedia = z.infer<typeof mediaSchema>;
 export type ToolPolicy = z.infer<typeof toolPolicySchema>;
 
 export type CompiledManifest = IntegrationManifest & {

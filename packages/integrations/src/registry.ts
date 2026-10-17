@@ -23,6 +23,22 @@ export type ConnectionDescriptor =
       env: Record<string, string>;
     };
 
+/**
+ * How the MCP provider should turn one upstream tool result into a conversation
+ * media resource. Produced only for manifests that declare `media`; the provider
+ * applies it generically and never needs to know the provider id.
+ */
+export type MediaDescriptor = {
+  tool: string;
+  id_argument: string;
+  /** Absolute URL template; `{id}` is substituted by the provider. */
+  url_template: string;
+  headers: Record<string, string>;
+  content_types: string[];
+  max_bytes: number;
+  id_pattern: string;
+};
+
 export type AppDescriptor = {
   id: string;
   name: string;
@@ -143,6 +159,30 @@ export class IntegrationRegistry {
    * Turn a manifest plus a secret into the exact connection the MCP provider must
    * open. This is the only place that knows how a manifest maps onto a transport.
    */
+  /**
+   * Resolve the optional media fetch. Returns `undefined` when the manifest has
+   * none — or when its base URL is not configured, because the result is only an
+   * enhancement: the tool call itself still works without it.
+   */
+  static media(manifest: CompiledManifest, secret: string, env: NodeJS.ProcessEnv = process.env): MediaDescriptor | undefined {
+    if (!manifest.media) return undefined;
+    const baseEnv = manifest.media.base_env
+      ?? manifest.app.launch_env
+      ?? (manifest.transport.type === "streamable-http" ? manifest.transport.endpoint_env : undefined);
+    const base = baseEnv ? env[baseEnv]?.trim() : undefined;
+    if (!base || !/^https?:\/\//.test(base)) return undefined;
+    const scheme = manifest.media.scheme.trim();
+    return {
+      tool: manifest.media.tool,
+      id_argument: manifest.media.id_argument,
+      url_template: `${base.replace(/\/$/, "")}${manifest.media.path}`,
+      headers: { [manifest.media.header]: scheme ? `${scheme} ${secret}` : secret },
+      content_types: [...manifest.media.content_types],
+      max_bytes: manifest.media.max_bytes,
+      id_pattern: manifest.media.id_pattern,
+    };
+  }
+
   static connection(manifest: CompiledManifest, secret: string, env: NodeJS.ProcessEnv = process.env): ConnectionDescriptor {
     if (manifest.transport.type === "streamable-http") {
       const base = env[manifest.transport.endpoint_env]?.trim();

@@ -238,12 +238,15 @@ export async function buildApp(options: {
           const resolved = await resolveProviderSecret(mcpManifest, context.owner);
           if (!resolved) throw Error("mcp_provider_not_configured");
           const connection = IntegrationRegistry.connection(mcpManifest, resolved.secret);
-          // The descriptor is uniform for every provider: transport + policy.
-          // Legacy fields stay so an older provider image keeps working during rollout.
+          // The descriptor is uniform for every provider: transport + policy +
+          // optional media fetch. Legacy fields stay so an older provider image
+          // keeps working during rollout.
+          const media = IntegrationRegistry.media(mcpManifest, resolved.secret);
           const launchBase = mcpManifest.app.launch_env ? process.env[mcpManifest.app.launch_env]?.replace(/\/$/, "") : undefined;
           result = {
             provider: mcpManifest.id,
             transport: connection,
+            ...(media ? { media } : {}),
             read_scope: mcpManifest.readScope,
             write_scope: mcpManifest.writeScope,
             credential_source: resolved.source,
