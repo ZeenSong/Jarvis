@@ -111,7 +111,7 @@ npm run build:web
 npx vite preview apps/web --port 4173
 ```
 
-> 没有自动部署到运行中的 Jarvis 容器；线上仍是旧版本，确认方向后再部署。
+> 已部署到 `127.0.0.1:8080`：镜像 `jarvis-server:0.4.0-visual-refresh-20261017`（Jarvis 0.4.0 + 新 Web 层）。部署前的数据库备份保存在本机 `.local/deploy-visual-refresh-20261017/`，不进入 Git。
 
 ## 代码结构
 

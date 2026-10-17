@@ -11,7 +11,7 @@ No scripts, external references, event attributes or foreignObject elements foun
 
 ## Monochrome glyphs (2026-10-17)
 
-The current UI uses the files under `glyphs/` for a consistent, tinted icon well:
+The current UI uses the `*-glyph.svg` files beside this document for a consistent, tinted icon well:
 
 - Home Assistant, Immich, Jellyfin, qBittorrent, Mosquitto (from `eclipsemosquitto`) and Authentik are from
   [Simple Icons 13](https://github.com/simple-icons/simple-icons) via jsDelivr, released under CC0 1.0.

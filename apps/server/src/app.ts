@@ -475,8 +475,13 @@ export async function buildApp(options: {
         .send(await readFile(resolve("apps/web/dist/artwork", name)));
     } catch { return reply.code(404).send(); }
   });
+  const appIconNames = new Set([
+    "homeassistant.svg", "immich.svg",
+    "homeassistant-glyph.svg", "immich-glyph.svg", "jellyfin-glyph.svg", "qbittorrent-glyph.svg",
+    "mosquitto-glyph.svg", "authentik-glyph.svg", "jarvis-glyph.svg", "frame-glyph.svg",
+  ]);
   app.get<{ Params: { name: string } }>("/app-icons/:name", async (req, reply) => {
-    if (!["homeassistant.svg", "immich.svg"].includes(req.params.name)) return reply.code(404).send();
+    if (!appIconNames.has(req.params.name)) return reply.code(404).send();
     try {
       return reply.type("image/svg+xml").header("Content-Security-Policy", "default-src 'none'; sandbox")
         .header("X-Content-Type-Options", "nosniff").header("Cache-Control", "public, max-age=86400")

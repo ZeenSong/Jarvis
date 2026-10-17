@@ -156,7 +156,7 @@ function appIdentity(app: Application) {
 function AppIcon({ app }: { app: Application }) {
   const identity = appIdentity(app);
   if (identity) return <span className="application-icon" aria-hidden="true" style={{ "--app-color": identity.color } as CSSProperties}>
-    <img src={`/app-icons/glyphs/${identity.glyph}.svg`} alt="" />
+    <img src={`/app-icons/${identity.glyph}-glyph.svg`} alt="" />
   </span>;
   return <span className="application-icon monogram" aria-hidden="true">{app.name.trim().slice(0, 1).toUpperCase()}</span>;
 }

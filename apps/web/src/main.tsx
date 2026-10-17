@@ -65,6 +65,12 @@ function App() {
   const [theme, setTheme] = useState<"dark" | "light">(initialTheme);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("jarvis-theme", theme); }, [theme]);
   useEffect(() => { document.documentElement.dataset.style = style; localStorage.setItem("jarvis-style", style); }, [style]);
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) return;
+    const background = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    if (background) meta.setAttribute("content", background);
+  }, [theme, style]);
   const [paired, setPaired] = useState(false),
     [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
