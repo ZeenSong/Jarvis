@@ -241,6 +241,9 @@ export async function buildApp(options: {
           // The descriptor is uniform for every provider: transport + policy +
           // optional media fetch. Legacy fields stay so an older provider image
           // keeps working during rollout.
+          // The provider authorizes a listing before it knows which tool the
+          // model picked, so the media descriptor travels with every response and
+          // the provider applies it only when `media.tool` matches.
           const media = IntegrationRegistry.media(mcpManifest, resolved.secret);
           const launchBase = mcpManifest.app.launch_env ? process.env[mcpManifest.app.launch_env]?.replace(/\/$/, "") : undefined;
           result = {
