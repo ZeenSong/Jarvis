@@ -17,6 +17,7 @@ class JarvisApplication : Application() {
 class JarvisRepository(private val app: Application) : DefaultLifecycleObserver {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val credentials = CredentialStore(app)
+    val preferences = AppPreferences(app)
     private val cache = Room.databaseBuilder(app, CacheDatabase::class.java, "jarvis-cache").build().snapshots()
     val system = MutableStateFlow<JsonObject?>(null)
     val agents = MutableStateFlow<List<JsonObject>>(emptyList())
@@ -36,8 +37,10 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     private var page = "home"
     private var selectedAgent: String? = null
     private var refreshing = false
-    val gateway = GatewayClient(scope, ::onEvent, { refresh() }) { updated -> scope.launch { runCatching { credentials.save(updated) }.onFailure { error.value = "无法保存刷新后的会话" } } }
+    val gateway = GatewayClient(scope, ::onEvent, { onConnected() }) { updated -> scope.launch { runCatching { credentials.save(updated) }.onFailure { error.value = "无法保存刷新后的会话" } } }
     val m2 = M2Repository(gateway, scope, cache, error)
+    val account = AccountRepository(gateway, scope, error)
+    private var knownDeviceId: String? = null
     init {
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         (app.getSystemService(ConnectivityManager::class.java)).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
@@ -50,21 +53,69 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
                 when (s.key) { "system" -> system.value = Json.parseToJsonElement(s.json).jsonObject; "agents" -> agents.value = Json.parseToJsonElement(s.json).jsonArray.map { it.jsonObject }; "today" -> today.value = Json.parseToJsonElement(s.json).jsonObject }
                 savedAt.value = maxOf(savedAt.value ?: 0, s.savedAt)
             }
-            credentials.load()?.let { paired.value = true; gateway.connect(it) }
+            credentials.load()?.let { knownDeviceId = it.deviceId; paired.value = true; gateway.connect(it) }
             backgroundEnabled.value = credentials.backgroundEnabled()
             if (foreground && backgroundEnabled.value && paired.value) startBackground()
         }.onFailure { error.value = "无法恢复本地凭据，请重新登录" } }
     }
     private fun startBackground() { runCatching { app.startForegroundService(Intent(app, ConnectionService::class.java)) }.onFailure { error.value = "无法启动后台连接：${it.message}" } }
+    private fun onConnected() {
+        refresh()
+        scope.launch { runCatching { account.refreshNow() }.onFailure { error.value = friendlyError(it) } }
+    }
     fun setBackground(enabled: Boolean) { scope.launch { runCatching { credentials.setBackground(enabled); backgroundEnabled.value = enabled; val service = Intent(app, ConnectionService::class.java); if (enabled) startBackground() else app.stopService(service) }.onFailure { error.value = friendlyError(it) } } }
-    override fun onStart(owner: LifecycleOwner) { foreground = true; gateway.subscribe(page in listOf("home", "server")); gateway.networkChanged(); if (backgroundEnabled.value && paired.value) startBackground() }
+    override fun onStart(owner: LifecycleOwner) { foreground = true; gateway.subscribe(page in listOf("home", "system")); gateway.networkChanged(); if (backgroundEnabled.value && paired.value) startBackground() }
     override fun onStop(owner: LifecycleOwner) { foreground = false; gateway.subscribe(false) }
-    fun selectPage(value: String) { page = value; gateway.subscribe(foreground && value in listOf("home", "server")) }
+    fun selectPage(value: String) { page = value; gateway.subscribe(foreground && value in listOf("home", "system")) }
     fun handleDeepLink(intent: Intent?) { deepLinkTarget(intent?.dataString)?.let { deepLink.value = it; error.value = null } }
     fun consumeDeepLink() { deepLink.value = null }
     fun login(server: String, username: String, password: String) { scope.launch {
         error.value = null
-        runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = friendlyError(it) }
+        runCatching {
+            val device = knownDeviceId ?: credentials.deviceId().also { knownDeviceId = it }
+            val auth = gateway.login(server.trim(), username.trim(), password, device)
+            completeLogin(auth)
+        }.onFailure { error.value = friendlyError(it) }
+    } }
+
+    fun register(server: String, username: String, password: String, confirmation: String) { scope.launch {
+        error.value = null
+        runCatching {
+            val device = knownDeviceId ?: credentials.deviceId().also { knownDeviceId = it }
+            val auth = gateway.register(server.trim(), username.trim(), password, confirmation, device)
+            completeLogin(auth)
+        }.onFailure { error.value = friendlyError(it) }
+    } }
+
+    fun acceptInvite(server: String, token: String, password: String) { scope.launch {
+        error.value = null
+        runCatching {
+            val device = knownDeviceId ?: credentials.deviceId().also { knownDeviceId = it }
+            val auth = gateway.acceptInvite(server.trim(), token, password, device)
+            completeLogin(auth)
+        }.onFailure { error.value = friendlyError(it) }
+    } }
+
+    suspend fun registrationOpen(server: String): Boolean = runCatching { gateway.registrationOpen(server) }.getOrDefault(false)
+
+    private suspend fun completeLogin(auth: Credentials) {
+        credentials.save(auth)
+        knownDeviceId = auth.deviceId
+        preferences.lastServer = auth.server
+        preferences.lastUsername = auth.username ?: ""
+        m2.reset(); account.clear(); cache.clear()
+        system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null
+        paired.value = true
+        gateway.connect(auth)
+    }
+
+    fun logout() { scope.launch {
+        runCatching { gateway.logoutRemote() }
+        runCatching { credentials.clear() }
+        runCatching { cache.clear() }
+        m2.reset(); account.clear()
+        system.value = null; agents.value = emptyList(); usage.value = null; today.value = null
+        savedAt.value = null; paired.value = false; error.value = null
     } }
     private suspend fun save(key: String, value: JsonElement) { val now = System.currentTimeMillis(); cache.put(Snapshot(key, value.toString(), now)); savedAt.value = now }
     private fun onEvent(topic: String, value: JsonElement) {
@@ -159,6 +210,21 @@ internal fun friendlyError(error: Throwable?): String {
         "hermes_not_configured" -> "Jarvis 尚未连接模型服务"
         "view_resource_required" -> "这个视图需要先选择具体对象"
         "validation_error" -> "请求格式不正确"
+        "invalid_credentials" -> "用户名或密码不正确"
+        "invalid_invite" -> "邀请无效或已过期"
+        "registration_closed" -> "首次注册已完成，请返回登录或使用管理员邀请"
+        "device_owned_by_another_user" -> "此设备已绑定其他账户"
+        "admin_required" -> "需要管理员权限"
+        "last_admin" -> "至少要保留一名管理员"
+        "cannot_change_own_role" -> "不能修改自己的管理员身份"
+        "admin_required_for_casaos" -> "只有 Jarvis 管理员可以连接 CasaOS"
+        "casaos:unauthorized" , "invalid_casaos" -> "CasaOS 用户名或密码不正确"
+        "not_configured" -> "该服务尚未配置"
+        "user_not_found" -> "用户不存在"
+        "app_not_found" -> "应用不存在或未安装"
+        "credential_required" -> "需要先在应用里创建只读凭据"
+        "integration_http_401", "integration_http_403" -> "凭据被应用拒绝，请重新创建只读凭据"
+        "service_unavailable" -> "服务暂时不可用，请稍后重试"
         "request_failed" -> "服务暂时不可用，请稍后重试"
         else -> "操作失败（$code）"
     }

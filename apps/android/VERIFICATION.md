@@ -10,10 +10,11 @@ apps/android/gradlew testDebugUnitTest
 ```
 
 Covers provider-independent logic: server address normalisation, assistant content
-projection, `jarvis://` deep-link parsing, notification targets and the
-error-message mapping. These are the tests that pin the notification → deep link
-→ screen contract without touching Android framework classes, so they run
-everywhere.
+projection, `jarvis://` deep-link parsing, notification targets, the
+error-message mapping, the four appearance palettes and the voice-call text
+pipeline (Markdown sanitising, sentence boundaries, long-tail splitting). These
+are the tests that pin the notification → deep link → screen contract without
+touching Android framework classes, so they run everywhere.
 
 ## 2. Lint and instrumentation compile
 
@@ -32,9 +33,11 @@ apps/android/gradlew connectedDebugAndroidTest
 
 Runs the self-contained Compose suite (`DynamicV2Test`, `DynamicProtocolTest`,
 `GalleryViewTest`, `SpaceTilesTest`, `TaskListTest`, `ProductApplicationsTest`,
-`SemanticRestoreTest`, …). Three end-to-end tests (`M1EndToEndTest`,
-`M2EndToEndTest`, `M3ApplicationsEndToEndTest`) drive a **real deployed stack**
-and skip unless they receive instrumentation arguments:
+`SemanticRestoreTest`, …). Three legacy end-to-end tests (`M1EndToEndTest`,
+`M2EndToEndTest`, `M3ApplicationsEndToEndTest`) still target the pre-identity
+pairing harness; they skip unless they receive instrumentation arguments and are
+kept for historical harnesses. Current identity builds are exercised by the
+self-contained suite plus the login/home or voice walkthroughs:
 
 ```bash
 apps/android/gradlew connectedDebugAndroidTest \
@@ -86,3 +89,38 @@ Two practical notes, both learned the hard way:
    `adb shell am start -a android.intent.action.VIEW -d "jarvis://task/<run id>"`
 4. The task's Result screen must open with real data, and the header must not show
    any raw error body.
+
+
+## 4. GitHub Release
+
+Push a `v*` tag, or dispatch **Publish Android APK** with an existing tag. The
+workflow builds the debug APK, runs `testDebugUnitTest` and `lintDebug`, verifies
+the stable debug signing certificate, and attaches
+`jarvis-<version>-android-debug.apk` plus `SHA256SUMS` to the GitHub Release.
+The keystore is stored in the `ANDROID_DEBUG_KEYSTORE` repository secret so
+releases remain upgrade-compatible; without it, a fork still builds but uses a
+fresh debug key.
+
+## 5. Voice call walkthrough on a device
+
+The voice call uses the system `RecognitionService` and TTS engine. It needs
+microphone permission and a device or emulator image with Chinese speech
+services. On an emulator, start it with a real audio backend (`-audio default`);
+`-no-audio` can make the audio HAL hang when TTS initialises.
+
+1. Log in and open **语音通话** from the home hero, top-bar microphone or the
+   Jarvis header.
+2. Grant microphone access. The call greets, then shows **正在聆听** with the
+   orb rings and a live level meter.
+3. Say a short sentence. The partial transcript appears under the orb. After the
+   silence timeout the turn is submitted automatically.
+4. While Jarvis answers, the orb breathes and the answer is spoken sentence by
+   sentence. Tap the orb to interrupt: playback stops, the server turn is
+   cancelled and the call returns to listening.
+5. Use **静音** to stop the microphone, **扬声器** to switch routing, **键盘** to
+   type a turn, and **结束** to close the call. Ending with a real conversation
+   opens that conversation in the chat screen.
+
+If the device has no recognition service, the keyboard panel opens
+automatically. If TTS is unavailable, the footer says so and replies stay as
+subtitles.

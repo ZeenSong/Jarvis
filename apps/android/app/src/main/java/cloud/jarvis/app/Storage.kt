@@ -17,10 +17,33 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 private val Context.settings by preferencesDataStore("jarvis")
-data class Credentials(val server: String, val deviceId: String, val token: String, val refreshToken: String? = null)
+data class Credentials(
+    val server: String,
+    val deviceId: String,
+    val token: String,
+    val refreshToken: String? = null,
+    val username: String? = null,
+)
 class CredentialStore(private val context: Context) {
     suspend fun backgroundEnabled(): Boolean = context.settings.data.first()[booleanPreferencesKey("background")] ?: false
     suspend fun setBackground(enabled: Boolean) { context.settings.edit { it[booleanPreferencesKey("background")] = enabled } }
+    /** A stable device identity, matching the Web client's localStorage device id. */
+    suspend fun deviceId(): String {
+        val current = context.settings.data.first()[stringPreferencesKey("device_id")]
+        if (!current.isNullOrBlank()) return current
+        val created = java.util.UUID.randomUUID().toString()
+        context.settings.edit { it[stringPreferencesKey("device_id")] = created }
+        return created
+    }
+    suspend fun clear() {
+        context.settings.edit {
+            it.remove(stringPreferencesKey("server"))
+            it.remove(stringPreferencesKey("device"))
+            it.remove(stringPreferencesKey("token"))
+            it.remove(stringPreferencesKey("refresh_enc"))
+            it.remove(stringPreferencesKey("refresh"))
+        }
+    }
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("jarvis-device", null) as? SecretKey)?.let { return it }

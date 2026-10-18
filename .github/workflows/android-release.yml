@@ -1,0 +1,114 @@
+name: Publish Android APK
+
+# A tag is the release trigger. The APK is built from the tagged commit,
+# signed with the repository's stable debug key (when the secret is present),
+# and attached to the matching GitHub Release. `workflow_dispatch` re-runs a
+# release without moving the tag if the first run failed.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    env:
+      # Base64 of ~/.android/debug.keystore. Keeping it in a secret rather than
+      # the repository prevents an attacker from signing a malicious update to
+      # an already-installed debug build. When absent (forks), the build still
+      # succeeds with a fresh key but cannot overwrite an existing install.
+      ANDROID_DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-35 build-tools;35.0.0
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore stable Android debug keystore
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
+            mkdir -p "$HOME/.android"
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > "$HOME/.android/debug.keystore"
+            chmod 600 "$HOME/.android/debug.keystore"
+            echo "Using the repository's stable debug keystore."
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE is not configured; the APK will use a fresh debug key and may not upgrade an existing install."
+          fi
+
+      - name: Build and test
+        working-directory: apps/android
+        run: ./gradlew assembleDebug testDebugUnitTest lintDebug
+
+      - name: Stage APK and checksums
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          APK="apps/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
+            CERT="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK")"
+            echo "$CERT"
+            # SHA-256 of the v0.4.0/v0.4.1 debug signing certificate.
+            echo "$CERT" | grep -q "79ba324169ed7b7e5ab173e3bed4fbfdfbc493e84dc2cd00ee0caf1c85607d3b"
+          fi
+          mkdir -p release-assets
+          cp "$APK" "release-assets/jarvis-${VERSION}-android-debug.apk"
+          (cd release-assets && sha256sum ./*.apk > SHA256SUMS)
+
+      - name: Prepare release notes from the annotated tag
+        run: |
+          set -euo pipefail
+          git tag -l --format='%(contents)' "$RELEASE_TAG" > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            cat > release-notes.md <<EOF
+          # Jarvis ${RELEASE_TAG}
+
+          Android debug APK built from ${GITHUB_SHA}.
+
+          - Install: \`jarvis-${RELEASE_TAG#v}-android-debug.apk\`
+          - Debug-signed; enable installation from unknown sources.
+          EOF
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: Jarvis ${{ inputs.tag || github.ref_name }}
+          body_path: release-notes.md
+          files: |
+            release-assets/jarvis-*-android-debug.apk
+            release-assets/SHA256SUMS
+          fail_on_unmatched_files: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

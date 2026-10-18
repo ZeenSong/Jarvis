@@ -1,182 +1,859 @@
 package cloud.jarvis.app
 
-import android.os.Bundle
+import android.Manifest
 import android.content.Intent
 import android.os.Build
-import android.Manifest
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.compose.*
-import kotlinx.serialization.json.*
-import java.time.Instant
-import java.util.Locale
-import cloud.jarvis.app.designsystem.JarvisTheme
-import cloud.jarvis.app.designsystem.JarvisOrb
-import cloud.jarvis.app.features.ProductHome
-import cloud.jarvis.app.features.ProductTasks
-import cloud.jarvis.app.features.ProductEmpty
-import cloud.jarvis.app.features.SpaceTiles
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
-import cloud.jarvis.app.features.ProductApplications
-import cloud.jarvis.app.features.NotificationCenter
-import cloud.jarvis.app.features.NotificationDetail
-import cloud.jarvis.app.features.SpaceDetail
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import cloud.jarvis.app.designsystem.*
+import cloud.jarvis.app.features.*
+import cloud.jarvis.app.voice.VoiceCallScreen
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); (application as JarvisApplication).repository.handleDeepLink(intent); enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)); setContent {
-        val preferences=remember { getSharedPreferences("jarvis-appearance",MODE_PRIVATE) }
-        var light by remember { mutableStateOf(preferences.getBoolean("light",false)) }
-        SideEffect {
-            val style=if(light) SystemBarStyle.light(android.graphics.Color.TRANSPARENT,android.graphics.Color.TRANSPARENT) else SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
-            enableEdgeToEdge(statusBarStyle=style,navigationBarStyle=style)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        (application as JarvisApplication).repository.handleDeepLink(intent)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
+        setContent {
+            val repository = (application as JarvisApplication).repository
+            var light by remember { mutableStateOf(repository.preferences.light) }
+            var style by remember { mutableStateOf(repository.preferences.style) }
+            var developer by remember { mutableStateOf(repository.preferences.developer) }
+            SideEffect {
+                val barStyle = if (light) {
+                    SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                }
+                enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+            }
+            JarvisTheme(light = light, style = style) {
+                JarvisBackground {
+                    JarvisRoot(
+                        repo = repository,
+                        light = light,
+                        style = style,
+                        onToggleLight = { value -> light = value; repository.preferences.light = value },
+                        onStyleChange = { value -> style = value; repository.preferences.style = value },
+                        developer = developer,
+                        onDeveloperChange = { value -> developer = value; repository.preferences.developer = value },
+                    )
+                }
+            }
         }
-        JarvisTheme(light=light) {
-            val vm: JarvisViewModel = viewModel(); JarvisApp(vm.repository,light) { light=!light;preferences.edit().putBoolean("light",light).apply() }
-        }
-    } }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); (application as JarvisApplication).repository.handleDeepLink(intent) }
-}
-private fun JsonObject?.value(key: String): String = (this?.get(key) as? JsonPrimitive)?.takeUnless { it is JsonNull }?.content ?: "—"
-private fun JsonObject?.obj(key: String): JsonObject? = this?.get(key) as? JsonObject
-private fun JsonObject?.number(key: String): Double? = (this?.get(key) as? JsonPrimitive)?.doubleOrNull
-private fun amount(value: Double?): String = value?.let { when { it >= 1e9 -> "%.2fB".format(it / 1e9); it >= 1e6 -> "%.2fM".format(it / 1e6); it >= 1e3 -> "%.1fK".format(it / 1e3); else -> "%.0f".format(it) } } ?: "—"
-private fun bytes(value: Double?): String = value?.let { "%.1f GiB".format(it / 1073741824) } ?: "—"
-private fun percent(value: Double?): String = value?.let { "%.1f %%".format(it) } ?: "不可用"
-private fun cost(value: Double?): String = value?.let { "$%.6f".format(Locale.US, it) } ?: "未配置价格"
-private fun age(value: String): String = runCatching { "${(Instant.now().epochSecond - Instant.parse(value).epochSecond).coerceAtLeast(0)} 秒前" }.getOrDefault("—")
-private val uiLabels = mapOf("Overview" to "概览", "Server" to "服务器", "Agents Online" to "在线智能体", "LLM Today" to "今日 AI 用量", "Public IPv6" to "公网 IPv6", "Gateway Latency" to "网关延迟", "Server Uptime" to "运行时间", "OS" to "操作系统", "Kernel" to "内核", "Uptime" to "运行时间", "Network" to "网络", "Utilization" to "使用率", "Load 1 / 5 / 15m" to "负载 1 / 5 / 15 分钟", "Temperature" to "温度", "Memory" to "内存", "Used / Total" to "已用 / 总量", "Storage" to "存储", "VRAM" to "显存", "Jarvis Services" to "Jarvis 服务", "Jarvis Server" to "Jarvis 服务端", "Version" to "版本", "Agents" to "监控智能体", "Status" to "状态", "Task" to "任务", "Runtime" to "运行时", "Provider / Model" to "供应商 / 模型", "Last Seen" to "最近上报", "Identity & Session" to "身份与会话", "Today · UTC" to "今日 · UTC", "Recent Events" to "最近事件", "Input" to "输入 Token", "Output" to "输出 Token", "Cached Input" to "缓存输入", "Reasoning" to "推理 Token", "Requests / Errors" to "请求 / 错误", "Estimated Cost" to "预估费用", "LLM Usage" to "AI 用量", "Total · UTC" to "合计 · UTC", "healthy" to "正常", "idle" to "空闲", "running" to "运行中", "offline" to "离线", "degraded" to "降级", "error" to "错误")
-private fun localized(value: String) = uiLabels[value] ?: value
+    }
 
-@Composable private fun JarvisApp(repo: JarvisRepository, light:Boolean, toggleTheme:()->Unit) {
-    val paired by repo.paired.collectAsStateWithLifecycle(); val connection by repo.gateway.state.collectAsStateWithLifecycle()
-    val error by repo.error.collectAsStateWithLifecycle(); val saved by repo.savedAt.collectAsStateWithLifecycle()
-    var settings by remember { mutableStateOf(false) }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        (application as JarvisApplication).repository.handleDeepLink(intent)
+    }
+}
+
+@Composable
+private fun JarvisRoot(
+    repo: JarvisRepository,
+    light: Boolean,
+    style: JarvisStyle,
+    onToggleLight: (Boolean) -> Unit,
+    onStyleChange: (JarvisStyle) -> Unit,
+    developer: Boolean,
+    onDeveloperChange: (Boolean) -> Unit,
+) {
+    val paired by repo.paired.collectAsStateWithLifecycle()
+    val connection by repo.gateway.state.collectAsStateWithLifecycle()
+    val error by repo.error.collectAsStateWithLifecycle()
+    var voiceOpen by remember { mutableStateOf(false) }
+    var logoutConfirm by remember { mutableStateOf(false) }
     var notificationAsked by remember { mutableStateOf(false) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    LaunchedEffect(paired, connection) { if(paired && connection == ConnectionState.online && Build.VERSION.SDK_INT >= 33 && !notificationAsked) { notificationAsked = true; notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) } }
-    if (!paired || settings || connection == ConnectionState.unauthorized) { LoginScreen(error, paired, { server, user, password -> repo.login(server, user, password); settings = false }, { settings = false }); return }
-    val nav = rememberNavController(); val back by nav.currentBackStackEntryAsState(); val route = back?.destination?.route ?: "home"; val workspaceRoute = route.startsWith("workspace")
+    LaunchedEffect(paired, connection) {
+        if (paired && connection == ConnectionState.online && Build.VERSION.SDK_INT >= 33 && !notificationAsked) {
+            notificationAsked = true
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    if (!paired || connection == ConnectionState.unauthorized) {
+        AuthScreen(repo)
+        return
+    }
+    val nav = rememberNavController()
+    Box(Modifier.fillMaxSize()) {
+        JarvisShell(
+            repo = repo,
+            nav = nav,
+            light = light,
+            style = style,
+            developer = developer,
+            connection = connection,
+            error = error,
+            onErrorDismiss = { repo.error.value = null },
+            onVoice = { voiceOpen = true },
+            onToggleLight = onToggleLight,
+            onStyleChange = onStyleChange,
+            onDeveloperChange = onDeveloperChange,
+            onLogout = { logoutConfirm = true },
+            modifier = if (voiceOpen) Modifier.clearAndSetSemantics { } else Modifier,
+        )
+        if (voiceOpen) {
+            VoiceCallScreen(repo.m2) { conversationId ->
+                voiceOpen = false
+                if (conversationId != null) {
+                    repo.m2.selectConversation(conversationId)
+                    nav.navigate("conversation/$conversationId") { launchSingleTop = true }
+                }
+            }
+        }
+    }
+    if (logoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { logoutConfirm = false },
+            title = { Text("退出登录") },
+            text = { Text("退出后本机的会话缓存会被清除，任务与对话仍保存在私人云中。") },
+            confirmButton = {
+                TextButton(onClick = { logoutConfirm = false; repo.logout() }) {
+                    Text("退出", color = jarvisColors().danger)
+                }
+            },
+            dismissButton = { TextButton(onClick = { logoutConfirm = false }) { Text("取消") } },
+        )
+    }
+}
+
+private data class NavItem(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val developerOnly: Boolean = false)
+
+private val allNavItems = listOf(
+    NavItem("home", "首页", JarvisIcons.Home),
+    NavItem("spaces", "空间", JarvisIcons.Spaces),
+    NavItem("apps", "应用", JarvisIcons.Apps),
+    NavItem("tasks", "任务", JarvisIcons.Tasks),
+    NavItem("jarvis", "Jarvis", JarvisIcons.Jarvis),
+    NavItem("agents", "Hermes", JarvisIcons.Sparkle, developerOnly = true),
+    NavItem("system", "系统", JarvisIcons.System, developerOnly = true),
+    NavItem("settings", "设置", JarvisIcons.Settings),
+)
+
+private val bottomItems = listOf("home", "spaces", "jarvis", "tasks", "apps")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun JarvisShell(
+    repo: JarvisRepository,
+    nav: NavHostController,
+    light: Boolean,
+    style: JarvisStyle,
+    developer: Boolean,
+    connection: ConnectionState,
+    error: String?,
+    onErrorDismiss: () -> Unit,
+    onVoice: () -> Unit,
+    onToggleLight: (Boolean) -> Unit,
+    onStyleChange: (JarvisStyle) -> Unit,
+    onDeveloperChange: (Boolean) -> Unit,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = jarvisColors()
+    val context = LocalContext.current
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val backStack by nav.currentBackStackEntryAsState()
+    val route = backStack?.destination?.route ?: "home"
+    val notifications by repo.m2.notifications.collectAsStateWithLifecycle()
+    val unread = notifications.count { it.str("read_at").isBlank() }
+    val background by repo.backgroundEnabled.collectAsStateWithLifecycle()
+    val savedAt by repo.savedAt.collectAsStateWithLifecycle()
     val deepLink by repo.deepLink.collectAsStateWithLifecycle()
-    LaunchedEffect(deepLink, paired, connection) { val target=deepLink; if(target!=null && paired && connection==ConnectionState.online) { nav.navigate(target) { launchSingleTop=true }; repo.consumeDeepLink() } }
-    LaunchedEffect(route) { repo.selectPage(route) }
-    Scaffold(topBar = { if (!workspaceRoute) Column(Modifier.statusBarsPadding().padding(20.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { Text("JARVIS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Spacer(Modifier.weight(1f)); TextButton(onClick=toggleTheme) { Text(if(light) "深色" else "浅色") }; TextButton(onClick = { settings = true }) { Text(when(connection){ ConnectionState.online -> "已连接"; ConnectionState.connecting -> "连接中"; ConnectionState.reconnecting -> "重连中"; ConnectionState.offline -> "离线"; ConnectionState.unauthorized -> "请重新登录" }) } }
-        if (connection != ConnectionState.online) Text("显示最近缓存 · ${saved?.let { Instant.ofEpochMilli(it) } ?: "尚无数据"}", style = MaterialTheme.typography.bodySmall)
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-    } }, bottomBar = { if (!workspaceRoute) NavigationBar(containerColor=MaterialTheme.colorScheme.background) { listOf("home" to "首页", "spaces" to "空间", "jarvis" to "Jarvis", "tasks" to "任务", "apps" to "应用").forEach { (path, label) -> NavigationBarItem(selected = route == path || (path == "tasks" && route.startsWith("run/")), onClick = { nav.navigate(path) { popUpTo("home"); launchSingleTop = true } }, icon = { if(path=="jarvis") JarvisOrb(30.dp) else Icon(painterResource(when(path){"home"->R.drawable.nav_home;"spaces"->R.drawable.nav_spaces;"tasks"->R.drawable.nav_tasks;else->R.drawable.nav_apps}),contentDescription=null) }, label = { Text(label) }) } } }) { padding ->
-        NavHost(nav, startDestination = "home", modifier = Modifier.padding(padding)) {
-            composable("home") { ProductHome(repo) { nav.navigate(it) } }
-            composable("tasks") { ProductTasks(repo) { nav.navigate("run/$it") } }
-            composable("notifications") { NotificationCenter(repo) { nav.navigate(it) } }
-            composable("spaces") { Screen("我的空间") { SpaceTiles { nav.navigate(it) { launchSingleTop = true } } } }
-            composable("space/{id}") { entry -> SpaceDetail(entry.arguments?.getString("id").orEmpty()) { nav.navigate(it) } }
-            composable("apps") { val apps by repo.m2.applications.collectAsStateWithLifecycle(); val context = LocalContext.current; LaunchedEffect(Unit) { repo.m2.refreshApplications() }; Screen("应用") { ProductApplications(apps, { repo.m2.refreshApplications() }, { repo.m2.openApp(it, context) }, { repo.m2.askAboutApp(it); nav.navigate("jarvis") }) } }
-            composable("server") { ServerScreen(repo, { repo.m2.show("system_overview"); nav.navigate("workspace") }) { nav.navigate("agents") } }
-            composable("agents") { AgentCenter(repo.m2, { nav.navigate("run/$it") }, { nav.navigate("legacy-agents") }) { nav.navigate("ai") } }
-            composable("legacy-agents") { AgentsScreen(repo, { nav.navigate("agent/$it") }) { nav.navigate("ai") } }
-            composable("jarvis") { ConversationScreen(repo.m2, { nav.navigate("run/$it") }, { repo.m2.loadView(it);nav.navigate("workspace") }, { repo.m2.openWorkspace(); nav.navigate("workspace") }) }
-            composable("conversation/{id}") { entry -> val id=entry.arguments?.getString("id").orEmpty(); LaunchedEffect(id){repo.m2.selectConversation(id)}; ConversationScreen(repo.m2, { nav.navigate("run/$it") }, { repo.m2.loadView(it);nav.navigate("workspace") }, { repo.m2.openWorkspace();nav.navigate("workspace") }) }
-            composable("workspace") { WorkspaceScreen(repo.m2) { nav.popBackStack() } }
-            composable("workspace/{id}") { entry -> val id=entry.arguments?.getString("id").orEmpty(); LaunchedEffect(id){repo.m2.openWorkspaceById(id)}; WorkspaceScreen(repo.m2) { nav.popBackStack() } }
-            composable("notification/{id}") { entry -> val id=entry.arguments?.getString("id").orEmpty(); NotificationDetail(repo,id,{nav.navigate("run/$it")}){nav.popBackStack()} }
-            composable("app/{id}") { val context=LocalContext.current; val apps by repo.m2.applications.collectAsStateWithLifecycle(); Screen("应用") { ProductApplications(apps,{repo.m2.refreshApplications()},{repo.m2.openApp(it,context)},{repo.m2.askAboutApp(it);nav.navigate("jarvis")}) } }
-            composable("run/{id}") { entry -> val id=entry.arguments?.getString("id")!!; LaunchedEffect(id){repo.m2.openRun(id)}; DynamicScreen(repo.m2) { nav.navigate("run/$it") } }
-            composable("agent/{id}") { entry -> val id = entry.arguments?.getString("id")!!; DisposableEffect(id) { repo.selectAgent(id); onDispose { repo.selectAgent(null) } }; AgentScreen(repo) { nav.popBackStack() } }
-            composable("ai") { UsageScreen(repo, { repo.m2.show("usage_analysis"); nav.navigate("workspace") }) { nav.navigate("agents") } }
+    var notificationPopup by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(error) {
+        if (error != null) snackbarHostState.showSnackbar(error)
+    }
+
+    fun navigate(routeValue: String, topLevel: Boolean = false) {
+        if (routeValue == route) return
+        if (topLevel) {
+            nav.navigate(routeValue) {
+                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        } else {
+            nav.navigate(routeValue) { launchSingleTop = true }
+        }
+        scope.launch { drawerState.close() }
+    }
+
+    val openWorkspace = {
+        nav.navigate("workspace") { launchSingleTop = true }
+    }
+    val openRun: (String) -> Unit = { id ->
+        nav.navigate("run/$id") { launchSingleTop = true }
+    }
+
+    LaunchedEffect(deepLink, connection) {
+        val target = deepLink
+        if (target != null && connection == ConnectionState.online) {
+            when {
+                target.startsWith("workspace/") -> {
+                    val id = target.removePrefix("workspace/")
+                    repo.m2.openWorkspaceById(id)
+                    nav.navigate("workspace") { launchSingleTop = true }
+                }
+                target.startsWith("conversation/") -> {
+                    val id = target.removePrefix("conversation/")
+                    repo.m2.selectConversation(id)
+                    nav.navigate("conversation/$id") { launchSingleTop = true }
+                }
+                else -> nav.navigate(target) { launchSingleTop = true }
+            }
+            repo.consumeDeepLink()
+        }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = !route.startsWith("conversation/") && route != "jarvis",
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = palette.surface,
+                modifier = Modifier.width(310.dp),
+            ) {
+                Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        JarvisOrb(42.dp)
+                        Spacer(Modifier.width(11.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text("JARVIS", style = MaterialTheme.typography.titleLarge.copy(letterSpacing = 3.sp), color = palette.textStrong)
+                            Eyebrow("YOUR PERSONAL AI CLOUD")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(palette.surface2, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier.size(6.dp).background(
+                                if (connection == ConnectionState.online) palette.sage else palette.danger,
+                                CircleShape,
+                            ),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            when (connection) {
+                                ConnectionState.online -> "已连接"
+                                ConnectionState.connecting -> "连接中"
+                                ConnectionState.reconnecting -> "重连中"
+                                ConnectionState.unauthorized -> "请重新登录"
+                                else -> "离线 · 显示缓存"
+                            },
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.muted,
+                        )
+                        if (connection != ConnectionState.online) {
+                            TextButton(onClick = { repo.refresh() }, contentPadding = PaddingValues(0.dp)) {
+                                Text("重试", color = palette.accent, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    allNavItems.filter { !it.developerOnly || developer }.forEach { item ->
+                        val selected = route == item.route || (item.route == "tasks" && route.startsWith("run/")) ||
+                            (item.route == "jarvis" && (route.startsWith("conversation/") || route in listOf("workspace", "jarvis")))
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(if (selected) palette.accentSoft else Color.Transparent)
+                                .clickable { navigate(item.route, topLevel = true) }
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(item.icon, null, Modifier.size(18.dp), tint = if (selected) palette.accent else palette.muted)
+                            Spacer(Modifier.width(12.dp))
+                            Text(item.label, style = MaterialTheme.typography.bodyMedium, color = if (selected) palette.textStrong else palette.muted)
+                            if (item.route == "jarvis" && selected) {
+                                Spacer(Modifier.weight(1f))
+                                Box(Modifier.width(2.dp).height(14.dp).background(palette.accent, CircleShape))
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    HorizontalDivider(color = palette.line)
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("后台连接", style = MaterialTheme.typography.bodySmall, color = palette.text)
+                            Text("常驻通知保持实时", style = MaterialTheme.typography.labelSmall, color = palette.muted2)
+                        }
+                        Switch(checked = background, onCheckedChange = { repo.setBackground(it) })
+                    }
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onToggleLight(!light) }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(if (light) JarvisIcons.Moon else JarvisIcons.Sun, null, Modifier.size(17.dp), tint = palette.muted)
+                        Spacer(Modifier.width(9.dp))
+                        Text(if (light) "切换到深色外观" else "切换到浅色外观", style = MaterialTheme.typography.bodySmall, color = palette.muted)
+                    }
+                    if (savedAt != null && connection != ConnectionState.online) {
+                        Text("缓存于 ${fullDateTime(java.time.Instant.ofEpochMilli(savedAt!!).toString())}", style = MaterialTheme.typography.labelSmall, color = palette.muted2)
+                    }
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onLogout() }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(JarvisIcons.Logout, null, Modifier.size(17.dp), tint = palette.danger)
+                        Spacer(Modifier.width(9.dp))
+                        Text("退出登录", style = MaterialTheme.typography.bodySmall, color = palette.danger)
+                    }
+                    Spacer(Modifier.height(20.dp))
+                }
+            }
+        },
+    ) {
+        Scaffold(
+            modifier = modifier.fillMaxSize(),
+            containerColor = Color.Transparent,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            topBar = {
+                Column {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(palette.background.copy(alpha = 0.88f))
+                            .statusBarsPadding()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(onClick = { scope.launch { drawerState.open() } }, shape = CircleShape, color = Color.Transparent, modifier = Modifier.size(38.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Menu, "打开菜单", Modifier.size(20.dp), tint = palette.muted) }
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text("◈", color = palette.accent, fontSize = 14.sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("JARVIS", style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 2.6.sp), color = palette.textStrong)
+                            Spacer(Modifier.width(9.dp))
+                            Box(
+                                Modifier.size(5.dp).background(
+                                    if (connection == ConnectionState.online) palette.sage else palette.danger,
+                                    CircleShape,
+                                ),
+                            )
+                        }
+                        Surface(onClick = onVoice, shape = CircleShape, color = Color.Transparent, modifier = Modifier.size(38.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Mic, "语音通话", Modifier.size(18.dp), tint = palette.accent) }
+                        }
+                        Box {
+                            Surface(onClick = { notificationPopup = !notificationPopup }, shape = CircleShape, color = Color.Transparent, modifier = Modifier.size(38.dp)) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(JarvisIcons.Bell, "通知", Modifier.size(18.dp), tint = palette.muted)
+                                    if (unread > 0) {
+                                        Box(
+                                            Modifier.align(Alignment.TopEnd).padding(top = 7.dp, end = 6.dp)
+                                                .size(7.dp).background(palette.danger, CircleShape),
+                                        )
+                                    }
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = notificationPopup,
+                                onDismissRequest = { notificationPopup = false },
+                                modifier = Modifier.widthIn(max = 340.dp).background(palette.surface),
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("通知", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = palette.textStrong)
+                                    TextButton(onClick = { notificationPopup = false; navigate("notifications", topLevel = false) }) {
+                                        Text("全部", color = palette.accent, style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                                if (notifications.isEmpty()) {
+                                    Text("暂无通知", Modifier.padding(horizontal = 14.dp, vertical = 20.dp), style = MaterialTheme.typography.bodySmall, color = palette.muted)
+                                } else {
+                                    notifications.take(4).forEach { notification ->
+                                        Row(
+                                            Modifier.fillMaxWidth()
+                                                .clickable {
+                                                    notificationPopup = false
+                                                    repo.m2.markNotificationRead(notification.str("id"))
+                                                    val reference = notification.str("reference_id")
+                                                    when (notification.str("kind")) {
+                                                        "task_completed", "task_failed", "task_question" -> fromNotification(openRun, reference)
+                                                        "question" -> navigate("conversation/$reference", topLevel = false)
+                                                        else -> navigate("notification/${notification.str("id")}", topLevel = false)
+                                                    }
+                                                }
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Box(
+                                                Modifier.size(6.dp).background(
+                                                    if (notification.str("read_at").isBlank()) palette.accent else palette.muted2,
+                                                    CircleShape,
+                                                ),
+                                            )
+                                            Spacer(Modifier.width(9.dp))
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text(notification.str("title"), style = MaterialTheme.typography.bodySmall, color = palette.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(notification.str("body"), style = MaterialTheme.typography.labelSmall, color = palette.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Surface(onClick = { navigate("settings", topLevel = true) }, shape = CircleShape, color = Color.Transparent, modifier = Modifier.size(38.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Settings, "设置", Modifier.size(18.dp), tint = palette.muted) }
+                        }
+                    }
+                    if (connection != ConnectionState.online) {
+                        Text(
+                            "显示最近缓存 · 正在恢复连接",
+                            Modifier.fillMaxWidth().background(palette.surface2).padding(horizontal = 16.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.muted,
+                        )
+                    }
+                    HorizontalDivider(color = palette.line)
+                }
+            },
+            bottomBar = {
+                NavigationBar(
+                    containerColor = palette.background.copy(alpha = 0.94f),
+                    tonalElevation = 0.dp,
+                    modifier = Modifier.navigationBarsPadding(),
+                ) {
+                    listOf("home", "spaces", "jarvis", "tasks", "apps").forEach { key ->
+                        val item = allNavItems.first { it.route == key }
+                        val selected = route == key || (key == "jarvis" && (route.startsWith("conversation/") || route == "workspace")) || (key == "tasks" && route.startsWith("run/"))
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { navigate(key, topLevel = true) },
+                            icon = {
+                                if (key == "jarvis") {
+                                    Box(Modifier.alpha(if (selected) 1f else 0.42f)) {
+                                        JarvisOrb(27.dp, mode = OrbMode.Idle, animated = selected)
+                                    }
+                                } else {
+                                    Icon(item.icon, item.label, Modifier.size(21.dp), tint = if (selected) palette.accent else palette.muted)
+                                }
+                            },
+                            label = { Text(item.label, style = MaterialTheme.typography.labelSmall, color = if (selected) palette.accent else palette.muted) },
+                            colors = NavigationBarItemDefaults.colors(
+                                indicatorColor = Color.Transparent,
+                                selectedIconColor = palette.accent,
+                                selectedTextColor = palette.accent,
+                                unselectedIconColor = palette.muted,
+                                unselectedTextColor = palette.muted,
+                            ),
+                        )
+                    }
+                }
+            },
+            snackbarHost = {
+                SnackbarHost(hostState = snackbarHostState) { data ->
+                    Snackbar(
+                        containerColor = palette.surface3,
+                        contentColor = palette.text,
+                        action = {
+                            TextButton(onClick = onErrorDismiss) { Text("关闭", color = palette.accent) }
+                        },
+                    ) { Text(data.visuals.message) }
+                }
+            },
+        ) { padding ->
+            NavHost(
+                navController = nav,
+                startDestination = "home",
+                modifier = Modifier.padding(padding),
+            ) {
+                composable("home") {
+                    ProductHome(
+                        repo = repo,
+                        navigate = { navigate(it, topLevel = it in bottomItems || it in listOf("agents", "system", "settings")) },
+                        onVoice = onVoice,
+                        onOpenHermes = { navigate("hermes", topLevel = false) },
+                        openApp = { id -> repo.m2.openApp(id, context) },
+                    )
+                }
+                composable("spaces") {
+                    SpacesPage(
+                        repo = repo,
+                        navigate = { navigate(it, topLevel = it in bottomItems) },
+                        openApp = { id -> repo.m2.openApp(id, context) },
+                    )
+                }
+                composable("space/{id}") { entry ->
+                    SpaceDetail(entry.arguments?.getString("id").orEmpty()) { navigate(it, topLevel = it in bottomItems) }
+                }
+                composable("apps") {
+                    AppsPage(
+                        repo = repo,
+                        openApp = { id -> repo.m2.openApp(id, context) },
+                        ask = { repo.m2.askAboutApp(it); navigate("jarvis", topLevel = true) },
+                    )
+                }
+                composable("app/{id}") { entry ->
+                    AppsPage(
+                        repo = repo,
+                        openApp = { appId -> repo.m2.openApp(appId, context) },
+                        ask = { repo.m2.askAboutApp(it); navigate("jarvis", topLevel = true) },
+                        initialApp = entry.arguments?.getString("id"),
+                    )
+                }
+                composable("tasks") {
+                    ProductTasks(repo, openRun)
+                }
+                composable("run/{id}") { entry ->
+                    val id = entry.arguments?.getString("id").orEmpty()
+                    LaunchedEffect(id) { repo.m2.openRun(id) }
+                    DynamicScreen(repo.m2) { id -> nav.navigate("run/$id") { launchSingleTop = true } }
+                }
+                composable("jarvis") {
+                    ConversationScreen(
+                        repo = repo.m2,
+                        openRun = openRun,
+                        openView = { id -> repo.m2.loadView(id); openWorkspace() },
+                        openWorkspace = openWorkspace,
+                        onVoice = onVoice,
+                        developer = developer,
+                    )
+                }
+                composable("conversation/{id}") { entry ->
+                    val id = entry.arguments?.getString("id").orEmpty()
+                    LaunchedEffect(id) { repo.m2.selectConversation(id) }
+                    ConversationScreen(
+                        repo = repo.m2,
+                        openRun = openRun,
+                        openView = { viewId -> repo.m2.loadView(viewId); openWorkspace() },
+                        openWorkspace = openWorkspace,
+                        onVoice = onVoice,
+                        developer = developer,
+                    )
+                }
+                composable("workspace") {
+                    WorkspaceScreen(repo.m2, back = { nav.popBackStack() }, developer = developer)
+                }
+                composable("notifications") {
+                    NotificationCenter(repo) { target -> navigate(target, topLevel = false) }
+                }
+                composable("notification/{id}") { entry ->
+                    NotificationDetail(repo, entry.arguments?.getString("id").orEmpty(), openRun) { nav.popBackStack() }
+                }
+                composable("settings") {
+                    SettingsScreen(
+                        repo = repo,
+                        light = light,
+                        style = style,
+                        onToggleLight = onToggleLight,
+                        onStyleChange = onStyleChange,
+                        developer = developer,
+                        onDeveloperChange = onDeveloperChange,
+                        onOpenHermes = { navigate("hermes", topLevel = false) },
+                        onOpenSystem = { navigate("system", topLevel = true) },
+                        onLogout = onLogout,
+                    )
+                }
+                composable("agents") {
+                    HermesCenterScreen(repo, openRun, { navigate("hermes", topLevel = false) }, { navigate("system", topLevel = true) })
+                }
+                composable("system") {
+                    SystemScreen(repo, openRun)
+                }
+                composable("hermes") {
+                    HermesWebViewScreen(repo.gateway) { nav.popBackStack() }
+                }
+            }
         }
     }
 }
-@Composable private fun LoginScreen(error: String?, canBack: Boolean, login: (String, String, String) -> Unit, back: () -> Unit) {
-    var server by remember { mutableStateOf("") }; var user by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
-    Screen("连接你的私人云") {
-        Text("手机与服务器加入同一个 Tailscale 网络，然后使用 Jarvis 用户名和密码登录。首次注册请打开网页版登录页。")
-        OutlinedTextField(server, { server = it }, label = { Text("http://100.x.x.x:8080") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(user, { user = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("密码") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = { login(server, user, password) }, enabled = server.isNotBlank() && user.isNotBlank() && password.isNotBlank()) { Text("登录") }
-        if (canBack) TextButton(onClick = back) { Text("返回") }
+
+private fun fromNotification(openRun: (String) -> Unit, reference: String) {
+    openRun(reference)
+}
+
+@Composable
+private fun SpacesPage(repo: JarvisRepository, navigate: (String) -> Unit, openApp: (String) -> Unit) {
+    val palette = jarvisColors()
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Eyebrow("SPACES")
+            Text("我的空间", style = MaterialTheme.typography.headlineSmall, color = palette.textStrong)
+            Text("你的文件、照片与想法，汇聚一处。", style = MaterialTheme.typography.bodySmall, color = palette.muted)
+        }
+        SpaceTiles(navigate = navigate, openApp = openApp)
+        EmptyState("选择你想探索的空间", "照片与家庭使用原应用完整界面；其他空间将在接入后开放。")
+        Spacer(Modifier.height(26.dp))
     }
 }
-@Composable private fun Screen(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) { Text(localized(title), style = MaterialTheme.typography.headlineMedium); content(); Spacer(Modifier.height(12.dp)) }
-}
-@Composable private fun MetricCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(localized(title), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium); content() } }
-}
-@Composable private fun Metric(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { Text(localized(label), Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant); SelectionContainer(Modifier.weight(1.3f)) { Text(localized(value)) } } }
-@Composable private fun HomeScreen(repo: JarvisRepository) {
-    val s by repo.system.collectAsStateWithLifecycle(); val a by repo.agents.collectAsStateWithLifecycle(); val u by repo.today.collectAsStateWithLifecycle(); val latency by repo.gateway.latency.collectAsStateWithLifecycle()
-    val background by repo.backgroundEnabled.collectAsStateWithLifecycle()
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { repo.setBackground(true) }
-    Screen("私人云 · 现在") { MetricCard("Overview") {
-        Metric("Server", s.obj("jarvis").value("server_status")); Metric("Agents Online", a.count { it.value("status") !in listOf("offline", "degraded") }.toString())
-        val total = u.obj("total"); Metric("LLM Today", amount(total.number("input_tokens")?.plus(total.number("output_tokens") ?: 0.0)) + " tokens")
-        Metric("Public IPv6", s.obj("network").value("public_ipv6")); Metric("Gateway Latency", latency?.let { "$it ms" } ?: "—")
-        Metric("Server Uptime", s.obj("server").number("uptime_seconds")?.let { "%.1f 小时".format(it / 3600) } ?: "—")
-    }; Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("保持后台连接（常驻通知）", Modifier.weight(1f)); Switch(checked = background, onCheckedChange = { enabled -> if (enabled && Build.VERSION.SDK_INT >= 33) permission.launch(Manifest.permission.POST_NOTIFICATIONS) else repo.setBackground(enabled) }) }; TextButton(onClick = repo::refresh) { Text("刷新状态") } }
-}
-@Composable private fun ServerScreen(repo: JarvisRepository, trends: () -> Unit, openAgents: () -> Unit = {}) {
-    val s by repo.system.collectAsStateWithLifecycle()
-    Screen("Server") {
-        TextButton(onClick=trends) { Text("查看 CPU / GPU 历史趋势") }
-        TextButton(onClick=openAgents) { Text("智能体") }
-        MetricCard(s.obj("server").value("hostname")) { Metric("OS", s.obj("server").value("os")); Metric("Kernel", s.obj("server").value("kernel")); Metric("Uptime", s.obj("server").value("uptime_seconds") + " s") }
-        MetricCard("Network") { val n = s.obj("network"); listOf("public_ipv6", "public_ipv4", "tailscale_ipv4", "tailscale_ipv6", "lan_ipv4").forEach { Metric(it, n.value(it)) } }
-        MetricCard("CPU") { val c = s.obj("cpu"); Text(c.value("model")); Metric("Utilization", percent(c.number("usage_percent"))); Metric("Load 1 / 5 / 15m", listOf("load_1m", "load_5m", "load_15m").joinToString(" / ") { c.value(it) }); Metric("Temperature", c.value("temperature_c") + " °C") }
-        MetricCard("Memory") { val m = s.obj("memory"); Metric("Used / Total", bytes(m.number("used_bytes")) + " / " + bytes(m.number("total_bytes"))); Metric("Utilization", percent(m.number("usage_percent"))) }
-        MetricCard("Storage") { (s?.get("disks") as? JsonArray)?.forEach { d -> val disk = d.jsonObject; Metric(disk.value("mount"), bytes(disk.number("used_bytes")) + " / " + bytes(disk.number("total_bytes"))); Metric("Utilization", percent(disk.number("usage_percent"))) } }
-        MetricCard("GPU") { val g = s.obj("gpu"); if (g == null) Text("未检测到 GPU / 指标不可用") else { Text(g.value("model")); Metric("Utilization", percent(g.number("utilization_percent"))); Metric("VRAM", bytes(g.number("memory_used_bytes")) + " / " + bytes(g.number("memory_total_bytes"))); Metric("Temperature", g.value("temperature_c") + " °C") } }
-        MetricCard("Jarvis Services") { Metric("Jarvis Server", s.obj("jarvis").value("server_status")); Metric("PostgreSQL", s.obj("jarvis").value("db_status")); Metric("Version", s.obj("jarvis").value("version")) }
+
+@Composable
+private fun AppsPage(repo: JarvisRepository, openApp: (String) -> Unit, ask: (String) -> Unit, initialApp: String? = null) {
+    val palette = jarvisColors()
+    val applications by repo.m2.applications.collectAsStateWithLifecycle()
+    val catalog by repo.m2.catalog.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { repo.m2.refreshApplications() }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Eyebrow("CASAOS APPLICATION CENTER")
+                Text("应用", style = MaterialTheme.typography.headlineSmall, color = palette.textStrong)
+                Text("已安装、运行与 Jarvis 连接状态。", style = MaterialTheme.typography.bodySmall, color = palette.muted)
+            }
+            OutlineButton("刷新", icon = JarvisIcons.Refresh) { repo.m2.refreshApplications() }
+        }
+        ProductApplications(
+            value = applications,
+            refresh = { repo.m2.refreshApplications() },
+            openApp = openApp,
+            askApp = ask,
+            catalog = catalog,
+            account = repo.account,
+            initialApp = initialApp,
+        )
+        Spacer(Modifier.height(26.dp))
     }
 }
-@Composable private fun AgentsScreen(repo: JarvisRepository, open: (String) -> Unit, openAi: () -> Unit = {}) {
-    val agents by repo.agents.collectAsStateWithLifecycle()
-    Screen("Agents") {
-        Text("Online ${agents.count { it.value("status") !in listOf("offline", "degraded") }}   Running ${agents.count { it.value("status") == "running" }}   Idle ${agents.count { it.value("status") == "idle" }}   Error ${agents.count { it.value("status") == "error" }}")
-        TextButton(onClick = openAi) { Text("AI") }
-        if (agents.isEmpty()) Text("暂无 Agent。注册后将自动出现在这里。")
-        agents.forEach { a -> MetricCard(a.value("name")) { Metric("Status", a.value("status")); Metric("Task", a.value("current_task_id")); Metric("Runtime", a.value("runtime")); Metric("Provider / Model", a.value("provider") + " / " + a.value("model")); Metric("Last Seen", age(a.value("last_seen_at"))); TextButton(onClick = { open(a.value("id")) }, modifier = Modifier.testTag("agent-detail-${a.value("id")}")) { Text("查看详情 →") } } }
+
+@Composable
+private fun AuthScreen(repo: JarvisRepository) {
+    val palette = jarvisColors()
+    val focus = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+    var mode by remember { mutableStateOf("login") }
+    var server by remember { mutableStateOf(repo.preferences.lastServer) }
+    var username by remember { mutableStateOf(repo.preferences.lastUsername) }
+    var password by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    var invite by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var submitting by remember { mutableStateOf(false) }
+    var registrationOpen by remember { mutableStateOf<Boolean?>(null) }
+    var localError by remember { mutableStateOf<String?>(null) }
+    val error by repo.error.collectAsStateWithLifecycle()
+
+    LaunchedEffect(mode, server) {
+        if (mode == "register" && server.isNotBlank()) {
+            registrationOpen = repo.registrationOpen(server)
+        }
     }
-}
-@Composable private fun AgentScreen(repo: JarvisRepository, back: () -> Unit) {
-    val a by repo.detail.collectAsStateWithLifecycle(); val events by repo.events.collectAsStateWithLifecycle(); val usage by repo.agentUsage.collectAsStateWithLifecycle()
-    Screen(a.value("name")) {
-        TextButton(onClick = back) { Text("← Agents") }
-        MetricCard("Identity & Session") { listOf("id", "status", "current_task_id", "runtime", "version", "provider", "model", "session_start", "last_seen_at").forEach { Metric(it, a.value(it)) } }
-        UsageCard("Today · UTC", usage.obj("total"))
-        MetricCard("Recent Events") { if (events.isEmpty()) Text("暂无事件"); events.forEach { Text(it.value("event_type"), fontWeight = FontWeight.Medium); Text(it.value("created_at"), style = MaterialTheme.typography.bodySmall); Text(it["payload"].toString(), style = MaterialTheme.typography.bodySmall); HorizontalDivider() } }
+    LaunchedEffect(error, submitting) {
+        if (error != null) submitting = false
     }
-}
-@Composable private fun UsageCard(title: String, total: JsonObject?) {
-    MetricCard(title) { Metric("Input", amount(total.number("input_tokens"))); Metric("Output", amount(total.number("output_tokens"))); Metric("Cached Input", amount(total.number("cached_input_tokens"))); Metric("Reasoning", amount(total.number("reasoning_tokens"))); Metric("Requests / Errors", total.value("requests") + " / " + total.value("errors")); Metric("Estimated Cost", cost(total.number("estimated_cost_usd"))); if ((total.number("unpriced_requests") ?: 0.0) > 0) Text("${total.value("unpriced_requests")} 次请求没有价格，费用统计不完整", style = MaterialTheme.typography.bodySmall) }
-}
-@Composable private fun UsageScreen(repo: JarvisRepository, charts: () -> Unit, openAgents: () -> Unit = {}) {
-    val usage by repo.usage.collectAsStateWithLifecycle(); val range by repo.range.collectAsStateWithLifecycle()
-    Screen("LLM Usage") {
-        TextButton(onClick=charts) { Text("查看用量图表") }
-        TextButton(onClick=openAgents) { Text("智能体") }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("today" to "今日", "7d" to "7 天", "30d" to "30 天", "month" to "本月").forEach { (value, label) -> FilterChip(selected = range == value, onClick = { repo.selectRange(value) }, label = { Text(label) }) } }
-        UsageCard("Total · UTC", usage.obj("total"))
-        (usage?.get("providers") as? JsonArray)?.forEach { UsageCard(it.jsonObject.value("provider"), it.jsonObject) }
+
+    fun submit() {
+        if (submitting) return
+        focus.clearFocus()
+        localError = null
+        submitting = true
+        when (mode) {
+            "register" -> {
+                if (password != confirmation) { localError = "两次输入的密码不一致"; submitting = false; return }
+                repo.register(server, username, password, confirmation)
+            }
+            "invite" -> repo.acceptInvite(server, invite, password)
+            else -> repo.login(server, username, password)
+        }
+        scope.launch { delay(3000); if (submitting) submitting = false }
+    }
+
+    Column(
+        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(46.dp))
+        JarvisOrb(92.dp, mode = OrbMode.Idle)
+        Spacer(Modifier.height(18.dp))
+        Eyebrow("YOUR PERSONAL CLOUD")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            when (mode) { "register" -> "注册 Jarvis"; "invite" -> "接受管理员邀请"; else -> "登录 Jarvis" },
+            style = MaterialTheme.typography.displaySmall,
+            color = palette.textStrong,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            when (mode) {
+                "register" -> if (registrationOpen == true) "这是 Jarvis 账户注册，不需要 Authentik 或配对码。第一个注册者自动成为管理员。" else "第一个 Jarvis 账户已经注册。请返回登录，或使用管理员发放的邀请加入。"
+                "invite" -> "管理员创建邀请后，把邀请令牌发给你；在这里设置 Jarvis 密码。"
+                else -> "使用 Jarvis 用户名和密码登录。手机与服务器加入同一个 Tailscale 网络。"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = palette.muted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Spacer(Modifier.height(24.dp))
+        JarvisCard(padding = 18.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = server,
+                    onValueChange = { server = it; localError = null },
+                    label = { Text("服务器地址") },
+                    placeholder = { Text("http://100.x.x.x:8080", style = MaterialTheme.typography.bodySmall) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                )
+                if (mode == "invite") {
+                    OutlinedTextField(
+                        value = invite,
+                        onValueChange = { invite = it },
+                        label = { Text("邀请令牌") },
+                        placeholder = { Text("管理员发来的邀请令牌") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("用户名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    )
+                }
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(if (mode == "invite") "设置密码" else "密码") },
+                    placeholder = { Text(if (mode == "login") "密码（至少 8 位）" else "设置密码（至少 8 位）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(onClick = { showPassword = !showPassword }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                            Text(if (showPassword) "隐藏" else "显示", style = MaterialTheme.typography.labelSmall, color = palette.muted)
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = if (mode == "register") ImeAction.Next else ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                )
+                if (mode == "register") {
+                    OutlinedTextField(
+                        value = confirmation,
+                        onValueChange = { confirmation = it },
+                        label = { Text("确认密码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                    )
+                }
+                (localError ?: error)?.let { message ->
+                    Text(message, color = palette.danger, style = MaterialTheme.typography.bodySmall)
+                }
+                PrimaryButton(
+                    text = when (mode) { "register" -> "注册并登录"; "invite" -> "接受邀请并登录"; else -> "登录" },
+                    modifier = Modifier.fillMaxWidth(),
+                    loading = submitting,
+                    enabled = server.isNotBlank() && password.isNotBlank() &&
+                        (mode == "invite" && invite.isNotBlank() || mode != "invite" && username.isNotBlank()) &&
+                        (mode != "register" || registrationOpen == true),
+                    onClick = { submit() },
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf("login" to "登录", "register" to "首次注册", "invite" to "管理员邀请").forEach { (value, text) ->
+                val selected = mode == value
+                Surface(
+                    onClick = { mode = value; localError = null; repo.error.value = null },
+                    shape = CircleShape,
+                    color = if (selected) palette.accentSoft else Color.Transparent,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(
+                        text,
+                        Modifier.padding(vertical = 8.dp),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (selected) palette.accent else palette.muted2,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "More Life. Less Work.",
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.sp),
+            color = palette.muted2,
+        )
+        Spacer(Modifier.height(30.dp))
     }
 }

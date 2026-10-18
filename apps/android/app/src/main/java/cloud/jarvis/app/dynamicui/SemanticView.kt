@@ -78,7 +78,7 @@ val mobileRenderer = buildJsonObject {
     var pending by remember(a) { mutableStateOf<JsonObject?>(null) }
     val dangerous = a?.str("risk") == "dangerous"
     if (dangerous) Text("高风险操作 · 执行前请确认影响范围", color = MaterialTheme.colorScheme.error)
-    DynamicBlocks(spec,mapOf("system/status" to buildJsonObject { put("data",data) })) { value -> if (dangerous) pending = value else action(value) }
+    DynamicBlocks(spec, mapOf("system/status" to buildJsonObject { put("data", data) }), action = { value -> if (dangerous) pending = value else action(value) })
     if (pending != null) AlertDialog(onDismissRequest = { pending = null }, title = { Text("确认高风险操作") },
         text = { Text("${a?.str("label")}\n目标：${a?.str("resource_id")}\n此操作可能产生难以恢复的影响。确认后仍需由服务端验证权限和审批状态。") },
         dismissButton = { TextButton(onClick = { pending = null }) { Text("返回检查") } },
