@@ -130,6 +130,20 @@ Jarvis 已具备核心对话、任务、动态 UI、Hermes、Skills/MCP 和家�
 
 欢迎通过 Issue 提交场景、问题与集成建议。提交代码前请至少运行类型检查与默认测试，并避免提交 `.env`、API Key、数据库转储、构建产物或家庭数据。
 
+## 许可证
+
+Jarvis 以 **GNU General Public License v3.0 或更高版本（GPL-3.0-or-later）** 发布。许可证全文见 [LICENSE](LICENSE)。
+
+Copyright (C) 2026 ZeenSong
+
+这意味着：
+
+- 你可以自由运行、研究、修改和分发本项目，包括用于商业目的；
+- 分发修改后的版本时，必须以同一许可证公开相应源码，并附带本许可证与版权声明；
+- 软件按"现状"提供，不附带任何担保。
+
+如果你的使用场景是把它作为网络服务提供给第三方，而希望这类使用也必须回馈源码，可以考虑改用 AGPL-3.0；如只接受 GPL v3 而不含"或更高版本"，把本段与 `package.json` 中的 `GPL-3.0-or-later` 改为 `GPL-3.0-only` 即可。
+
 <div align="center">
 
 **More Life. Less Work.**

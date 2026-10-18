@@ -18,6 +18,7 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/dist dist
 COPY --from=build /app/apps/web/dist apps/web/dist
 COPY package.json ./
+COPY LICENSE ./
 USER node
 ENV HOST=0.0.0.0 PORT=8080
 EXPOSE 8080
