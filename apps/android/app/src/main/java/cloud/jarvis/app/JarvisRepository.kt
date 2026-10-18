@@ -56,43 +56,29 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         }.onFailure { error.value = "无法恢复本地凭据，请重新登录" } }
     }
     private fun startBackground() { runCatching { app.startForegroundService(Intent(app, ConnectionService::class.java)) }.onFailure { error.value = "无法启动后台连接：${it.message}" } }
-    fun setBackground(enabled: Boolean) { scope.launch { runCatching { credentials.setBackground(enabled); backgroundEnabled.value = enabled; val service = Intent(app, ConnectionService::class.java); if (enabled) startBackground() else app.stopService(service) }.onFailure { error.value = it.message } } }
+    fun setBackground(enabled: Boolean) { scope.launch { runCatching { credentials.setBackground(enabled); backgroundEnabled.value = enabled; val service = Intent(app, ConnectionService::class.java); if (enabled) startBackground() else app.stopService(service) }.onFailure { error.value = friendlyError(it) } } }
     override fun onStart(owner: LifecycleOwner) { foreground = true; gateway.subscribe(page in listOf("home", "server")); gateway.networkChanged(); if (backgroundEnabled.value && paired.value) startBackground() }
     override fun onStop(owner: LifecycleOwner) { foreground = false; gateway.subscribe(false) }
     fun selectPage(value: String) { page = value; gateway.subscribe(foreground && value in listOf("home", "server")) }
-    fun handleDeepLink(intent: Intent?) {
-        val uri = intent?.data ?: return
-        if (uri.scheme != "jarvis") return
-        val target = when (uri.host) {
-            "home" -> "home"
-            "conversation" -> uri.pathSegments.firstOrNull()?.let { "conversation/$it" }
-            "task" -> uri.pathSegments.firstOrNull()?.let { "run/$it" }
-            "workspace" -> uri.pathSegments.firstOrNull()?.let { "workspace/$it" }
-            "space" -> uri.pathSegments.firstOrNull()?.let { "space/$it" }
-            "app" -> uri.pathSegments.firstOrNull()?.let { "app/$it" }
-            "notification" -> uri.pathSegments.firstOrNull()?.let { "notification/$it" }
-            else -> null
-        }
-        if (target != null) deepLink.value = target
-    }
+    fun handleDeepLink(intent: Intent?) { deepLinkTarget(intent?.dataString)?.let { deepLink.value = it; error.value = null } }
     fun consumeDeepLink() { deepLink.value = null }
     fun login(server: String, username: String, password: String) { scope.launch {
         error.value = null
-        runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = it.message }
+        runCatching { val auth = gateway.login(server.trim(), username.trim(), password); credentials.save(auth); m2.reset(); cache.clear(); system.value = null; agents.value = emptyList(); usage.value = null; today.value = null; savedAt.value = null; paired.value = true; gateway.connect(auth) }.onFailure { error.value = friendlyError(it) }
     } }
     private suspend fun save(key: String, value: JsonElement) { val now = System.currentTimeMillis(); cache.put(Snapshot(key, value.toString(), now)); savedAt.value = now }
     private fun onEvent(topic: String, value: JsonElement) {
         m2.event(topic, value)
         when (topic) {
-            "system.status.changed" -> { system.value = value.jsonObject; scope.launch { runCatching { save("system", value) }.onFailure { error.value = it.message } } }
-            "agent.status.changed" -> { val a = value.jsonObject; agents.value = (agents.value.filter { it["id"] != a["id"] } + a).sortedBy { it["name"].toString() }; scope.launch { runCatching { save("agents", JsonArray(agents.value)); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = it.message } } }
+            "system.status.changed" -> { system.value = value.jsonObject; scope.launch { runCatching { save("system", value) }.onFailure { error.value = friendlyError(it) } } }
+            "agent.status.changed" -> { val a = value.jsonObject; agents.value = (agents.value.filter { it["id"] != a["id"] } + a).sortedBy { it["name"].toString() }; scope.launch { runCatching { save("agents", JsonArray(agents.value)); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = friendlyError(it) } } }
             "network.public_ipv6.changed" -> refresh()
-            "llm.usage.changed" -> { scope.launch { runCatching { loadUsage(); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = it.message } } }
+            "llm.usage.changed" -> { scope.launch { runCatching { loadUsage(); selectedAgent?.let { loadAgent(it) } }.onFailure { error.value = friendlyError(it) } } }
             "notification.created" -> scope.launch {
                 runCatching {
                     val id = value.jsonObject["notification_id"]?.jsonPrimitive?.contentOrNull
                     m2.reloadNotifications().firstOrNull { it["id"]?.jsonPrimitive?.contentOrNull == id }?.let(notificationDispatcher::show)
-                }.onFailure { error.value = it.message }
+                }.onFailure { error.value = friendlyError(it) }
             }
         }
     }
@@ -101,9 +87,9 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         try { system.value = gateway.request("system.status.get").jsonObject; save("system", system.value!!)
             agents.value = gateway.request("agent.list").jsonArray.map { it.jsonObject }; save("agents", JsonArray(agents.value))
             loadUsage(); selectedAgent?.let { loadAgent(it) }; m2.refresh(); error.value = null
-        } catch (e: Exception) { error.value = e.message } finally { refreshing = false }
+        } catch (e: Exception) { error.value = friendlyError(e) } finally { refreshing = false }
     } }
-    fun selectRange(value: String) { range.value = value; scope.launch { runCatching { loadUsage() }.onFailure { error.value = it.message } } }
+    fun selectRange(value: String) { range.value = value; scope.launch { runCatching { loadUsage() }.onFailure { error.value = friendlyError(it) } } }
     private suspend fun loadUsage() {
         val selected = range.value
         val result = gateway.request("llm.usage.summary", buildJsonObject { put("range", selected); put("group_by", "provider") }).jsonObject
@@ -111,7 +97,7 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
         today.value = if (selected == "today") result else gateway.request("llm.usage.summary", buildJsonObject { put("range", "today") }).jsonObject
         save("today", today.value!!)
     }
-    fun selectAgent(id: String?) { selectedAgent = id; detail.value = null; events.value = emptyList(); agentUsage.value = null; if (id != null) scope.launch { runCatching { loadAgent(id) }.onFailure { error.value = it.message } } }
+    fun selectAgent(id: String?) { selectedAgent = id; detail.value = null; events.value = emptyList(); agentUsage.value = null; if (id != null) scope.launch { runCatching { loadAgent(id) }.onFailure { error.value = friendlyError(it) } } }
     private suspend fun loadAgent(id: String) {
         val d = gateway.request("agent.get", buildJsonObject { put("agent_id", id) }).jsonObject
         val e = gateway.get("/api/v1/agents/$id/events").jsonArray.map { it.jsonObject }
@@ -120,3 +106,60 @@ class JarvisRepository(private val app: Application) : DefaultLifecycleObserver 
     }
 }
 class JarvisViewModel(application: Application) : AndroidViewModel(application) { val repository = (application as JarvisApplication).repository }
+
+/**
+ * Parse a `jarvis://` deep link into a navigation target.
+ *
+ * Pure on purpose: the Activity only hands over `intent.dataString`, so the
+ * notification -> target -> screen contract is unit tested on the JVM instead of
+ * only being exercised on a device.
+ */
+internal fun deepLinkTarget(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val uri = runCatching { java.net.URI(raw.trim()) }.getOrNull() ?: return null
+    if (!"jarvis".equals(uri.scheme, ignoreCase = true)) return null
+    val id = uri.path?.split('/')?.firstOrNull { it.isNotBlank() }
+    return when (uri.host) {
+        "home" -> "home"
+        "conversation" -> id?.let { "conversation/$it" }
+        "task" -> id?.let { "run/$it" }
+        "workspace" -> id?.let { "workspace/$it" }
+        "space" -> id?.let { "space/$it" }
+        "app" -> id?.let { "app/$it" }
+        "notification" -> id?.let { "notification/$it" }
+        else -> null
+    }
+}
+
+/**
+ * Navigation target for a push notification. Kept next to the parser so a new
+ * notification kind cannot silently fall through to a dead end.
+ */
+internal fun notificationTarget(kind: String, id: String, reference: String): String = when (kind) {
+    "task_completed", "task_failed", "task_question" -> "jarvis://task/$reference"
+    "question" -> "jarvis://conversation/$reference"
+    // An approval's reference is the approval id, not a run.
+    else -> "jarvis://notification/$id"
+}
+
+/**
+ * Turn an RPC failure into something a person can read. The server speaks error
+ * codes (`{"error":"not_found"}`); rendering that body verbatim, which is what
+ * used to happen, shows JSON to the user and leaks the wire contract.
+ */
+internal fun friendlyError(error: Throwable?): String {
+    val raw = error?.message?.trim().orEmpty()
+    if (raw.isEmpty()) return "操作失败，请重试"
+    val code = runCatching { Json.parseToJsonElement(raw).jsonObject["error"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+    if (code == null) return if (raw.startsWith("{")) "操作失败，请重试" else raw.take(160)
+    return when (code) {
+        "not_found", "conversation_not_found", "agent_not_found", "run_not_found" -> "内容不存在或无权访问"
+        "unauthorized", "invalid_session", "session_replayed", "user_login_required" -> "登录已过期，请重新登录"
+        "forbidden", "origin_forbidden", "not_owner" -> "无权访问该内容"
+        "hermes_not_configured" -> "Jarvis 尚未连接模型服务"
+        "view_resource_required" -> "这个视图需要先选择具体对象"
+        "validation_error" -> "请求格式不正确"
+        "request_failed" -> "服务暂时不可用，请稍后重试"
+        else -> "操作失败（$code）"
+    }
+}

@@ -22,6 +22,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # The web client had no type or build gate in CI, so a layout regression
+      # (the collapsed /system workspace) shipped in 0.4.0 unnoticed.
+      - run: npm run typecheck:web
+      - run: npm run build:web
       - run: npm test
         env:
           TEST_DATABASE_URL: postgres://jarvis:test-only@127.0.0.1:5432/jarvis_test
@@ -41,7 +45,11 @@ jobs:
           # Pin only packages that exist in the current Android repository.
           packages: platform-tools platforms;android-35 build-tools;35.0.0
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew assembleDebug testDebugUnitTest lintDebug
+      # assembleDebugAndroidTest compiles the 424 lines of instrumentation tests
+      # that have never been built in CI. Several are known to reference removed
+      # UI strings; this gate is what surfaces that drift instead of leaving it
+      # unverified.
+      - run: ./gradlew assembleDebug testDebugUnitTest lintDebug assembleDebugAndroidTest
         working-directory: apps/android
       - uses: actions/upload-artifact@v4
         with:

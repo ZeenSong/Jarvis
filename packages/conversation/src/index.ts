@@ -9,6 +9,7 @@ import {
 import { createHermesContextToken, hermesAgentConfig, HermesClient, type HermesSkill } from "../../hermes-bridge/src/index.js";
 import { ownerUserId } from "../../../apps/server/src/ownership.js";
 import { householdIdForOwner } from "../../../apps/server/src/households.js";
+import { LeaseStore, workerIdentity } from "../../leases/src/index.js";
 import { activityGroupKey, canTransitionActivity, summarizeActivityGroup, type ActivityStatus } from "./model.js";
 import { visibleActivities, activityPresentation, activityTitle } from "./activity.js";
 import type { ExecutionKind } from "./execution.js";
@@ -41,7 +42,14 @@ export const questionInput = z.object({
   if (value.kind === "boolean" && value.options.length) ctx.addIssue({ code: "custom", path: ["options"], message: "boolean_does_not_accept_options" });
 });
 export class ConversationService {
+  /**
+   * Local concurrency accounting only. Database leases, not this map, decide
+   * which process may drive a conversation.
+   */
   private active = new Map<string, Promise<void>>();
+  private readonly workerId = workerIdentity();
+  /** Renewed every 15s; a crashed worker loses its claim after 45s. */
+  private static readonly LEASE_TTL = 45;
   private abort = new AbortController();
   private composerOptionsCache?: { key: string; expiresAt: number; value: { reasoning_efforts: string[]; skills: HermesSkill[] } };
   constructor(
@@ -49,6 +57,7 @@ export class ConversationService {
     private manager: AgentManager,
     private push: Push,
     private onQuestion?: (question: { id: string; conversation_id: string; turn_id: string; prompt: string }) => Promise<void>,
+    private readonly leases: LeaseStore = new LeaseStore(db),
   ) {}
   private async activeHermesModel(client: HermesClient, signal: AbortSignal) {
     try {
@@ -286,6 +295,17 @@ export class ConversationService {
   private async finishTurn(turnId: string, status: "completed" | "failed") {
     await transaction(this.db, async (c) => {
       await c.query("SELECT id FROM conversation_turns WHERE id=$1 FOR UPDATE", [turnId]);
+      // A turn that reached a terminal state must not leave child events open.
+      // Previously a failed projection left a `reasoning` event in `running`, and
+      // the UI kept showing "正在执行 · N 个步骤" for a finished answer.
+      await c.query(
+        `UPDATE conversation_events SET status=CASE WHEN $2='failed' THEN 'failed' ELSE 'completed' END,
+           completed_at=now(), revision=revision+1
+         WHERE turn_id=$1 AND status IN ('queued','running','waiting','waiting_approval')
+           AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.turn_id=$1 AND m.role='jarvis' AND m.status IN ('queued','streaming'))
+           AND NOT EXISTS (SELECT 1 FROM conversation_questions q WHERE q.turn_id=$1 AND q.status='pending')`,
+        [turnId, status],
+      );
       await c.query(`UPDATE conversation_turns SET
         status=CASE WHEN EXISTS(SELECT 1 FROM conversation_questions WHERE turn_id=$1 AND status='pending') THEN 'waiting_question'
           WHEN EXISTS(SELECT 1 FROM conversation_messages WHERE turn_id=$1 AND role='jarvis' AND status IN ('queued','streaming')) THEN 'queued' ELSE $2 END,
@@ -294,12 +314,36 @@ export class ConversationService {
         updated_at=now() WHERE id=$1 AND status <> 'cancelled'`, [turnId, status]);
     });
   }
+  /**
+   * Reset replies that nobody is streaming any more.
+   *
+   * The old version assumed it was the only process and rewrote every streaming
+   * reply. Now it only touches conversations whose lease is not live, so a
+   * rolling restart cannot interleave with a worker that is still answering.
+   */
   async recover() {
     await this.db.query(
-      "UPDATE conversation_messages SET status='queued' WHERE role='jarvis' AND status='streaming' AND hermes_run_id IS NOT NULL",
+      `UPDATE conversation_messages m SET status='queued'
+        WHERE m.role='jarvis' AND m.status='streaming' AND m.hermes_run_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.kind='conversation:'||m.conversation_id::text AND l.expires_at > now())`,
     );
     await this.db.query(
-      "UPDATE conversation_messages SET status='failed',content=content || E'\\n[服务重启，回复中断，请重新提交]' WHERE role='jarvis' AND status='streaming' AND hermes_run_id IS NULL",
+      `UPDATE conversation_messages m SET status='failed',content=m.content || $1
+        WHERE m.role='jarvis' AND m.status='streaming' AND m.hermes_run_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.kind='conversation:'||m.conversation_id::text AND l.expires_at > now())`,
+      ["\n[回复中断，请重新提交]"],
+    );
+  }
+
+  /** Re-adopt replies whose previous worker died before finishing them. */
+  private async takeover(conversationId: string) {
+    await this.db.query(
+      "UPDATE conversation_messages SET status='queued' WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' AND hermes_run_id IS NOT NULL",
+      [conversationId],
+    );
+    await this.db.query(
+      "UPDATE conversation_messages SET status='failed',content=content || $2 WHERE conversation_id=$1 AND role='jarvis' AND status='streaming' AND hermes_run_id IS NULL",
+      [conversationId, "\n[回复中断，请重新提交]"],
     );
   }
   async stop(owner: string, turnId: string) {
@@ -352,19 +396,45 @@ export class ConversationService {
   }
   async schedule() {
     if (this.abort.signal.aborted) return;
+    /**
+     * Streaming replies are candidates too, not just queued ones: a reply whose
+     * worker died stays 'streaming' forever and would otherwise only be repaired
+     * by a process restart. Because the lease is what grants the right to touch
+     * it, a live owner simply keeps the candidate from being claimed.
+     */
     const pending = (
       await this.db.query(
-        "SELECT DISTINCT conversation_id FROM conversation_messages WHERE role='jarvis' AND status='queued'",
+        "SELECT DISTINCT conversation_id FROM conversation_messages WHERE role='jarvis' AND status IN ('queued','streaming')",
       )
     ).rows;
     for (const { conversation_id: id } of pending) {
       if (this.active.has(id)) continue;
-      const task = this.process(id)
+      const kind = `conversation:${id}`;
+      const lease = await this.leases.acquire(kind, this.workerId, ConversationService.LEASE_TTL, {
+        conversation_id: id,
+      });
+      // Another worker owns this conversation. It will finish or resume it.
+      if (!lease.acquired) continue;
+      const guard = this.leases.guard(kind, this.workerId, ConversationService.LEASE_TTL);
+      const task = (async () => {
+        try {
+          // attempt > 1 means the previous owner's lease expired, so any reply it
+          // left streaming is an orphan we may resume. A first acquisition is not
+          // a takeover: a reply that is streaming right now may be mid-admission
+          // in this very tick, and rewriting it would lose the reply.
+          if (lease.lease.attempt > 1) await this.takeover(id);
+          await this.process(id);
+        } finally {
+          guard.stop();
+          await this.leases.release(kind, this.workerId).catch(() => {});
+        }
+      })()
         .catch(() => {})
         .finally(() => this.active.delete(id));
       this.active.set(id, task);
     }
   }
+
   private async process(id: string) {
     const job = (
       await this.db.query(

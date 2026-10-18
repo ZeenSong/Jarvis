@@ -15,6 +15,8 @@ mcp_servers:
     args: ["/opt/jarvis-source/upstream_provider.py"]
     env:
       MCP_PROVIDER: homeassistant
+      # Opt-in convenience tools; the generic bridge needs no extras.
+      MCP_EXTRAS: camera
       JARVIS_INTERNAL_URL: "${JARVIS_INTERNAL_URL}"
       JARVIS_BRIDGE_KEY: "${JARVIS_BRIDGE_KEY}"
   immich:

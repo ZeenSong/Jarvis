@@ -11,6 +11,23 @@ const loginSchema = credentialsSchema.extend({ device_id: z.uuid().optional() })
 const token = () => randomBytes(32).toString("base64url");
 export const hashPassword = (password: string) => argonHash(password, { algorithm: 2, memoryCost: 19456, timeCost: 2, parallelism: 1 });
 export const verifyPassword = (encoded: string, password: string) => argonVerify(encoded, password);
+
+/**
+ * Verify against a throwaway hash when the username does not exist.
+ *
+ * Without this, a failed login for an unknown user returned in ~0.7 ms while a
+ * known username spent ~11 ms in argon2, which enumerated accounts with a single
+ * `curl` loop. The dummy hash is generated once per process and never accepted.
+ */
+let timingPlaceholder: Promise<string> | undefined;
+async function verifyAgainstPlaceholder(password: string) {
+  timingPlaceholder ??= hashPassword(randomBytes(24).toString("base64url"));
+  try {
+    await argonVerify(await timingPlaceholder, password);
+  } catch {
+    // A placeholder never matches; only the elapsed time matters.
+  }
+}
 const inviteSchema = z.object({ username: credentialsSchema.shape.username }).strict();
 const registrationSchema = credentialsSchema.extend({ device_id: z.uuid().optional() }).strict();
 
@@ -93,7 +110,11 @@ export async function bootstrapUser(db: Database, deviceId: string, input: unkno
 export async function loginUser(db: Database, input: unknown, deviceId?: string) {
   const p = loginSchema.parse(input);
   const user = (await db.query("SELECT u.*,c.password_hash FROM users u JOIN user_credentials c ON c.user_id=u.id WHERE lower(u.username)=lower($1)", [p.username])).rows[0];
-  if (!user || !(await verifyPassword(user.password_hash, p.password))) throw Error("invalid_credentials");
+  if (!user) {
+    await verifyAgainstPlaceholder(p.password);
+    throw Error("invalid_credentials");
+  }
+  if (!(await verifyPassword(user.password_hash, p.password))) throw Error("invalid_credentials");
   const refresh = token(), access = token(), sessionId = randomUUID();
   const requestedDevice = deviceId ?? p.device_id;
   const boundDevice = requestedDevice ?? `user-${randomUUID()}`;
@@ -166,8 +187,13 @@ export async function updateUserRole(db: Database, adminId: string, userId: stri
 
 export async function authenticateUserAccess(db: Database, value?: string) {
   if (!value?.startsWith("Bearer ")) return null;
-  const identity = (await db.query("SELECT s.user_id,u.username,u.role,s.device_id,s.household_id,s.id AS session_id FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND s.last_seen_at>now()-interval '15 minutes'", [hash(value.slice(7))])).rows[0];
+  const identity = (await db.query("SELECT s.user_id,u.username,u.role,s.device_id,s.household_id,s.id AS session_id,s.last_seen_at FROM user_sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND s.last_seen_at>now()-interval '15 minutes'", [hash(value.slice(7))])).rows[0];
   if (!identity) return null;
-  await db.query("UPDATE user_sessions SET last_seen_at=now() WHERE id=$1 AND revoked_at IS NULL", [identity.session_id]);
+  // The idle window is 15 minutes, so refreshing at most once a minute is
+  // sufficient. Writing on every request turned each authenticated GET into an
+  // UPDATE on user_sessions.
+  if (Date.now() - new Date(identity.last_seen_at).getTime() > 60_000) {
+    await db.query("UPDATE user_sessions SET last_seen_at=now() WHERE id=$1 AND revoked_at IS NULL", [identity.session_id]);
+  }
   return identity;
 }

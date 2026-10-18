@@ -2,6 +2,7 @@ import { estimateCost, type Prices } from "../../llm-usage/src/index.js";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { Database } from "../../../apps/server/src/persistence.js";
+import { LeaseStore, workerIdentity } from "../../leases/src/index.js";
 import {
   RuntimeRegistry,
   canTransition,
@@ -84,9 +85,16 @@ export async function transaction<T>(
   }
 }
 export class AgentManager {
+  /**
+   * Local concurrency accounting only. It is not a correctness mechanism: the
+   * database claim and the run lease are what make two processes safe.
+   */
   private active = new Map<string, Promise<void>>();
   private stopped = false;
   private lastCleanup = Date.now();
+  /** Long enough to absorb a slow start, short enough to failover quickly. */
+  private static readonly LEASE_TTL = 60;
+  private readonly workerId = workerIdentity();
   constructor(
     readonly db: Database,
     readonly registry: RuntimeRegistry,
@@ -94,6 +102,7 @@ export class AgentManager {
     readonly prices: Prices = {},
     readonly onApproval?: (run: { id: string; requested_by: string }, event: AgentEvent) => Promise<void>,
     readonly onTaskStatus?: (runId: string, status: string, payload: Record<string, unknown>) => Promise<void>,
+    readonly leases: LeaseStore = new LeaseStore(db),
   ) {}
   async selectExecutor(c: PoolClient, request: TaskRequest) {
     const definitions = (await c.query("SELECT * FROM agent_definitions WHERE enabled=true AND tier='managed' ORDER BY id")).rows;
@@ -495,87 +504,181 @@ export class AgentManager {
     await this.transition(id, "running");
     return { resumed: true };
   }
+  /**
+   * Recovery, split into two responsibilities that used to share one query and
+   * one failure branch.
+   *
+   * 1. Runs that nobody holds can never be resumed (runtime state is
+   *    process-local), so they are failed explicitly. "Nobody holds" is decided
+   *    by the lease, not by "I just started": another replica may legitimately be
+   *    running a task while this one boots.
+   * 2. Instances whose run is already terminal but never recorded `stopped_at`
+   *    are cleaned up with bounded, backed-off attempts.
+   *
+   * The previous implementation retried step 2 every minute forever whenever
+   * `runtime.events()` threw `run_not_found`, which is *always* true after a
+   * restart. That appended one event per minute per leaked instance: 121k rows
+   * over 30 days in production. Cleanup is now idempotent, bounded and silent.
+   */
   async recover(terminalOnly = false) {
-    // Runtime reconnection is explicit; never silently rerun side effects.
+    if (!terminalOnly) await this.sweepOrphanedRuns();
+    await this.sweepInstanceCleanup();
+  }
+
+  /**
+   * Fail executions whose lease expired. Queued runs are left alone — they were
+   * never claimed, so they should simply be picked up by whichever worker is
+   * alive. Waiting states are left alone too: they are not executing.
+   */
+  private async sweepOrphanedRuns() {
     const rows = (
       await this.db.query(
-        "SELECT r.* FROM agent_runs r LEFT JOIN agent_instances i ON i.id=r.agent_instance_id WHERE ($1=false AND r.status NOT IN ('completed','failed','cancelled')) OR (r.status IN ('completed','failed','cancelled') AND i.stopped_at IS NULL AND i.id IS NOT NULL AND ($1=false OR r.updated_at<now()-interval '30 seconds'))",
-        [terminalOnly],
+        `SELECT r.id FROM agent_runs r
+          WHERE r.status IN ('starting','running')
+            AND NOT EXISTS (
+              SELECT 1 FROM leases l
+               WHERE l.kind='agent-run:'||r.id::text AND l.expires_at > now()
+            )`,
       )
     ).rows;
-    const pendingCleanup: string[] = [];
     for (const r of rows) {
       await this.transition(r.id, "failed", {
-        code: "server_restarted",
-        summary: "服务重启，任务未能恢复；请检查已归档结果后重新提交。",
+        code: "worker_lost",
+        summary: "执行进程已退出，任务未能恢复；请重新提交。",
       });
-      if (r.runtime_type !== "deepseek")
+    }
+  }
+
+  private static readonly CLEANUP_MAX_ATTEMPTS = 5;
+
+  private async sweepInstanceCleanup() {
+    const rows = (
+      await this.db.query(
+        `SELECT r.id, r.agent_id, r.runtime_type, r.runtime_run_id,
+                i.id AS instance_id, i.cleanup_attempts
+           FROM agent_runs r
+           JOIN agent_instances i ON i.id = r.agent_instance_id
+          WHERE r.status IN ('completed','failed','cancelled')
+            AND i.stopped_at IS NULL
+            AND i.cleanup_abandoned_at IS NULL
+            AND (i.cleanup_next_attempt_at IS NULL OR i.cleanup_next_attempt_at <= now())
+          ORDER BY i.cleanup_next_attempt_at NULLS FIRST
+          LIMIT 20`,
+      )
+    ).rows;
+
+    for (const r of rows) {
+      const attempts = Number(r.cleanup_attempts ?? 0) + 1;
+      let confirmed = false;
+      try {
+        const runtime = this.registry.get(r.runtime_type);
+        const workerId = r.runtime_run_id ?? r.id;
+        await runtime.cancel(workerId);
+        // Drain any surviving journal without repeating the original task.
         try {
-          const runtime = this.registry.get(r.runtime_type);
-          const workerId = r.runtime_run_id ?? r.id;
-          await runtime.cancel(workerId);
-          // Drain the surviving journal without repeating the original task.
-          // The failed state stays authoritative; late usage and exports persist.
-          for await (const event of runtime.events(
-            workerId,
-            AbortSignal.timeout(35000),
-          )) {
+          for await (const event of runtime.events(workerId, AbortSignal.timeout(10_000))) {
             await this.ingest(r.id, event);
           }
-          await runtime.dispose(workerId);
-        } catch {
-          if (r.agent_instance_id) pendingCleanup.push(r.agent_instance_id);
-          await this.db.query(
-            "INSERT INTO run_events(run_id,agent_id,type,payload) VALUES($1,$2,'agent.progress',$3)",
-            [
-              r.id,
-              r.agent_id,
-              {
-                code: "restart_cleanup_pending",
-                title: "Worker 归档或清理未确认，需检查控制器",
-              },
-            ],
-          );
+        } catch (error) {
+          // An unknown run has nothing to drain. This is the normal case after a
+          // restart and must not be reported as a cleanup failure.
+          if (!(error instanceof Error) || error.message !== "run_not_found") throw error;
         }
-    }
+        await runtime.dispose(workerId);
+        confirmed = true;
+      } catch {
+        confirmed = false;
+      }
 
-    await this.db.query(
-      "UPDATE agent_instances SET status='cleanup_pending' WHERE id=ANY($1::uuid[])",
-      [pendingCleanup],
-    );
-    await this.db.query(
-      "UPDATE agent_instances SET status='offline',stopped_at=now() WHERE id=ANY($2::uuid[]) AND NOT(id=ANY($1::uuid[]))",
-      [pendingCleanup, rows.map((r) => r.agent_instance_id).filter(Boolean)],
-    );
+      if (confirmed) {
+        await this.db.query(
+          "UPDATE agent_instances SET status='stopped', stopped_at=now(), cleanup_attempts=$2, cleanup_last_attempt_at=now(), cleanup_next_attempt_at=NULL WHERE id=$1",
+          [r.instance_id, attempts],
+        );
+      } else if (attempts >= AgentManager.CLEANUP_MAX_ATTEMPTS) {
+        await this.db.query(
+          "UPDATE agent_instances SET status='cleanup_abandoned', stopped_at=now(), cleanup_abandoned_at=now(), cleanup_attempts=$2, cleanup_last_attempt_at=now(), cleanup_next_attempt_at=NULL WHERE id=$1",
+          [r.instance_id, attempts],
+        );
+        // Exactly one event when we give up, never one per attempt.
+        await this.db.query(
+          "INSERT INTO run_events(run_id,agent_id,type,payload) VALUES($1,$2,'agent.progress',$3)",
+          [
+            r.id,
+            r.agent_id,
+            { code: "cleanup_abandoned", title: "执行实例清理未确认，已停止自动重试" },
+          ],
+        );
+      } else {
+        const delaySeconds = Math.min(3600, 60 * 2 ** (attempts - 1));
+        await this.db.query(
+          "UPDATE agent_instances SET status='cleanup_pending', cleanup_attempts=$2, cleanup_last_attempt_at=now(), cleanup_next_attempt_at=now()+$3*interval '1 second' WHERE id=$1",
+          [r.instance_id, attempts, delaySeconds],
+        );
+      }
+    }
   }
+
   async schedule() {
     if (this.stopped) return;
     if (Date.now() - this.lastCleanup > 60000) {
       this.lastCleanup = Date.now();
       await this.recover(true);
+      // Claimed executions from a dead worker must not stay 'running' forever.
+      await this.sweepOrphanedRuns();
     }
     for (const type of this.registry.types()) {
       if (this.active.has(type)) continue;
+      const run = await this.claim(type);
+      if (!run) continue;
+      const kind = `agent-run:${run.id}`;
+      const guard = this.leases.guard(kind, this.workerId, AgentManager.LEASE_TTL);
+      const task = this.execute(run)
+        .catch(() => {})
+        .finally(async () => {
+          guard.stop();
+          this.active.delete(type);
+          await this.leases.release(kind, this.workerId).catch(() => {});
+        });
+      this.active.set(type, task);
+    }
+  }
+
+  /**
+   * Claim one queued run and take its lease in a single transaction. Taking the
+   * lease in the same transaction as the status change removes the window where
+   * a run looks claimed but unowned — the shape that made the orphan sweep and
+   * the claimer race against each other.
+   *
+   * `SKIP LOCKED` also means two processes never even look at the same row.
+   */
+  private async claim(type: string) {
+    return transaction(this.db, async (c) => {
       const row = (
-        await this.db.query(
-          "SELECT * FROM agent_runs WHERE runtime_type=$1 AND status='queued' ORDER BY created_at LIMIT 1",
+        await c.query(
+          "SELECT * FROM agent_runs WHERE runtime_type=$1 AND status='queued' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED",
           [type],
         )
       ).rows[0];
-      if (row) {
-        const task = this.execute(row)
-          .catch(() => {})
-          .finally(() => this.active.delete(type));
-        this.active.set(type, task);
-      }
-    }
+      if (!row) return undefined;
+      const lease = await this.leases.acquire(`agent-run:${row.id}`, this.workerId, AgentManager.LEASE_TTL, {
+        agent_id: row.agent_id,
+        runtime_type: type,
+      });
+      if (!lease.acquired) return undefined;
+      await c.query(
+        "UPDATE agent_runs SET status='starting',updated_at=now() WHERE id=$1 AND status='queued'",
+        [row.id],
+      );
+      return { ...row, status: "starting" };
+    });
   }
+
   private async execute(run: any) {
     let runtime;
     let runtimeRunId: string | undefined;
     try {
       runtime = this.registry.get(run.runtime_type);
-      if (!(await this.transition(run.id, "starting"))) return;
       const instance = randomUUID();
       await this.db.query(
         "INSERT INTO agent_instances(id,agent_definition_id,runtime_type,status) VALUES($1,$2,$3,'starting')",
@@ -657,9 +760,14 @@ export class AgentManager {
   }
   async close() {
     this.stopped = true;
+    // Cancel only what this process holds. The old query cancelled every
+    // non-terminal run, including ones another replica was executing.
     for (const row of (
       await this.db.query(
-        "SELECT id FROM agent_runs WHERE status NOT IN ('completed','failed','cancelled')",
+        `SELECT r.id FROM agent_runs r
+           JOIN leases l ON l.kind='agent-run:'||r.id::text AND l.owner=$1
+          WHERE r.status NOT IN ('completed','failed','cancelled')`,
+        [this.workerId],
       )
     ).rows)
       await this.cancel(row.id);

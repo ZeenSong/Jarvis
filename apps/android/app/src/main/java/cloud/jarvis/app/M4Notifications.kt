@@ -30,12 +30,7 @@ class JarvisNotificationDispatcher(private val context: Context) {
         if (id.isBlank()) return
         val kind = value.notificationString("kind")
         val reference = value.notificationString("reference_id")
-        val target = when (kind) {
-            "task_completed", "task_failed", "task_question" -> "jarvis://task/$reference"
-            "question" -> "jarvis://conversation/$reference"
-            "approval" -> if (reference.isBlank()) "jarvis://notification/$id" else "jarvis://notification/$id"
-            else -> "jarvis://notification/$id"
-        }
+        val target = notificationTarget(kind, id, reference)
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target), context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val pending = PendingIntent.getActivity(context, id.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

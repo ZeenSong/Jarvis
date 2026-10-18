@@ -1770,3 +1770,85 @@ table th, table td { border-bottom-color: var(--line); }
   .appearance-styles { grid-template-columns: 1fr; }
   .appearance-mode { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
+
+/* 设置 → 开发者：开发者入口是偏好设置，不再依赖 ?developer=1 */
+.settings-developer {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface, rgba(255, 255, 255, 0.02));
+}
+.settings-developer .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.settings-developer h2 { margin: 0; font-size: 15px; }
+.developer-toggle { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.developer-toggle input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent, #e2b56d); }
+.developer-toggle strong { display: block; font-size: 13px; color: var(--text); }
+.developer-toggle .muted { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* 系统页 / 工作区布局修复（2026-10 重构）
+ *
+ * product.css 里的遗留规则给 .semantic-workspace 加了 flex-wrap: wrap，
+ * 于是主列（flex: 1）与固定百分比的侧栏无法同行，主列被压成竖条、
+ * 指标卡被裁切、中间留下大片空白（1440px 下可见）。
+ * 这里显式给定不换行的三栏布局，并让摘要卡按可用宽度自适应，而不是
+ * 固定 4 列后在窄容器里挤压。
+ */
+.semantic-workspace { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 18px; }
+.semantic-main { flex: 1 1 auto; min-width: 0; }
+.semantic-summary { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.semantic-summary > *, .semantic-main > * { min-width: 0; }
+.semantic-activity, .semantic-inspector { min-width: 0; max-width: 460px; }
+.page-system .semantic-summary { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+@media (max-width: 1100px) {
+  /* 平板与手机：工作区改为纵向堆叠，侧栏不再并排。 */
+  .semantic-workspace { flex-wrap: wrap; }
+  .semantic-activity, .semantic-inspector { flex: 1 1 100%; max-width: none; }
+}
+
+/* 系统页摘要区：gauge 卡内部 .block 在 flex 容器里按内容收缩（198px 的槽位里只有 77px），
+ * 导致数字被裁切；metric_group 需要独占一行而不是挤进一个轨道。 */
+.page-system .semantic-summary > .semantic-section { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; min-width: 0; }
+.page-system .semantic-summary > .semantic-section > .block { width: 100%; min-width: 0; }
+.page-system .semantic-summary > .semantic-section[data-component="metric_group"] { grid-column: 1 / -1; }
+.page-system .semantic-summary { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+/*
+ * Several photos in one answer should read at a glance.
+ *
+ * assistant-ui renders every media part as its own `figure`, so three photos
+ * used to stack into a ~1700px column. When two or more figures are adjacent,
+ * the message becomes a grid: text spans the full width, the photos share one
+ * row and show the whole frame instead of cropping it.
+ */
+.message.assistant:has(> figure.assistant-media + figure.assistant-media) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.message.assistant:has(> figure.assistant-media + figure.assistant-media) > :not(figure.assistant-media) {
+  grid-column: 1 / -1;
+}
+.message.assistant:has(> figure.assistant-media + figure.assistant-media) > figure.assistant-media {
+  margin: 0;
+  max-width: none;
+  min-width: 0;
+}
+.message.assistant:has(> figure.assistant-media + figure.assistant-media) > figure.assistant-media img {
+  width: 100%;
+  height: 240px;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 10px;
+}
+.assistant-media-link {
+  display: block;
+  line-height: 0;
+}
+.assistant-media-link:focus-visible {
+  outline: 2px solid var(--accent, #7ab7ff);
+  outline-offset: 2px;
+  border-radius: 12px;
+}

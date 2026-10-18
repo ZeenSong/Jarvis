@@ -27,6 +27,7 @@ import {
 import { WorkspaceStore } from "./workspaces.js";
 import { ControlPlane } from "./control-plane.js";
 import { appDescriptorSchema, resolveAppLink } from "../../../packages/app-bridge/src/index.js";
+import { IntegrationRegistry, builtinManifests } from "../../../packages/integrations/src/index.js";
 
 const taskCapabilitySchema = z.string().regex(/^[a-z][a-z0-9.*_-]{1,199}$/);
 const taskCreateSchema = z.object({
@@ -78,6 +79,7 @@ export const m2Topics = [
   "integration.credential.revoke",
   "capability.list",
   "mcp.catalog.list",
+  "integration.list",
   "conversation.create",
   "conversation.list",
   "conversation.get",
@@ -170,10 +172,6 @@ const capabilityCatalog: Capability[] = [
   { id: "system.metrics.read", kind: "kernel", risk: "read", approval_required: false },
   { id: "agent.list", kind: "kernel", risk: "read", approval_required: false },
   { id: "agent.run.read", kind: "kernel", risk: "read", approval_required: false },
-  { id: "homeassistant.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
-  { id: "homeassistant.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
-  { id: "immich.mcp.read", kind: "mcp", risk: "read", approval_required: false, provider: "hermes" },
-  { id: "immich.mcp.write", kind: "mcp", risk: "write", approval_required: true, provider: "hermes" },
   { id: "schedule.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
   { id: "conversation.question.create", kind: "mcp", risk: "write", approval_required: false, provider: "hermes" },
   { id: "ui.view.show", kind: "kernel", risk: "write", approval_required: false },
@@ -191,7 +189,10 @@ export class M2 {
   readonly integrationCredentials: IntegrationCredentialStore;
   private timer?: NodeJS.Timeout;
   private busy = false;
-  private capabilities() { return mergeCapabilities(capabilityCatalog, parseCapabilityCatalog()); }
+  private capabilities() {
+    // MCP provider entries are derived from manifests, not hand-maintained here.
+    return mergeCapabilities([...capabilityCatalog, ...this.integrations.capabilities()], parseCapabilityCatalog());
+  }
   constructor(
     readonly db: Database,
     readonly push: Push,
@@ -199,6 +200,11 @@ export class M2 {
     registry = new RuntimeRegistry(),
     prices: Prices = {},
     readonly invokeNode?: (owner: string, nodeId: string, capability: string, input: Record<string, unknown>) => Promise<unknown>,
+    /**
+     * Declarative integrations. Defaults to the built-ins so unit tests and
+     * embedders keep working without wiring a directory.
+     */
+    readonly integrations: IntegrationRegistry = new IntegrationRegistry(builtinManifests),
   ) {
     this.control = new ControlPlane(db, push);
     this.integrationCredentials = new IntegrationCredentialStore(db);
@@ -237,8 +243,28 @@ export class M2 {
         let conversationId = schedule.conversation_id;
         if (!conversationId) conversationId = (await this.db.query("INSERT INTO conversations(id,title,owner_device_id,owner_user_id,household_id) VALUES($1,$2,$3,(SELECT user_id FROM devices WHERE id=$3),$4) RETURNING id", [randomUUID(), `定时任务 · ${String(schedule.prompt).slice(0, 30)}`, schedule.owner_device_id, await householdIdForOwner(this.db, schedule.owner_device_id)])).rows[0].id;
         await this.conversations.createScheduled(schedule.owner_device_id, conversationId, schedule.prompt, `schedule:${schedule.id}:${new Date(schedule.next_run_at).toISOString()}`);
-        await this.db.query(schedule.cadence === "once" ? "UPDATE schedules SET enabled=false,conversation_id=$2,updated_at=now() WHERE id=$1" : "UPDATE schedules SET next_run_at=next_run_at + CASE cadence WHEN 'daily' THEN interval '1 day' ELSE interval '7 days' END,conversation_id=$2,updated_at=now() WHERE id=$1", [schedule.id, conversationId]);
-      } catch { /* leave the due row for the next scheduler pass */ }
+        await this.db.query(
+          schedule.cadence === "once"
+            ? "UPDATE schedules SET enabled=false,conversation_id=$2,failure_count=0,last_error=NULL,updated_at=now() WHERE id=$1"
+            : "UPDATE schedules SET next_run_at=next_run_at + CASE cadence WHEN 'daily' THEN interval '1 day' ELSE interval '7 days' END,conversation_id=$2,failure_count=0,last_error=NULL,updated_at=now() WHERE id=$1",
+          [schedule.id, conversationId],
+        );
+      } catch (error) {
+        // Back off instead of retrying on every 2s tick, and disable the schedule
+        // after five consecutive failures so one broken row cannot spam forever.
+        const failures = Number(schedule.failure_count ?? 0) + 1;
+        const message = error instanceof Error ? error.message : "schedule_failed";
+        const backoffMinutes = Math.min(360, 2 ** (failures - 1));
+        await this.db.query(
+          `UPDATE schedules SET failure_count=$2, last_error=$3,
+             enabled = CASE WHEN $2 >= 5 THEN false ELSE enabled END,
+             next_run_at = CASE WHEN $2 >= 5 OR cadence = 'once' THEN next_run_at
+               ELSE now() + make_interval(mins => $4) END,
+             updated_at=now() WHERE id=$1`,
+          [schedule.id, failures, message.slice(0, 500), backoffMinutes],
+        ).catch(() => {});
+        this.push("schedule.created", { schedule_id: schedule.id, failure_count: failures, enabled: failures < 5 });
+      }
     }
   }
   async definitions(owner?: string) {
@@ -482,26 +508,52 @@ export class M2 {
         return this.workspaces.upsertArtifact(device, p);
       case "workspace.bind":
         return this.workspaces.bind(device, p.workspace_id, p.resource, p.revision, p.metadata);
+      case "integration.list": {
+        return {
+          version: 1,
+          integrations: this.integrations.list().flatMap((manifest) => {
+            const descriptor = IntegrationRegistry.appDescriptor(manifest);
+            if (!descriptor) return [];
+            return [{
+              id: descriptor.id,
+              name: descriptor.name,
+              description: descriptor.description,
+              status: descriptor.status,
+              launch: descriptor.launch.web ?? null,
+              icon: descriptor.icon ?? null,
+              capabilities: descriptor.capabilities,
+              resources: descriptor.resources,
+              read_scope: manifest.readScope,
+              write_scope: manifest.writeScope,
+              risk: manifest.risk,
+            }];
+          }),
+        };
+      }
       case "app.resolve": {
-        const input = z.object({ app_id: z.enum(["home-assistant", "immich"]), kind: z.string().max(80).optional(), id: z.string().max(300).optional(), platform: z.enum(["web", "android"]) }).strict().parse(p);
-        const candidate = input.app_id === "home-assistant" ? process.env.HOME_ASSISTANT_URL : process.env.IMMICH_URL;
-        // The deployment is intentionally reachable through the user's
-        // Tailscale address over HTTP; the operator supplied these URLs, so
-        // keep the resolver constrained to http(s) URLs and never accept a
-        // client supplied target.
-        const base = candidate && /^https?:\/\//.test(candidate) ? candidate.replace(/\/$/, "") : undefined;
-        const deep_links = base ? input.app_id === "immich" ? { photo: `${base}/photos/{id}`, album: `${base}/albums/{id}`, search: `${base}/search` } : { entity: `${base}/config/entities?entity_id={id}`, dashboard: `${base}/lovelace/{id}` } : {};
-        const descriptor = appDescriptorSchema.parse({
-          id: input.app_id,
-          name: input.app_id === "immich" ? "Immich" : "Home Assistant",
-          launch: { web: base },
-          deep_links,
-          capabilities: input.app_id === "immich" ? ["immich.photo.search", "immich.album.read"] : ["homeassistant.entity.read", "homeassistant.dashboard.read"],
-          resources: input.app_id === "immich" ? ["photo", "album", "search"] : ["entity", "dashboard"],
-          icon: `/app-icons/${input.app_id === "immich" ? "immich.svg" : "homeassistant.svg"}`,
-          status: base ? "ready" : "unknown",
+        const input = z.object({
+          app_id: z.string().trim().regex(/^[a-z][a-z0-9-]{1,39}$/),
+          kind: z.string().max(80).optional(),
+          id: z.string().max(300).optional(),
+          platform: z.enum(["web", "android"]),
+        }).strict().parse(p);
+        const manifest = this.integrations.get(input.app_id);
+        if (!manifest) throw Error("app_not_found");
+        const descriptor = IntegrationRegistry.appDescriptor(manifest);
+        if (!descriptor) throw Error("app_not_found");
+        // Keep the wire contract of packages/app-bridge unchanged; the registry's
+        // richer status ("unconfigured") maps onto the schema's "unknown".
+        const app = appDescriptorSchema.parse({
+          id: descriptor.id,
+          name: descriptor.name,
+          launch: descriptor.launch,
+          deep_links: descriptor.deep_links,
+          capabilities: descriptor.capabilities,
+          resources: descriptor.resources,
+          ...(descriptor.icon ? { icon: descriptor.icon } : {}),
+          status: descriptor.status === "ready" ? "ready" : "unknown",
         });
-        return { app: descriptor, link: resolveAppLink(descriptor, input, input.platform) };
+        return { app, link: resolveAppLink(app, input, input.platform) };
       }
       case "approval.list": return this.control.approvals(device);
       case "approval.create": return this.control.createApproval(device, p);
@@ -760,6 +812,13 @@ export class M2 {
       [Number(process.env.EVENT_RETENTION_DAYS ?? 30)],
     );
     await this.db.query("DELETE FROM web_sessions WHERE expires_at<now()");
+    // Every view request inserts a row; nothing used to prune them (310 rows for
+    // four distinct views in production). Keep recent views and any view a
+    // message still points at.
+    await this.db.query(
+      `DELETE FROM views v WHERE v.created_at < now() - interval '7 days'
+         AND NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.view_id = v.id)`,
+    );
   }
   async close() {
     if (this.timer) clearInterval(this.timer);

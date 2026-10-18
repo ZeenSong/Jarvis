@@ -8,6 +8,7 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Rule
+import org.junit.Assume
 import org.junit.Test
 import java.time.Instant
 import java.util.UUID
@@ -26,6 +27,7 @@ class M1EndToEndTest {
     private fun waitFor(text: String) { compose.waitUntil(20_000) { visible(text) } }
 
     @Test fun pairMonitorAgentAndUsage() {
+        requireLiveStack(args)
         val code = requireNotNull(args.getString("pairingCode")) { "pairingCode is required" }
         val token = requireNotNull(args.getString("agentToken")) { "agentToken is required" }
         compose.onNode(hasSetTextAction() and hasText("http://100.x.x.x:8080")).performTextInput(server)
@@ -58,4 +60,16 @@ class M1EndToEndTest {
             compose.onNodeWithText("今日 · UTC").performScrollTo().assertIsDisplayed()
         } finally { socket?.close(1000, "test complete"); client.dispatcher.executorService.shutdown() }
     }
+}
+
+/**
+ * These tests drive a real deployed stack, so they need instrumentation arguments
+ * (server, pairing code, run ids). Without them they must skip, not fail: a plain
+ * `connectedDebugAndroidTest` is the self-contained UI suite.
+ */
+internal fun requireLiveStack(args: android.os.Bundle) {
+    org.junit.Assume.assumeTrue(
+        "live stack arguments were not provided; run with -Pandroid.testInstrumentationRunnerArguments.server=...",
+        !args.getString("server").isNullOrBlank() && !args.getString("pairingCode").isNullOrBlank(),
+    )
 }

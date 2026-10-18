@@ -15,7 +15,7 @@ import { registerFirstUser, registrationStatus, loginUser, refreshUserSession, a
 import { MediaStore } from "./media.js";
 import { MediaResources } from "./media-resources.js";
 import { ConversationResults } from "../../../packages/conversation/src/results.js";
-import { viewSpecSchema, componentTypes } from "../../../packages/ui-protocol-v2/src/index.js";
+import { viewSpecSchema, componentTypes, decideViewHost } from "../../../packages/ui-protocol-v2/src/index.js";
 import {
   envelopeSchema,
   message,
@@ -31,9 +31,13 @@ import { contextAllows, verifyHermesContextToken } from "../../../packages/herme
 import { householdIdForOwner } from "./households.js";
 import { casaosLogin, casaosAccount } from "./applications.js";
 import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
-import { homeAssistantState, immichSearch } from "./hermes-integrations.js";
-import { canUseMcpTool, setUserCapability, userCapabilities, type McpProvider } from "./mcp-access.js";
-const SERVER_VERSION = "0.3.2";
+import { canUseMcpTool, setUserCapability, userCapabilities } from "./mcp-access.js";
+import { readPackageVersion, toErrorResponse } from "../../../packages/core/src/index.js";
+import { registerSecurityHeaders } from "./http/security.js";
+import { IntegrationRegistry } from "../../../packages/integrations/src/index.js";
+import { LeaseStore } from "../../../packages/leases/src/index.js";
+import { LoginGuard, clientAddress, loginIdentity } from "./security/login-guard.js";
+const SERVER_VERSION = readPackageVersion(import.meta.url);
 export async function buildApp(options: {
   databaseUrl: string;
   runtimes?: RuntimeRegistry;
@@ -61,7 +65,13 @@ export async function buildApp(options: {
     bodyLimit: 65536,
   });
   await app.register(websocket, { options: { maxPayload: 65536 } });
-  await migrate(db);
+  registerSecurityHeaders(app);
+  const migration = await migrate(db, {
+    info: (value, message) => app.log.info(value, message),
+    warn: (value, message) => app.log.warn(value, message),
+  });
+  for (const version of migration.drifted)
+    app.log.warn({ version }, "schema_migration_checksum_drift");
   const media = new MediaStore();
   const mediaResources = new MediaResources(db);
   const mediaFileRoot = resolve(process.env.HERMES_MEDIA_ROOT?.trim() || process.env.HERMES_DATA_ROOT?.trim() || resolve(options.hostRoot || "/", "opt/data"));
@@ -124,6 +134,10 @@ export async function buildApp(options: {
       options.offlineSeconds,
     ),
     usage = new UsageCollector(db, options.prices ?? {}, push);
+  const integrations = await IntegrationRegistry.create({
+    dir: process.env.INTEGRATIONS_DIR?.trim() || undefined,
+  });
+  app.log.info({ integrations: integrations.ids() }, "integrations_loaded");
   const m2 = new M2(
     db,
     push,
@@ -135,7 +149,24 @@ export async function buildApp(options: {
     options.runtimes,
     options.prices,
     invokeNode,
+    integrations,
   );
+  /**
+   * Resolve a provider secret for one owner. Stored household credentials win
+   * over the process environment so a member can connect their own account
+   * without editing deployment files.
+   */
+  const resolveProviderSecret = async (manifest: import("../../../packages/integrations/src/index.js").CompiledManifest, owner: string) => {
+    if (process.env.INTEGRATION_CREDENTIAL_KEY) {
+      const stored = await m2.integrationCredentials
+        .readProviderSecret(owner, IntegrationRegistry.storeProvider(manifest))
+        .catch(() => undefined);
+      if (stored) return { secret: stored, source: "store" as const };
+    }
+    const envName = IntegrationRegistry.credentialEnv(manifest);
+    const value = envName ? process.env[envName]?.trim() : undefined;
+    return value ? { secret: value, source: "env" as const } : undefined;
+  };
   const hermesBridgeKey = process.env.HERMES_BRIDGE_KEY?.trim() ?? "";
   const hermesCapabilityInput = z.object({
     tool: z.string().min(1).max(100),
@@ -154,20 +185,27 @@ export async function buildApp(options: {
       if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
       contextOwner = context.owner;
       const args = input.arguments;
-      const mcpProvider = input.tool === "mcp_authorize" && (input.arguments.provider === "homeassistant" || input.arguments.provider === "immich")
-        ? input.arguments.provider as McpProvider : undefined;
-      const mcpReadOnly = mcpProvider ? input.arguments.read_only === true : undefined;
-      const mcpToolName = mcpProvider && typeof args.tool_name === "string" ? args.tool_name : "";
-      const mcpListing = Boolean(mcpProvider && mcpToolName === "__tools_list__");
-      const requiredScope = input.tool === "mcp_authorize" && mcpProvider && !mcpListing ? `mcp.${mcpProvider}.${mcpReadOnly ? "read" : "write"}`
+      const requestedProvider = input.tool === "mcp_authorize" && typeof input.arguments.provider === "string"
+        ? input.arguments.provider : undefined;
+      const mcpManifest = requestedProvider ? integrations.get(requestedProvider) : undefined;
+      if (requestedProvider && !mcpManifest) throw Error("mcp_provider_unknown");
+      const mcpToolName = mcpManifest && typeof args.tool_name === "string" ? args.tool_name : "";
+      const mcpListing = Boolean(mcpManifest && mcpToolName === "__tools_list__");
+      // Classify from the manifest instead of trusting the caller's read_only flag.
+      // An unclassified tool is a write, so new upstream tools fail closed.
+      const classification = mcpManifest && mcpToolName && !mcpListing
+        ? integrations.authorizeTool(mcpManifest.id, mcpToolName)
+        : undefined;
+      if (classification?.denied) return reply.code(403).send({ error: "mcp_capability_forbidden" });
+      const effectiveReadOnly = mcpListing
+        || (classification ? classification.level === "read" : input.arguments.read_only === true);
+      const requiredScope = mcpManifest
+        ? (mcpListing ? mcpManifest.readScope : (effectiveReadOnly ? mcpManifest.readScope : mcpManifest.writeScope))
         : input.tool === "task_create" || input.tool === "schedule_create" || input.tool === "conversation_question_create" ? "conversation.write"
         : input.tool === "ui_view_show" ? "conversation.write"
-            : input.tool === "home_assistant_state" ? "home.read"
-            : input.tool === "immich_photo_search" ? "photo.read"
           : input.tool.startsWith("system_") || input.tool === "agent_list" || input.tool === "agent_run_status" ? "system.read"
             : input.tool.startsWith("schedule_") ? "schedule.write" : undefined;
-      const mcpListingAllowed = !mcpListing || contextAllows(context, `mcp.${mcpProvider}.read`) || contextAllows(context, `mcp.${mcpProvider}.write`);
-      if ((requiredScope && !contextAllows(context, requiredScope)) || !mcpListingAllowed) return reply.code(403).send({ error: "hermes_scope_forbidden" });
+      if (requiredScope && !contextAllows(context, requiredScope)) return reply.code(403).send({ error: "hermes_scope_forbidden" });
       const toolCallId = `mcp-${randomBytes(12).toString("hex")}`;
       const actorUser = z.uuid().safeParse(context.actor).success
         ? (await db.query("SELECT id FROM users WHERE id=$1", [context.actor])).rows[0]?.id as string | undefined
@@ -193,24 +231,32 @@ export async function buildApp(options: {
       let result: unknown;
       switch (input.tool) {
         case "mcp_authorize": {
-          if (!mcpProvider || typeof args.tool_name !== "string" || !args.tool_name) throw Error("mcp_tool_invalid");
+          if (!mcpManifest || typeof args.tool_name !== "string" || !args.tool_name) throw Error("mcp_tool_invalid");
           if (!contextUser || !contextHousehold) throw Error("user_login_required");
-          if (!(await canUseMcpTool(db, contextUser, contextHousehold, mcpProvider, args.read_only === true)))
+          if (!(await canUseMcpTool(db, contextUser, contextHousehold, mcpManifest.id, effectiveReadOnly, integrations.defaultMemberCapabilities())))
             throw Error("mcp_capability_forbidden");
-          const credentialProvider = mcpProvider === "homeassistant" ? "home-assistant" : mcpProvider;
-          const token = process.env.INTEGRATION_CREDENTIAL_KEY
-            ? await m2.integrationCredentials.readProviderSecret(context.owner, credentialProvider)
-            : mcpProvider === "homeassistant" ? process.env.HOME_ASSISTANT_TOKEN : process.env.IMMICH_API_KEY;
-          if (!token) throw Error(`${mcpProvider}_not_configured`);
-          if (mcpProvider === "homeassistant") {
-            const base = process.env.HOME_ASSISTANT_URL?.replace(/\/$/, "");
-            if (!base) throw Error("home_assistant_not_configured");
-            result = { provider: mcpProvider, endpoint: `${base}/api/mcp`, token };
-          } else if (mcpProvider === "immich") {
-            const base = process.env.IMMICH_URL?.replace(/\/$/, "");
-            if (!base) throw Error("immich_not_configured");
-            result = { provider: mcpProvider, base_url: base, token };
-          }
+          const resolved = await resolveProviderSecret(mcpManifest, context.owner);
+          if (!resolved) throw Error("mcp_provider_not_configured");
+          const connection = IntegrationRegistry.connection(mcpManifest, resolved.secret);
+          // The descriptor is uniform for every provider: transport + policy +
+          // optional media fetch. Legacy fields stay so an older provider image
+          // keeps working during rollout.
+          // The provider authorizes a listing before it knows which tool the
+          // model picked, so the media descriptor travels with every response and
+          // the provider applies it only when `media.tool` matches.
+          const media = IntegrationRegistry.media(mcpManifest, resolved.secret);
+          const launchBase = mcpManifest.app.launch_env ? process.env[mcpManifest.app.launch_env]?.replace(/\/$/, "") : undefined;
+          result = {
+            provider: mcpManifest.id,
+            transport: connection,
+            ...(media ? { media } : {}),
+            read_scope: mcpManifest.readScope,
+            write_scope: mcpManifest.writeScope,
+            credential_source: resolved.source,
+            ...(connection.type === "streamable-http" ? { endpoint: connection.endpoint } : {}),
+            ...(launchBase ? { base_url: launchBase } : {}),
+            token: resolved.secret,
+          };
           break;
         }
         case "system_status_read":
@@ -225,12 +271,8 @@ export async function buildApp(options: {
         case "llm_usage_read":
           result = await m2.readForAgent("llm.usage.read", undefined, context.owner);
           break;
-        case "home_assistant_state":
-          result = await homeAssistantState({ token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "home-assistant") : undefined });
-          break;
-        case "immich_photo_search":
-          result = await immichSearch(args as { query?: string; from?: string; to?: string; page?: number; size?: number }, { token: process.env.INTEGRATION_CREDENTIAL_KEY ? await m2.integrationCredentials.readProviderSecret(context.owner, "immich") : undefined });
-          break;
+        // Legacy direct fetchers were removed: every provider goes through
+        // mcp_authorize so that scope, classification and credentials have one path.
         case "schedule_create":
           if (!conversationId) throw Error("conversation_required");
           if (typeof args.next_run_at !== "string" || !Number.isFinite(Date.parse(args.next_run_at)) || Date.parse(args.next_run_at) <= Date.now()) {
@@ -259,16 +301,21 @@ export async function buildApp(options: {
           {
             if (!turnId) throw Error("conversation_required");
             const params = z.object({ intent: z.string().min(1).max(120), resources: z.array(z.string()).max(60).default([]), target: z.enum(["inline", "workspace"]).optional(), view: viewSpecSchema.optional() }).strict().parse(args);
-            const target = params.target ?? "workspace";
             const title = params.view?.title ?? (params.intent === "usage_analysis" ? "今日 Token 使用分析" : "分析结果");
             const results = new ConversationResults(db, m2.workspaces, push);
-            const pending = await results.begin(context.owner, turnId, params.intent, title, target);
+            let spec = params.view;
+            if (!spec) {
+              const generated = await m2.handle("view.v2.get", { intent: { type: "view.show", intent: params.intent, resources: params.resources }, renderer: { platform: "web", supports: { min: "2.0", max: "2.0" }, components: componentTypes.map((name) => `${name}@2`), features: ["charts", "gallery", "actions"] } }, context.owner) as any;
+              spec = viewSpecSchema.parse(generated.view);
+            }
+            // The host is decided from the result's shape, not by the model.
+            // A gallery stays inline; a multi-chart analysis opens the workspace.
+            const host = decideViewHost(spec, params.target);
+            const pending = await results.begin(context.owner, turnId, params.intent, title, host.target);
+            if (host.reason !== "caller_preference" && params.target && params.target !== host.target) {
+              app.log.info({ intent: params.intent, requested: params.target, target: host.target, reason: host.reason }, "result_host_overridden");
+            }
             try {
-              let spec = params.view;
-              if (!spec) {
-                const generated = await m2.handle("view.v2.get", { intent: { type: "view.show", intent: params.intent, resources: params.resources }, renderer: { platform: "web", supports: { min: "2.0", max: "2.0" }, components: componentTypes.map((name) => `${name}@2`), features: ["charts", "gallery", "actions"] } }, context.owner) as any;
-                spec = viewSpecSchema.parse(generated.view);
-              }
               // Resolve every named source under this user before publishing it.
               for (const source of new Set(spec.sections.flatMap((section) => section.source ? [section.source] : []))) await m2.resource(source, context.owner);
               result = await results.complete(context.owner, pending, spec);
@@ -290,9 +337,11 @@ export async function buildApp(options: {
       if (toolEvent) push("conversation.tool.failed", { ...toolEvent, error: error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "tool_failed" });
       if (turnId && toolEvent && contextOwner) await m2.conversations.recordActivity(contextOwner, turnId, "failed", { tool_call_id: toolEvent.tool_call_id, capability: toolEvent.capability, error: error instanceof Error ? error.message : "tool_failed" });
       // The MCP provider receives the HTTP error body and Hermes can report it
-      // as a failed capability call without exposing bridge credentials.
-      const message = error instanceof z.ZodError ? "validation_error" : error instanceof Error ? error.message : "hermes_capability_invalid";
-      return reply.code(message === "mcp_capability_forbidden" || message === "hermes_scope_forbidden" ? 403 : 400).send({ error: message, ...(error instanceof z.ZodError ? { issues: error.issues } : {}) });
+      // as a failed capability call without exposing bridge credentials. The
+      // status comes from the shared error contract: an unknown tool code is a
+      // bug (500/`request_failed`), a known one keeps its documented status.
+      const mapped = toErrorResponse(error);
+      return reply.code(mapped.status).send(mapped.body);
     }
   });
   app.post<{ Body: { context_token?: string; content_type?: string; source?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {
@@ -310,6 +359,16 @@ export async function buildApp(options: {
     }
   });
   await m2.start();
+  /**
+   * The housekeeping tick (metrics, agent sweep, retention, schedules) must run on
+   * exactly one process. It used to rely on "only one process exists"; it now takes
+   * a lease and renews it on every tick, so a restarted or additional instance can
+   * take over after the TTL instead of duplicating schedule firing.
+   */
+  const housekeeping = new LeaseStore(db);
+  const schedulerOwner = `server-${randomBytes(8).toString("hex")}`;
+  let holdsScheduler = (await housekeeping.acquire("server:housekeeping", schedulerOwner, 30)).acquired;
+  app.log.info({ owner: schedulerOwner, holdsScheduler }, "housekeeping_lease_acquired");
   let lastMetric = 0;
   let schedulerAt = Date.now(),
     busy = false,
@@ -319,6 +378,15 @@ export async function buildApp(options: {
     if (busy) return;
     busy = true;
     try {
+      if (holdsScheduler) {
+        holdsScheduler = await housekeeping.renew("server:housekeeping", schedulerOwner, 30);
+      } else {
+        holdsScheduler = (await housekeeping.acquire("server:housekeeping", schedulerOwner, 30)).acquired;
+      }
+      if (!holdsScheduler) {
+        schedulerAt = Date.now();
+        return;
+      }
       const old = monitor.state?.network.public_ipv6;
       await monitor.sample();
       if (Date.now() - lastMetric > 30000) {
@@ -360,8 +428,16 @@ export async function buildApp(options: {
   }, 15000);
   async function ready() {
     let database = "healthy";
+    let schema = { applied: 0, latest: "none" };
     try {
-      await db.query("SELECT 1");
+      // One round trip: liveness plus the schema version, so a deployment can be
+      // verified from /health/ready instead of container logs.
+      const probe = (
+        await db.query(
+          "SELECT (SELECT count(*) FROM schema_migrations)::int AS applied, (SELECT max(version) FROM schema_migrations) AS latest",
+        )
+      ).rows[0];
+      schema = { applied: Number(probe?.applied ?? 0), latest: String(probe?.latest ?? "none") };
     } catch {
       database = "unhealthy";
     }
@@ -377,6 +453,8 @@ export async function buildApp(options: {
         ? "healthy"
         : "unhealthy",
       components,
+      schema,
+      integrations: integrations.ids(),
     };
   }
   async function systemStatus() {
@@ -418,7 +496,7 @@ export async function buildApp(options: {
     if (req.headers.origin && !validOrigin(req))
       return reply.code(403).send({ error: "origin_forbidden" });
   });
-  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/users", "/settings", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
+  for (const path of ["/", "/login", "/home", "/spaces", "/apps", "/apps/:id", "/tasks", "/tasks/:id", "/jarvis", "/system", "/agents", "/users", "/settings", "/integrations", "/workspace"]) app.get(path, async (_req, reply) => {
     try {
       return reply
         .type("text/html")
@@ -426,6 +504,27 @@ export async function buildApp(options: {
     } catch {
       return reply.code(503).send({ error: "web_not_built" });
     }
+  });
+  /**
+   * Client routes are rendered by the SPA, which falls back to the home page for
+   * anything it does not know. Without this, a mistyped or stale link rendered the
+   * server's raw JSON 404 instead of the application. API, internal and static
+   * prefixes keep their machine-readable 404 so a wrong endpoint never looks like
+   * a working page.
+   */
+  const shellPrefixes = ["/api/", "/internal/", "/assets/", "/app-icons/", "/artwork/", "/fonts-terminal/", "/media/", "/api/media/", "/hermes-dashboard"];
+  app.setNotFoundHandler(async (req, reply) => {
+    const html = req.method === "GET"
+      && (req.headers.accept ?? "").includes("text/html")
+      && !shellPrefixes.some((prefix) => req.url.startsWith(prefix));
+    if (html) {
+      try {
+        return reply.type("text/html").send(await readFile(resolve("apps/web/dist/index.html")));
+      } catch {
+        return reply.code(503).send({ error: "web_not_built" });
+      }
+    }
+    return reply.code(404).send({ message: `Route ${req.method}:${req.url.split("?")[0]} not found`, error: "Not Found", statusCode: 404 });
   });
   app.get<{ Params: { "*": string } }>("/assets/*", async (req, reply) => {
     const name = req.params["*"];
@@ -488,6 +587,9 @@ export async function buildApp(options: {
         .send(await readFile(resolve("apps/web/dist/app-icons", req.params.name)));
     } catch { return reply.code(404).send(); }
   });
+  // Brute-force protection for the only password-accepting endpoint.
+  const loginGuard = new LoginGuard();
+  const trustProxy = process.env.TRUST_PROXY === "1";
   const cookieValue = (req: any, name: string) => {
     const prefix = `${name}=`;
     return req.headers.cookie?.split(";").map((v: string) => v.trim()).find((v: string) => v.startsWith(prefix))?.slice(prefix.length);
@@ -660,13 +762,29 @@ export async function buildApp(options: {
     }
   });
   app.post("/api/v2/auth/login", async (req, reply) => {
+    const bodyUsername = (req.body as { username?: unknown } | null)?.username;
+    const username = typeof bodyUsername === "string" ? bodyUsername : "";
+    const address = clientAddress(req.headers as Record<string, unknown>, req.ip, trustProxy);
+    const identity = loginIdentity(username, address);
+    const retryAfterMs = loginGuard.retryAfter(identity, address);
+    if (retryAfterMs > 0) {
+      reply.header("Cache-Control", "no-store").header("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+      return reply.code(429).send({ error: "rate_limited", retry_after_ms: retryAfterMs });
+    }
     try {
       const device = await authenticate(db, req.headers.authorization);
-      let deviceId = device?.role === "device" ? device.id : undefined;
+      const deviceId = device?.role === "device" ? device.id : undefined;
       const result = await loginUser(db, req.body, deviceId);
+      loginGuard.recordSuccess(identity);
       reply.header("Cache-Control", "no-store").header("Set-Cookie", [`jarvis_access=${result.access_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=900${req.protocol === "https" ? "; Secure" : ""}`, `jarvis_refresh=${result.refresh_token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${req.protocol === "https" ? "; Secure" : ""}`]);
       return result;
-    } catch (e) { return reply.code(401).send({ error: e instanceof Error ? e.message : "invalid_credentials" }); }
+    } catch (e) {
+      const { status, body } = toErrorResponse(e);
+      // Only genuine credential failures consume the brute-force budget; a
+      // malformed body or a device conflict must not lock a real user out.
+      if (status === 401) loginGuard.recordFailure(identity, address);
+      return reply.code(status).send(body);
+    }
   });
   app.get("/api/v2/auth/oidc/status", async () => ({ configured: oidcConfigured() }));
   app.get("/api/v2/auth/oidc/start", async (req, reply) => {
@@ -804,44 +922,20 @@ export async function buildApp(options: {
       .parse(req.body);
     return m2.readForAgent(p.tool, p.args);
   });
+  /**
+   * The one and only throw -> HTTP mapping. Previously this ladder existed twice
+   * (here and in the encapsulated API plugin) and drifted; both now share it.
+   */
+  const sharedErrorHandler = (error: unknown, _req: unknown, reply: any) => {
+    const { status, body } = toErrorResponse(error);
+    if (status >= 500) app.log.error({ err: error }, "request_failed");
+    return reply.code(status).send(body);
+  };
   await app.register(async (api) => {
     // Routes in this encapsulated plugin need their own handler: the
     // websocket plugin captures the child error boundary before the root
     // handler is installed, otherwise ordinary HTTP RPC errors become 500s.
-    api.setErrorHandler((error, _req, reply) => {
-      if (error instanceof Error && /^(id_reused|invalid_parent|delegation_depth|invalid_run_state|invalid_activity_transition)/.test(error.message))
-        return reply.code(409).send({ error: error.message });
-      if (error instanceof Error && error.message === "not_found")
-        return reply.code(404).send({ error: error.message });
-      if (error instanceof Error && error.message === "approval_cannot_elevate_permissions")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "user_login_required")
-        return reply.code(401).send({ error: error.message });
-      if (error instanceof Error && error.message === "admin_required")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && /^(integration_credentials_key_)/.test(error.message))
-        return reply.code(503).send({ error: error.message });
-      if (error instanceof z.ZodError)
-        return reply.code(400).send({ error: "validation_error", issues: error.issues });
-      if (error instanceof Error && /^(custom_range_requires_from_to|invalid_time_range|invalid_usage|artifact_unsafe_source|artifact_network_forbidden|artifact_too_large)$/.test(error.message))
-        return reply.code(400).send({ error: error.message });
-      if (error instanceof Error && error.message === "agent_not_owned")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "approval_required")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "path_outside_allowed_root")
-        return reply.code(400).send({ error: error.message });
-      if (error instanceof Error && error.message === "node_not_found")
-        return reply.code(404).send({ error: error.message });
-      if (error instanceof Error && error.message === "node_capability_unavailable")
-        return reply.code(403).send({ error: error.message });
-      if (error instanceof Error && error.message === "node_bridge_unavailable")
-        return reply.code(503).send({ error: error.message });
-      if ((error as any).statusCode === 413)
-        return reply.code(413).send({ error: "payload_too_large" });
-      app.log.error({ err: error }, "request_failed");
-      return reply.code(500).send({ error: "request_failed" });
-    });
+    api.setErrorHandler(sharedErrorHandler);
     api.addHook("preValidation", async (req, reply) => {
       const cookieAuthenticated = Boolean(cookieValue(req, "jarvis_access")) && !req.headers.authorization;
       if (cookieAuthenticated && !["GET", "HEAD", "OPTIONS"].includes(req.method) && !validOrigin(req))
@@ -869,10 +963,32 @@ export async function buildApp(options: {
       if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
       try {
         const credential = await m2.integrationCredentials.readCredential(identity.id, req.params.id);
-        if (credential.provider === "home-assistant") await homeAssistantState({ token: credential.secret });
-        else if (credential.provider === "immich") await immichSearch({}, { token: credential.secret });
-        else return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
-        return { credential_id: credential.id, provider: credential.provider, connected: true };
+        // Connectivity is declared by the manifest, so a new integration gets a
+        // working "test credential" button without any server code.
+        const manifest = integrations.findByStoreProvider(credential.provider);
+        const probe = manifest?.healthcheck;
+        if (!manifest || !probe) {
+          return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
+        }
+        const baseEnv = manifest.app.launch_env
+          ?? (manifest.transport.type === "streamable-http" ? manifest.transport.endpoint_env : undefined);
+        const base = baseEnv ? process.env[baseEnv]?.trim().replace(/\/$/, "") : undefined;
+        if (!base) {
+          return { credential_id: credential.id, provider: credential.provider, connected: false, error: "service_unavailable" };
+        }
+        const scheme = probe.scheme.trim();
+        const response = await fetch(`${base}${probe.path}`, {
+          method: probe.method,
+          headers: { [probe.header]: scheme ? `${scheme} ${credential.secret}` : credential.secret },
+          signal: AbortSignal.timeout(10_000),
+        });
+        const connected = probe.ok_status.includes(response.status);
+        return {
+          credential_id: credential.id,
+          provider: credential.provider,
+          connected,
+          ...(connected ? {} : { error: response.status === 401 || response.status === 403 ? "invalid_credentials" : "service_unavailable" }),
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : "integration_unavailable";
         if (message === "not_found") return reply.code(404).send({ error: "not_found" });
@@ -1100,15 +1216,7 @@ export async function buildApp(options: {
                       "error",
                       topic,
                       {
-                        error:
-                          e instanceof z.ZodError
-                            ? "validation_error"
-                            : e instanceof Error &&
-                                /^(agent_|node_|approval_|unknown_topic|invalid_|id_reused|not_found|custom_|integration_|user_login_required)/.test(
-                                  e.message,
-                                )
-                              ? e.message
-                              : "request_failed",
+                        error: toErrorResponse(e).body.error,
                       },
                       id,
                     ),
@@ -1123,56 +1231,9 @@ export async function buildApp(options: {
       });
     });
   });
-  app.setErrorHandler((error, _req, reply) => {
-    if (
-      error instanceof Error &&
-      /^(id_reused|invalid_parent|delegation_depth|invalid_run_state|invalid_activity_transition)/.test(
-        error.message,
-      )
-    )
-      return reply.code(409).send({ error: error.message });
-    if (error instanceof Error && error.message === "not_found")
-      return reply.code(404).send({ error: error.message });
-    if (
-      error instanceof Error &&
-      error.message === "approval_cannot_elevate_permissions"
-    )
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "user_login_required")
-      return reply.code(401).send({ error: error.message });
-    if (error instanceof Error && error.message === "admin_required")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && /^(integration_credentials_key_)/.test(error.message))
-      return reply.code(503).send({ error: error.message });
-    if (error instanceof z.ZodError)
-      return reply
-        .code(400)
-        .send({ error: "validation_error", issues: error.issues });
-    if (
-      error instanceof Error &&
-      /^(custom_range_requires_from_to|invalid_time_range|invalid_usage|artifact_unsafe_source|artifact_network_forbidden|artifact_too_large)$/.test(
-        error.message,
-      )
-    )
-      return reply.code(400).send({ error: error.message });
-    if (error instanceof Error && error.message === "agent_not_owned")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "approval_required")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "path_outside_allowed_root")
-      return reply.code(400).send({ error: error.message });
-    if (error instanceof Error && error.message === "node_not_found")
-      return reply.code(404).send({ error: error.message });
-    if (error instanceof Error && error.message === "node_capability_unavailable")
-      return reply.code(403).send({ error: error.message });
-    if (error instanceof Error && error.message === "node_bridge_unavailable")
-      return reply.code(503).send({ error: error.message });
-    if ((error as any).statusCode === 413)
-      return reply.code(413).send({ error: "payload_too_large" });
-    app.log.error({ err: error }, "request_failed");
-    return reply.code(500).send({ error: "request_failed" });
-  });
+  app.setErrorHandler(sharedErrorHandler);
   app.addHook("onClose", async () => {
+    await housekeeping.release("server:housekeeping", schedulerOwner).catch(() => {});
     media.clear();
     clearInterval(timer);
     clearInterval(heartbeat);

@@ -7,7 +7,6 @@ import { activityGroupKey, canTransitionActivity, canTransitionTurn, summarizeAc
 import { oidcAuthorizationUrl, upsertOidcIdentity } from "../apps/server/src/oidc.js";
 import { readFileSync } from "node:fs";
 import { JarvisAssistantAdapter } from "../apps/web/src/assistant-ui-adapter.js";
-import { homeAssistantState, immichSearch } from "../apps/server/src/hermes-integrations.js";
 
 test("M3.2 context token carries actor, household, session and scopes", () => {
   const token = createHermesContextToken("secret", "device-1", "session-1", 600, { actor: "user-1", household: "household-1", run: "run-1", scopes: ["home.read"] });
@@ -56,17 +55,30 @@ test("M3.2 deployed Hermes provider exposes the kernel and transparent upstream 
   const serverManifest = readFileSync(new URL("../deploy/k8s/server.yaml", import.meta.url), "utf8");
   assert.match(serverManifest, /HERMES_MEDIA_ROOT/);
   assert.match(serverManifest, /subPath: media/);
-  for (const tool of ["mcp_tools_list", "mcp_tool_call", "schedule_create", "conversation_question_create"]) {
-    assert.match(manifest, new RegExp(`def ${tool}\\(`));
-  }
-  assert.match(jarvisSource, /def _homeassistant_cameras\(/);
+  const upstreamSource = readFileSync(new URL("../apps/hermes-mcp/upstream_provider.py", import.meta.url), "utf8");
+  for (const tool of ["mcp_tools_list", "mcp_tool_call"]) assert.match(upstreamSource, new RegExp(`def ${tool}\\(`));
+  for (const tool of ["schedule_create", "conversation_question_create"]) assert.match(jarvisSource, new RegExp(`def ${tool}\\(`));
+  // The ConfigMap entries delegate to the image instead of embedding a second
+  // copy of the provider, so the two can never drift apart.
+  assert.match(manifest, /jarvis_provider\.py: \|[\s\S]{0,400}run_path\("\/opt\/jarvis-source\/jarvis_provider\.py"/);
+  assert.match(manifest, /upstream_provider\.py: \|[\s\S]{0,400}run_path\("\/opt\/jarvis-source\/upstream_provider\.py"/);
+  assert.doesNotMatch(manifest, /def _mcp_call\(provider: str/);
+  assert.match(jarvisSource, /def _camera_entities\(/);
   assert.match(jarvisSource, /\/api\/camera_proxy\//);
-  assert.doesNotMatch(manifest, /def home_assistant_state\(/);
-  assert.doesNotMatch(manifest, /def immich_photo_search\(/);
-  assert.match(manifest, /mcp_authorize/);
-  assert.match(jarvisSource, /immich_assets_download_thumbnail/);
+  assert.doesNotMatch(jarvisSource + upstreamSource, /def home_assistant_state\(/);
+  assert.doesNotMatch(jarvisSource + upstreamSource, /def immich_photo_search\(/);
+  assert.match(jarvisSource, /"mcp_authorize"/);
+  // The provider is a transport gateway: transport and media come from the
+  // server's descriptor, so no provider is named in the bridge any more.
+  assert.match(jarvisSource, /def _upstream\(provider: str, config: dict\)/);
+  assert.match(jarvisSource, /mcp_transport_invalid/);
+  assert.doesNotMatch(jarvisSource, /provider == "immich"|provider == "homeassistant"/);
   assert.match(jarvisSource, /MEDIA_RESOURCE:/);
-  assert.match(jarvisSource, /thumbnail\?size=preview/);
+  // Media fetch is declared by the manifest, not by the provider.
+  const builtinManifests = readFileSync(new URL("../packages/integrations/src/builtins.ts", import.meta.url), "utf8");
+  assert.match(builtinManifests, /immich_assets_download_thumbnail/);
+  assert.match(builtinManifests, /thumbnail\?size=preview/);
+  assert.match(manifest, /MCP_EXTRAS: camera/);
 });
 
 test("M3.2 Authentik PoC is Docker-first and keeps secrets in environment", () => {
@@ -187,7 +199,7 @@ test("M3.2 identity, MCP authorization, Activity, Approval and Question integrat
       headers: { "x-jarvis-bridge-key": process.env.HERMES_BRIDGE_KEY },
       payload: { tool: "home_assistant_state", arguments: {}, context_token: createHermesContextToken(process.env.HERMES_BRIDGE_KEY!, deviceId, conversation.id, 600, { actor: first.user.id, household: first.household.id, scopes: ["system.read"] }) },
     });
-    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.statusCode, 403, denied.body);
   } finally {
     await ctx.app.close();
     if (oldBridgeKey === undefined) delete process.env.HERMES_BRIDGE_KEY;
@@ -195,33 +207,3 @@ test("M3.2 identity, MCP authorization, Activity, Approval and Question integrat
   }
 });
 
-test("M3.2 Hermes adapters exercise bounded HA and Immich provider contracts", async () => {
-  const oldEnv = { HOME_ASSISTANT_URL: process.env.HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN: process.env.HOME_ASSISTANT_TOKEN, IMMICH_URL: process.env.IMMICH_URL, IMMICH_API_KEY: process.env.IMMICH_API_KEY };
-  const oldFetch = globalThis.fetch;
-  process.env.HOME_ASSISTANT_URL = "http://ha.test";
-  process.env.HOME_ASSISTANT_TOKEN = "ha-service-secret";
-  process.env.IMMICH_URL = "http://immich.test";
-  process.env.IMMICH_API_KEY = "immich-service-secret";
-  globalThis.fetch = (async (input, init) => {
-    const url = String(input);
-    if (url.endsWith("/api/states")) {
-      assert.equal((init?.headers as Record<string, string>)?.Authorization, "Bearer ha-service-secret");
-      return Response.json([{ entity_id: "light.kitchen", state: "on", attributes: { friendly_name: "Kitchen" } }]);
-    }
-    if (url.endsWith("/api/search/metadata")) {
-      assert.equal((init?.headers as Record<string, string>)?.["x-api-key"], "immich-service-secret");
-      return Response.json({ assets: { items: [{ id: "00000000-0000-4000-8000-000000000001", type: "IMAGE", originalFileName: "front.jpg", fileCreatedAt: "2026-01-01T00:00:00.000Z", isFavorite: false, exifInfo: null }], nextPage: null, total: 1 } });
-    }
-    throw Error(`unexpected_provider_url:${url}`);
-  }) as typeof fetch;
-  try {
-    assert.equal((await homeAssistantState()).entities[0].entity_id, "light.kitchen");
-    assert.equal((await immichSearch({ page: 1, size: 1 })).photos[0].name, "front.jpg");
-  } finally {
-    globalThis.fetch = oldFetch;
-    for (const [key, value] of Object.entries(oldEnv)) {
-      if (value === undefined) delete process.env[key as keyof typeof process.env];
-      else process.env[key as keyof typeof process.env] = value;
-    }
-  }
-});
