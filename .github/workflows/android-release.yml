@@ -56,9 +56,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
-            mkdir -p "$HOME/.android"
-            printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > "$HOME/.android/debug.keystore"
-            chmod 600 "$HOME/.android/debug.keystore"
+            KEYSTORE_PATH="$RUNNER_TEMP/jarvis-debug.keystore"
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE" | base64 -d > "$KEYSTORE_PATH"
+            chmod 600 "$KEYSTORE_PATH"
+            keytool -list -keystore "$KEYSTORE_PATH" -storepass android -alias androiddebugkey >/dev/null
+            echo "JARVIS_DEBUG_KEYSTORE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
             echo "Using the repository's stable debug keystore."
           else
             echo "::warning::ANDROID_DEBUG_KEYSTORE is not configured; the APK will use a fresh debug key and may not upgrade an existing install."
@@ -74,7 +76,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           APK="apps/android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
-          if [ -n "${ANDROID_DEBUG_KEYSTORE:-}" ]; then
+          if [ -n "${JARVIS_DEBUG_KEYSTORE:-}" ]; then
             CERT="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK")"
             echo "$CERT"
             # SHA-256 of the v0.4.0/v0.4.1 debug signing certificate.

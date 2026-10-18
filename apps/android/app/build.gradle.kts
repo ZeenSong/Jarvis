@@ -5,12 +5,36 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
 }
+// GitHub Actions restores the repository's stable debug keystore and points
+// this variable at it. Local builds leave it unset and use the normal
+// ~/.android/debug.keystore, so developer workflows are unchanged.
+val stableDebugKeystore = System.getenv("JARVIS_DEBUG_KEYSTORE")
+    ?.let { file(it) }
+    ?.takeIf { it.isFile }
+
 android {
     namespace = "cloud.jarvis.app"
     compileSdk = 35
     defaultConfig { applicationId = "cloud.jarvis.app"; minSdk = 26; targetSdk = 35; versionCode = 6; versionName = "0.4.1"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     sourceSets.getByName("androidTest").assets.srcDir("../../../packages/ui-protocol/examples")
     buildFeatures { compose = true }
+    signingConfigs {
+        if (stableDebugKeystore != null) {
+            create("stableDebug") {
+                storeFile = stableDebugKeystore
+                storePassword = System.getenv("JARVIS_DEBUG_KEYSTORE_PASSWORD") ?: "android"
+                keyAlias = System.getenv("JARVIS_DEBUG_KEY_ALIAS") ?: "androiddebugkey"
+                keyPassword = System.getenv("JARVIS_DEBUG_KEY_PASSWORD") ?: "android"
+            }
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            if (stableDebugKeystore != null) {
+                signingConfig = signingConfigs.getByName("stableDebug")
+            }
+        }
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
