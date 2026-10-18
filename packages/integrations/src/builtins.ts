@@ -150,11 +150,14 @@ export function isDenied(manifest: CompiledManifest, toolName: string): boolean 
 /** Capability-catalog entries contributed by a manifest. */
 export function manifestCapabilities(manifest: CompiledManifest): Capability[] {
   const entries: Capability[] = [];
+  // REST integrations still contribute the same read/write grants; only the
+  // label differs, so a member's household policy can cover both kinds.
+  const suffix = manifest.kind === "http" ? "api" : "mcp";
   for (const level of ["read", "write"] as const) {
     const patterns = level === "read" ? manifest.tools.read : manifest.tools.write;
     if (!patterns.length) continue;
     entries.push({
-      id: `${manifest.id}.mcp.${level}`,
+      id: `${manifest.id}.${suffix}.${level}`,
       kind: "mcp",
       risk: level,
       approval_required: level === "write",

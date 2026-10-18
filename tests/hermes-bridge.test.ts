@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deriveHermesProfileKey, hermesAgentConfig, HermesClient } from "../packages/hermes-bridge/src/index.js";
+import { createHermesContextToken, deriveHermesProfileKey, hermesAgentConfig, HermesClient, verifyHermesContextToken } from "../packages/hermes-bridge/src/index.js";
 import { HermesRuntime } from "../packages/hermes-runtime/src/index.js";
 
 test("Hermes bridge forwards authenticated session and parses SSE deltas", async () => {
@@ -137,4 +137,19 @@ test("Hermes durable tasks retain the final result and reject empty success", as
     else assert.equal(final.payload.error, "hermes_empty_response");
     await runtime.dispose(run.id);
   }
+});
+
+
+test("an expired context token is rejected by the bridge but accepted by explicit refresh", () => {
+  const key = "bridge-secret";
+  const expired = createHermesContextToken(key, "device-1", "session-1", -10);
+  assert.equal(verifyHermesContextToken(key, expired), undefined);
+  const context = verifyHermesContextToken(key, expired, { ignoreExpiry: true });
+  assert.ok(context);
+  assert.equal(context!.owner, "device-1");
+  assert.equal(context!.actor, "device-1");
+  // A bad signature is never revived, and neither is a malformed token.
+  assert.equal(verifyHermesContextToken("other-key", expired, { ignoreExpiry: true }), undefined);
+  assert.equal(verifyHermesContextToken(key, `${expired}tampered`, { ignoreExpiry: true }), undefined);
+  assert.equal(verifyHermesContextToken(key, "not-a-token", { ignoreExpiry: true }), undefined);
 });

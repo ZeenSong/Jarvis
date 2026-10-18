@@ -6,6 +6,7 @@ import { sql as repairRestartNoise } from "./0003-repair-restart-noise.js";
 import { sql as closeStaleEvents } from "./0004-close-stale-events.js";
 import { sql as leases } from "./0005-leases.js";
 import { sql as scheduleBackoff } from "./0006-schedule-backoff.js";
+import { sql as appCatalog } from "./0007-app-catalog.js";
 
 /**
  * Versioned schema migrations.
@@ -36,6 +37,7 @@ export const migrations: readonly Migration[] = [
   { version: "0004", name: "close-stale-events", sql: closeStaleEvents },
   { version: "0005", name: "leases", sql: leases },
   { version: "0006", name: "schedule-backoff", sql: scheduleBackoff },
+  { version: "0007", name: "app-catalog", sql: appCatalog },
 ];
 
 export type MigrationLogger = {

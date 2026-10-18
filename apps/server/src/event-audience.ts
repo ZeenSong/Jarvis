@@ -4,6 +4,7 @@ import type { Database } from './persistence.js';
 export async function eventAudience(db: Database, topic: string, value: unknown): Promise<{ device?: string; user?: string; shared?: boolean }> {
   const p = value as any;
   if (topic === 'system.status.changed' || topic === 'network.public_ipv6.changed' ||
+      topic === 'app.catalog.updated' || topic === 'app.discovered' ||
       (topic === 'resource.updated' && /^system\/(status|metrics|network)$/.test(p?.resource))) return { shared: true };
   if (topic === 'conversation.deleted' && p?.owner_device_id) return { device: p.owner_device_id, user: p.owner_user_id };
   let table: string | undefined, id: string | undefined, device = 'owner_device_id', user = 'owner_user_id';

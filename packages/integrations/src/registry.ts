@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { builtinManifests, classifyTool, isDenied, manifestCapabilities } from "./builtins.js";
-import { compileManifest, type CompiledManifest } from "./manifest.js";
+import { compileManifest, type CompiledManifest, type HttpAuth, type HttpOperation } from "./manifest.js";
 
 export type ResolvedCredential = {
   provider: string;
@@ -15,12 +15,22 @@ export type ConnectionDescriptor =
       type: "streamable-http";
       endpoint: string;
       headers: Record<string, string>;
+      /** Per-connection opt-out of certificate verification (self-signed apps). */
+      insecure_tls?: boolean;
     }
   | {
       type: "stdio";
       command: string;
       args: string[];
       env: Record<string, string>;
+    }
+  | {
+      type: "http";
+      base_url: string;
+      auth: HttpAuth;
+      operations: HttpOperation[];
+      max_response_bytes: number;
+      timeout_ms: number;
     };
 
 /**
@@ -53,12 +63,17 @@ export type AppDescriptor = {
 
 export class IntegrationRegistry {
   private readonly byId = new Map<string, CompiledManifest>();
+  private readonly builtinIds = new Set<string>();
 
   constructor(manifests: readonly unknown[]) {
     for (const input of manifests) {
       const manifest = compileManifest(input);
       if (this.byId.has(manifest.id)) throw Error(`integration_duplicate_id:${manifest.id}`);
       this.byId.set(manifest.id, manifest);
+    }
+    for (const input of builtinManifests) {
+      const id = (input as { id?: unknown }).id;
+      if (typeof id === "string") this.builtinIds.add(id);
     }
   }
 
@@ -91,6 +106,30 @@ export class IntegrationRegistry {
 
   list(): CompiledManifest[] {
     return [...this.byId.values()].filter((manifest) => manifest.enabled);
+  }
+
+  /**
+   * Add or replace one manifest in the live registry.
+   *
+   * The server writes catalog changes to the database and calls this so a newly
+   * configured app is callable immediately; no process restart and no Hermes
+   * MCP-server entry are involved.
+   */
+  upsert(input: unknown): CompiledManifest {
+    const manifest = compileManifest(input);
+    if (this.builtinIds.has(manifest.id)) throw Error("app_builtin_immutable");
+    this.byId.set(manifest.id, manifest);
+    return manifest;
+  }
+
+  /** Remove a configured manifest. Built-ins cannot be removed. */
+  remove(id: string): boolean {
+    if (this.builtinIds.has(id)) return false;
+    return this.byId.delete(id);
+  }
+
+  isBuiltin(id: string): boolean {
+    return this.builtinIds.has(id);
   }
 
   all(): CompiledManifest[] {
@@ -144,6 +183,13 @@ export class IntegrationRegistry {
   /** Access level a tool call requires, and whether it is refused outright. */
   authorizeTool(provider: string, toolName: string): { level: "read" | "write"; denied: boolean } {
     const manifest = this.require(provider);
+    if (manifest.transport.type === "http") {
+      const operation = manifest.transport.operations.find((item) => item.name === toolName);
+      // An operation that the manifest does not declare does not exist. Do not
+      // let the model invent one and have the executor guess a path.
+      if (!operation) return { level: "write", denied: true };
+      return { level: operation.read_only ? "read" : "write", denied: isDenied(manifest, toolName) };
+    }
     return { level: classifyTool(manifest, toolName), denied: isDenied(manifest, toolName) };
   }
 
@@ -156,9 +202,26 @@ export class IntegrationRegistry {
   }
 
   /**
-   * Turn a manifest plus a secret into the exact connection the MCP provider must
-   * open. This is the only place that knows how a manifest maps onto a transport.
+   * The user-facing base URL: an app configured from CasaOS carries the URL it
+   * was detected at, while the built-ins keep reading their environment.
    */
+  static baseUrl(manifest: CompiledManifest, env: NodeJS.ProcessEnv = process.env): string | undefined {
+    // A literal MCP endpoint is a full URL; its origin is the app's web entry.
+    const mcpEndpoint = manifest.transport.type === "streamable-http" ? manifest.transport.endpoint : undefined;
+    const literal = manifest.app.base_url
+      ?? (manifest.transport.type === "http" ? manifest.transport.base_url : undefined)
+      ?? (mcpEndpoint ? new URL(mcpEndpoint).origin : undefined);
+    const value = literal ?? (manifest.app.launch_env ? env[manifest.app.launch_env]?.trim() : undefined);
+    if (!value) return undefined;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+      return `${url.origin}${url.pathname}`.replace(/\/$/, "");
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Resolve the optional media fetch. Returns `undefined` when the manifest has
    * none — or when its base URL is not configured, because the result is only an
@@ -166,16 +229,13 @@ export class IntegrationRegistry {
    */
   static media(manifest: CompiledManifest, secret: string, env: NodeJS.ProcessEnv = process.env): MediaDescriptor | undefined {
     if (!manifest.media) return undefined;
-    const baseEnv = manifest.media.base_env
-      ?? manifest.app.launch_env
-      ?? (manifest.transport.type === "streamable-http" ? manifest.transport.endpoint_env : undefined);
-    const base = baseEnv ? env[baseEnv]?.trim() : undefined;
-    if (!base || !/^https?:\/\//.test(base)) return undefined;
+    const base = IntegrationRegistry.baseUrl(manifest, env);
+    if (!base) return undefined;
     const scheme = manifest.media.scheme.trim();
     return {
       tool: manifest.media.tool,
       id_argument: manifest.media.id_argument,
-      url_template: `${base.replace(/\/$/, "")}${manifest.media.path}`,
+      url_template: `${base}${manifest.media.path}`,
       headers: { [manifest.media.header]: scheme ? `${scheme} ${secret}` : secret },
       content_types: [...manifest.media.content_types],
       max_bytes: manifest.media.max_bytes,
@@ -183,18 +243,41 @@ export class IntegrationRegistry {
     };
   }
 
+  /** Descriptor for REST integrations; the secret is supplied separately. */
+  static httpConnection(manifest: CompiledManifest, env: NodeJS.ProcessEnv = process.env): ConnectionDescriptor {
+    if (manifest.transport.type !== "http") throw Error(`${manifest.id}_not_http`);
+    const base = manifest.transport.base_url
+      ?? (manifest.transport.base_env ? env[manifest.transport.base_env]?.trim() : undefined);
+    if (!base || !/^https?:\/\//.test(base)) throw Error(`${manifest.id}_not_configured`);
+    return {
+      type: "http",
+      base_url: base.replace(/\/$/, ""),
+      auth: manifest.transport.auth,
+      operations: [...manifest.transport.operations],
+      max_response_bytes: manifest.transport.max_response_bytes,
+      timeout_ms: manifest.transport.timeout_ms,
+    };
+  }
+
   static connection(manifest: CompiledManifest, secret: string, env: NodeJS.ProcessEnv = process.env): ConnectionDescriptor {
+    if (manifest.transport.type === "http") return IntegrationRegistry.httpConnection(manifest, env);
     if (manifest.transport.type === "streamable-http") {
-      const base = env[manifest.transport.endpoint_env]?.trim();
+      const literal = manifest.transport.endpoint;
+      const base = literal ?? (manifest.transport.endpoint_env ? env[manifest.transport.endpoint_env]?.trim() : undefined);
       if (!base || !/^https?:\/\//.test(base)) throw Error(`${manifest.id}_not_configured`);
-      const endpoint = `${base.replace(/\/$/, "")}${manifest.transport.endpoint_path ?? ""}`;
+      // A literal endpoint is already the full MCP URL; an environment value is
+      // a base URL and still needs the declared path appended. Keep a literal
+      // endpoint byte-for-byte: some servers (Obsidian) route `/mcp/` and `/mcp`
+      // differently, and stripping the slash silently breaks the handshake.
+      const endpoint = literal ? base : `${base.replace(/\/$/, "")}${manifest.transport.endpoint_path ?? ""}`;
       const scheme = manifest.transport.credential_scheme.trim();
       return {
         type: "streamable-http",
-        endpoint: endpoint.replace(/\/$/, ""),
+        endpoint,
         headers: {
           [manifest.transport.credential_header]: scheme ? `${scheme} ${secret}` : secret,
         },
+        ...(manifest.transport.allow_insecure_tls ? { insecure_tls: true } : {}),
       };
     }
     const childEnv: Record<string, string> = {};
@@ -215,15 +298,14 @@ export class IntegrationRegistry {
   }
 
   static appDescriptor(manifest: CompiledManifest, env: NodeJS.ProcessEnv = process.env): AppDescriptor | undefined {
-    if (!manifest.app.icon && !manifest.app.launch_env) return undefined;
-    const launch = manifest.app.launch_env ? env[manifest.app.launch_env]?.trim() : undefined;
-    const valid = launch && /^https?:\/\//.test(launch) ? launch.replace(/\/$/, "") : undefined;
+    if (!manifest.app.icon && !manifest.app.launch_env && !manifest.app.base_url) return undefined;
+    const launch = IntegrationRegistry.baseUrl(manifest, env);
     return {
       id: manifest.id,
       name: manifest.name,
       description: manifest.description,
-      status: valid ? "ready" : "unconfigured",
-      launch: valid ? { web: valid } : {},
+      status: launch ? "ready" : "unconfigured",
+      launch: launch ? { web: launch } : {},
       deep_links: { ...manifest.app.deep_links },
       capabilities: [...manifest.app.capabilities],
       resources: [...manifest.app.resources],

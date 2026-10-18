@@ -53,6 +53,7 @@ import { ownerUserId } from "./ownership.js";
 import { capabilitySchema, mergeCapabilities, parseCapabilityCatalog, type Capability } from "../../../packages/capability-registry/src/index.js";
 import { IntegrationCredentialStore } from "./integration-credentials.js";
 import { householdIdForOwner } from "./households.js";
+import { AppCatalog } from "./app-catalog.js";
 
 /** Keep historical charts bounded; live status may contain verbose network data. */
 function compactMetricData(value: unknown) {
@@ -74,6 +75,11 @@ function compactMetricData(value: unknown) {
 }
 export const m2Topics = [
   "application.list",
+  "app.catalog",
+  "app.setup_guide",
+  "app.configure",
+  "app.test",
+  "app.remove",
   "integration.credential.list",
   "integration.credential.put",
   "integration.credential.revoke",
@@ -165,6 +171,8 @@ export const m2Events = [
   "approval.created",
   "approval.resolved",
   "notification.created",
+  "app.catalog.updated",
+  "app.discovered",
   "schedule.created",
 ];
 const capabilityCatalog: Capability[] = [
@@ -187,8 +195,10 @@ export class M2 {
   readonly workspaces: WorkspaceStore;
   readonly control: ControlPlane;
   readonly integrationCredentials: IntegrationCredentialStore;
+  readonly appCatalog: AppCatalog;
   private timer?: NodeJS.Timeout;
   private busy = false;
+  private appSyncAt = 0;
   private capabilities() {
     // MCP provider entries are derived from manifests, not hand-maintained here.
     return mergeCapabilities([...capabilityCatalog, ...this.integrations.capabilities()], parseCapabilityCatalog());
@@ -208,6 +218,12 @@ export class M2 {
   ) {
     this.control = new ControlPlane(db, push);
     this.integrationCredentials = new IntegrationCredentialStore(db);
+    this.appCatalog = new AppCatalog({
+      db,
+      registry: integrations,
+      credentials: this.integrationCredentials,
+      emit: push,
+    });
     this.manager = new AgentManager(db, registry, push, prices, async (run, event) => {
       await this.control.createApproval(run.requested_by, { run_id: run.id, capability: String(event.payload.capability ?? "unknown"), input: (event.payload.input as Record<string, unknown>) ?? {} });
     }, async (runId, status) => {
@@ -218,6 +234,8 @@ export class M2 {
       this.manager,
       push,
       (question) => this.control.createQuestionNotification(question),
+      undefined,
+      (owner) => this.appCatalog.promptSummary(owner),
     );
     this.workspaces = new WorkspaceStore(db, push);
   }
@@ -231,6 +249,12 @@ export class M2 {
         await this.manager.schedule();
         await this.conversations.schedule();
         await this.runDueSchedules();
+        // Discovery is deliberately slower than execution: CasaOS installs are
+        // rare, and one notification per new app is the goal.
+        if (Date.now() - this.appSyncAt > 300_000) {
+          this.appSyncAt = Date.now();
+          await this.appCatalog.sync().catch(() => undefined);
+        }
       })()
         .catch(() => {})
         .finally(() => (this.busy = false));
@@ -463,12 +487,26 @@ export class M2 {
     this.push("view.show", value);
     return value;
   }
-  async handle(topic: string, p: any, device: string): Promise<unknown> {
+  async handle(topic: string, p: any, device: string, actor?: string): Promise<unknown> {
     switch (topic) {
       case "application.list": return installedApplications();
+      case "app.catalog": return this.appCatalog.list(device);
+      case "app.setup_guide": return this.appCatalog.guide(String(p?.app_id ?? ""));
+      case "app.configure": return this.appCatalog.configure(p, actor ?? device);
+      case "app.test": return this.appCatalog.test(String(p?.app_id ?? ""), device);
+      case "app.remove": return this.appCatalog.remove(String(p?.app_id ?? ""), actor ?? device);
       case "integration.credential.list": return this.integrationCredentials.list(device);
-      case "integration.credential.put": return this.integrationCredentials.put(device, p);
-      case "integration.credential.revoke": return this.integrationCredentials.revoke(device, z.uuid().parse(p.credential_id));
+      case "integration.credential.put": {
+        const credential = await this.integrationCredentials.put(device, p);
+        // Other open clients should re-read readiness (credential_configured).
+        this.push("app.catalog.updated", { credential: true });
+        return credential;
+      }
+      case "integration.credential.revoke": {
+        const credential = await this.integrationCredentials.revoke(device, z.uuid().parse(p.credential_id));
+        this.push("app.catalog.updated", { credential: true });
+        return credential;
+      }
       case "capability.list":
       case "mcp.catalog.list":
         return { version: 1, capabilities: this.capabilities().map((entry) => ({ ...entry })) };
@@ -525,6 +563,9 @@ export class M2 {
               resources: descriptor.resources,
               read_scope: manifest.readScope,
               write_scope: manifest.writeScope,
+              // Credentials are stored under the manifest's store provider, which
+              // may differ from the app id (Home Assistant uses "home-assistant").
+              credential_provider: IntegrationRegistry.storeProvider(manifest),
               risk: manifest.risk,
             }];
           }),

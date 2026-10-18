@@ -9,6 +9,8 @@
 - [API / WebSocket 协议](reference/protocol.md)：客户端与服务端通信约定
 - [部署指南](guides/deployment.md)：当前 Docker / CasaOS 路径与 Kubernetes 上线检查
 - [家庭服务接入](guides/family-integrations.md)：Home Assistant、Immich 与摄像头服务的安全配置原则
+- [应用连接与一键配置](guides/app-connections.md)：CasaOS 应用发现、连接、凭据、MCP/HTTP 调用与扩展方式
+- [Obsidian 长期记忆与思维宫殿](guides/obsidian-memory.md)：MCP 连接、记忆索引注入、读写协议与 vault 约定
 - [当前 M3.3 状态](milestones/m3/m3.3-progress.md)：已实现能力、验证证据和未完成项
 
 ## 目录说明

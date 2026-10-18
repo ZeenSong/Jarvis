@@ -27,14 +27,16 @@ import {
   type Prices,
 } from "../../../packages/llm-usage/src/index.js";
 import { ownerUserId } from "./ownership.js";
-import { contextAllows, verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
+import { contextAllows, createHermesContextToken, verifyHermesContextToken } from "../../../packages/hermes-bridge/src/index.js";
 import { householdIdForOwner } from "./households.js";
 import { casaosLogin, casaosAccount } from "./applications.js";
+import { casaosAddPorts, casaosAppDetail, casaosLogs, casaosRestart, requireCasaOSAdmin } from "./casaos-admin.js";
 import { completeOidcLogin, oidcAuthorizationUrl, oidcConfigured } from "./oidc.js";
 import { canUseMcpTool, setUserCapability, userCapabilities } from "./mcp-access.js";
 import { readPackageVersion, toErrorResponse } from "../../../packages/core/src/index.js";
 import { registerSecurityHeaders } from "./http/security.js";
 import { IntegrationRegistry } from "../../../packages/integrations/src/index.js";
+import { loadConfiguredManifests, resolveProviderSecret as resolveProviderSecretFor } from "./provider-secrets.js";
 import { LeaseStore } from "../../../packages/leases/src/index.js";
 import { LoginGuard, clientAddress, loginIdentity } from "./security/login-guard.js";
 const SERVER_VERSION = readPackageVersion(import.meta.url);
@@ -134,8 +136,11 @@ export async function buildApp(options: {
       options.offlineSeconds,
     ),
     usage = new UsageCollector(db, options.prices ?? {}, push);
+  const configuredManifests = await loadConfiguredManifests(db);
+  if (configuredManifests.invalid.length) app.log.warn({ invalid: configuredManifests.invalid }, "integration_manifest_invalid");
   const integrations = await IntegrationRegistry.create({
     dir: process.env.INTEGRATIONS_DIR?.trim() || undefined,
+    extra: configuredManifests.manifests,
   });
   app.log.info({ integrations: integrations.ids() }, "integrations_loaded");
   const m2 = new M2(
@@ -156,17 +161,8 @@ export async function buildApp(options: {
    * over the process environment so a member can connect their own account
    * without editing deployment files.
    */
-  const resolveProviderSecret = async (manifest: import("../../../packages/integrations/src/index.js").CompiledManifest, owner: string) => {
-    if (process.env.INTEGRATION_CREDENTIAL_KEY) {
-      const stored = await m2.integrationCredentials
-        .readProviderSecret(owner, IntegrationRegistry.storeProvider(manifest))
-        .catch(() => undefined);
-      if (stored) return { secret: stored, source: "store" as const };
-    }
-    const envName = IntegrationRegistry.credentialEnv(manifest);
-    const value = envName ? process.env[envName]?.trim() : undefined;
-    return value ? { secret: value, source: "env" as const } : undefined;
-  };
+  const resolveProviderSecret = (manifest: import("../../../packages/integrations/src/index.js").CompiledManifest, owner: string) =>
+    resolveProviderSecretFor(manifest, owner, m2.integrationCredentials);
   const hermesBridgeKey = process.env.HERMES_BRIDGE_KEY?.trim() ?? "";
   const hermesCapabilityInput = z.object({
     tool: z.string().min(1).max(100),
@@ -187,6 +183,18 @@ export async function buildApp(options: {
       const args = input.arguments;
       const requestedProvider = input.tool === "mcp_authorize" && typeof input.arguments.provider === "string"
         ? input.arguments.provider : undefined;
+      // `app_*` tools carry the provider id instead of going through mcp_authorize.
+      const appProvider = (input.tool === "app_tools_list" || input.tool === "app_tool_call") && typeof args.provider === "string"
+        ? args.provider : undefined;
+      const appManifest = appProvider
+        ? (integrations.get(appProvider) ?? integrations.findByStoreProvider(appProvider))
+        : undefined;
+      if (appProvider && !appManifest) throw Error("app_not_configured");
+      const appToolName = appManifest && typeof args.tool_name === "string" ? args.tool_name : "";
+      const appClassification = appManifest && input.tool === "app_tool_call" && appToolName
+        ? m2.appCatalog.classifyTool(appManifest.id, appToolName)
+        : undefined;
+      if (appClassification?.denied) return reply.code(403).send({ error: "mcp_capability_forbidden" });
       const mcpManifest = requestedProvider ? integrations.get(requestedProvider) : undefined;
       if (requestedProvider && !mcpManifest) throw Error("mcp_provider_unknown");
       const mcpToolName = mcpManifest && typeof args.tool_name === "string" ? args.tool_name : "";
@@ -199,8 +207,13 @@ export async function buildApp(options: {
       if (classification?.denied) return reply.code(403).send({ error: "mcp_capability_forbidden" });
       const effectiveReadOnly = mcpListing
         || (classification ? classification.level === "read" : input.arguments.read_only === true);
-      const requiredScope = mcpManifest
+      const requiredScope = appManifest
+        ? (input.tool === "app_tools_list" || appClassification?.level === "read" ? appManifest.readScope : appManifest.writeScope)
+        : mcpManifest
         ? (mcpListing ? mcpManifest.readScope : (effectiveReadOnly ? mcpManifest.readScope : mcpManifest.writeScope))
+        : input.tool === "app_list" || input.tool === "app_setup_guide" || input.tool === "app_test"
+          || input.tool === "casaos_app_detail" || input.tool === "casaos_app_logs" ? "system.read"
+        : input.tool === "casaos_app_add_ports" || input.tool === "casaos_app_restart" ? "system.write"
         : input.tool === "task_create" || input.tool === "schedule_create" || input.tool === "conversation_question_create" ? "conversation.write"
         : input.tool === "ui_view_show" ? "conversation.write"
           : input.tool.startsWith("system_") || input.tool === "agent_list" || input.tool === "agent_run_status" ? "system.read"
@@ -228,8 +241,74 @@ export async function buildApp(options: {
         tool_call_id: toolCallId,
         capability: input.tool,
       });
+      if (appManifest) {
+        if (!contextUser || !contextHousehold) throw Error("user_login_required");
+        const readOnly = input.tool === "app_tools_list" || appClassification?.level === "read";
+        if (!(await canUseMcpTool(db, contextUser, contextHousehold, appManifest.id, readOnly, integrations.defaultMemberCapabilities())))
+          throw Error("mcp_capability_forbidden");
+      }
       let result: unknown;
       switch (input.tool) {
+        case "app_list":
+          result = await m2.appCatalog.list(context.owner);
+          break;
+        case "app_setup_guide": {
+          const p = z.object({ app_id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/) }).strict().parse(args);
+          result = await m2.appCatalog.guide(p.app_id);
+          break;
+        }
+        case "app_configure":
+          // The catalog enforces the admin role against the signed actor.
+          result = await m2.appCatalog.configure(args, contextUser ?? context.actor);
+          break;
+        case "app_test": {
+          const p = z.object({ app_id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/) }).strict().parse(args);
+          result = await m2.appCatalog.test(p.app_id, context.owner);
+          break;
+        }
+        case "app_remove": {
+          const p = z.object({ app_id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/) }).strict().parse(args);
+          result = await m2.appCatalog.remove(p.app_id, contextUser ?? context.actor);
+          break;
+        }
+        case "casaos_app_detail": {
+          await requireCasaOSAdmin(db, contextUser);
+          const p = z.object({ app_id: z.string().trim().min(1).max(200) }).strict().parse(args);
+          result = await casaosAppDetail(p.app_id);
+          break;
+        }
+        case "casaos_app_add_ports": {
+          await requireCasaOSAdmin(db, contextUser);
+          result = await casaosAddPorts(args);
+          break;
+        }
+        case "casaos_app_restart": {
+          await requireCasaOSAdmin(db, contextUser);
+          const p = z.object({ app_id: z.string().trim().min(1).max(200) }).strict().parse(args);
+          result = await casaosRestart(p.app_id);
+          break;
+        }
+        case "casaos_app_logs": {
+          await requireCasaOSAdmin(db, contextUser);
+          const p = z.object({
+            app_id: z.string().trim().min(1).max(200),
+            lines: z.number().int().min(1).max(200).optional(),
+          }).strict().parse(args);
+          result = await casaosLogs(p.app_id, p.lines ?? 100);
+          break;
+        }
+        case "app_tools_list": {
+          if (!appManifest) throw Error("app_not_configured");
+          result = await m2.appCatalog.listTools(appManifest.id, context.owner);
+          break;
+        }
+        case "app_tool_call": {
+          if (!appManifest) throw Error("app_not_configured");
+          if (!appToolName) throw Error("app_tool_unknown");
+          const callArgs = z.record(z.string(), z.unknown()).default({}).parse(args.arguments ?? {});
+          result = await m2.appCatalog.callTool(appManifest.id, appToolName, callArgs, context.owner);
+          break;
+        }
         case "mcp_authorize": {
           if (!mcpManifest || typeof args.tool_name !== "string" || !args.tool_name) throw Error("mcp_tool_invalid");
           if (!contextUser || !contextHousehold) throw Error("user_login_required");
@@ -330,7 +409,13 @@ export async function buildApp(options: {
         tool_call_id: toolCallId,
         capability: input.tool,
       });
-      const activityResult = input.tool === "mcp_authorize" ? { provider: args.provider, tool_name: args.tool_name, authorized: true } : result;
+      const activityResult = input.tool === "mcp_authorize"
+        ? { provider: args.provider, tool_name: args.tool_name, authorized: true }
+        // Tool listings and API payloads can be large; the transcript only needs
+        // enough to explain what happened, not a second copy of the data.
+        : JSON.stringify(result).length > 32_000
+          ? { summary: "result_too_large_for_transcript", bytes: JSON.stringify(result).length }
+          : result;
       if (turnId && contextOwner) await m2.conversations.recordActivity(contextOwner, turnId, "completed", { tool_call_id: toolCallId, capability: input.tool, result: activityResult });
       return result;
     } catch (error) {
@@ -343,6 +428,41 @@ export async function buildApp(options: {
       const mapped = toErrorResponse(error);
       return reply.code(mapped.status).send(mapped.body);
     }
+  });
+  /**
+   * Exchange an expired, still signed context token for a fresh one.
+   *
+   * The MCP provider calls this when Hermes hands the model a token from an
+   * older turn. The model is not trusted to notice expiry, and a long
+   * conversation must not fail just because the 10-minute token aged out. The
+   * bridge key is the real boundary; an attacker holding only a leaked token
+   * cannot call this endpoint. The conversation must still exist and belong to
+   * the signed owner, so a deleted conversation's token cannot be revived.
+   */
+  app.post("/internal/hermes/context/refresh", async (req, reply) => {
+    if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey)
+      return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
+    const input = z.object({ context_token: z.string().min(20).max(2000) }).strict().safeParse(req.body);
+    if (!input.success) return reply.code(400).send({ error: "context_token_invalid" });
+    const context = verifyHermesContextToken(hermesBridgeKey, input.data.context_token, { ignoreExpiry: true });
+    if (!context) return reply.code(401).send({ error: "hermes_context_invalid" });
+    const session = z.uuid().safeParse(context.session);
+    if (!session.success) return reply.code(401).send({ error: "hermes_context_invalid" });
+    const actorIsUser = z.uuid().safeParse(context.actor).success;
+    const owned = (await db.query(
+      actorIsUser
+        ? "SELECT 1 FROM conversations WHERE id=$1 AND (owner_user_id=$2 OR owner_device_id=$3)"
+        : "SELECT 1 FROM conversations WHERE id=$1 AND owner_device_id=$2",
+      actorIsUser ? [session.data, context.actor, context.owner] : [session.data, context.owner],
+    ).catch(() => ({ rowCount: 0 }))).rowCount;
+    if (!owned) return reply.code(401).send({ error: "hermes_context_invalid" });
+    const contextToken = createHermesContextToken(hermesBridgeKey, context.owner, context.session, 3600, {
+      actor: context.actor,
+      household: context.household,
+      ...(context.run ? { run: context.run } : {}),
+      ...(context.scopes ? { scopes: context.scopes } : {}),
+    });
+    return { context_token: contextToken, expires_in: 3600 };
   });
   app.post<{ Body: { context_token?: string; content_type?: string; source?: string; data?: string } }>("/internal/hermes/media", { bodyLimit: 3 * 1024 * 1024 }, async (req, reply) => {
     if (!hermesBridgeKey || req.headers["x-jarvis-bridge-key"] !== hermesBridgeKey) return reply.code(401).send({ error: "hermes_bridge_unauthorized" });
@@ -962,33 +1082,10 @@ export async function buildApp(options: {
       const identity = (req as any).identity;
       if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
       try {
-        const credential = await m2.integrationCredentials.readCredential(identity.id, req.params.id);
-        // Connectivity is declared by the manifest, so a new integration gets a
-        // working "test credential" button without any server code.
-        const manifest = integrations.findByStoreProvider(credential.provider);
-        const probe = manifest?.healthcheck;
-        if (!manifest || !probe) {
-          return { credential_id: credential.id, provider: credential.provider, connected: false, error: "unsupported_provider" };
-        }
-        const baseEnv = manifest.app.launch_env
-          ?? (manifest.transport.type === "streamable-http" ? manifest.transport.endpoint_env : undefined);
-        const base = baseEnv ? process.env[baseEnv]?.trim().replace(/\/$/, "") : undefined;
-        if (!base) {
-          return { credential_id: credential.id, provider: credential.provider, connected: false, error: "service_unavailable" };
-        }
-        const scheme = probe.scheme.trim();
-        const response = await fetch(`${base}${probe.path}`, {
-          method: probe.method,
-          headers: { [probe.header]: scheme ? `${scheme} ${credential.secret}` : credential.secret },
-          signal: AbortSignal.timeout(10_000),
-        });
-        const connected = probe.ok_status.includes(response.status);
-        return {
-          credential_id: credential.id,
-          provider: credential.provider,
-          connected,
-          ...(connected ? {} : { error: response.status === 401 || response.status === 403 ? "invalid_credentials" : "service_unavailable" }),
-        };
+        // Connectivity is declared by the manifest: an HTTP app reuses its real
+        // transport auth (including session login), and an MCP app uses its
+        // declared healthcheck. No provider-specific code lives in this route.
+        return await m2.appCatalog.testCredential(identity.id, req.params.id);
       } catch (error) {
         const message = error instanceof Error ? error.message : "integration_unavailable";
         if (message === "not_found") return reply.code(404).send({ error: "not_found" });

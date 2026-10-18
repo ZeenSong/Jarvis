@@ -98,6 +98,7 @@ function App() {
     [view, setView] = useState<ViewSpec>(),
     [semantic, setSemantic] = useState<any>(),
     [applications, setApplications] = useState<any>(),
+    [catalog, setCatalog] = useState<any>(),
     [resources, setResources] = useState(new Map<string, Resource>()),
     [workspaceTarget, setWorkspaceTarget] = useState<string>(),
     [workspaceConversation, setWorkspaceConversation] = useState<string>(),
@@ -182,17 +183,28 @@ function App() {
     const target = window.open("about:blank", "_blank");
     if (target) target.opener = null;
     try {
-      const resolved = await gateway.request("app.resolve", { app_id: appId === "homeassistant" ? "home-assistant" : appId, platform: "web" });
+      // The registry id is the CasaOS id (for example "homeassistant"); do not
+      // rewrite it, because the server resolves exactly this id.
+      const resolved = await gateway.request("app.resolve", { app_id: appId, platform: "web" });
       const link = resolved.link?.primary ?? resolved.link?.fallback;
       if (link) { if (target) target.location.replace(link); else location.assign(link); }
       else { target?.close(); setError("该应用尚未配置可用链接"); }
     } catch (e) { target?.close(); fail(e); }
   }, []);
+  const refreshApplications = useCallback(async () => {
+    if (!paired) return;
+    const [apps, nextCatalog] = await Promise.all([
+      gateway.request("application.list").catch(() => ({ status: "unavailable", apps: [] })),
+      gateway.request("app.catalog").catch(() => undefined),
+    ]);
+    setApplications(apps);
+    setCatalog(nextCatalog);
+  }, [paired]);
   const reconnectCasaos = useCallback(async (username: string, password: string) => {
     const response = await fetch("/api/v2/integrations/casaos/login", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
     if (!response.ok) throw Error(response.status === 401 ? "CasaOS 用户名或密码不正确" : response.status === 403 ? "只有 Jarvis 管理员可以连接 CasaOS" : "CasaOS 连接失败，请稍后重试");
-    setApplications(await gateway.request("application.list"));
-  }, []);
+    await refreshApplications();
+  }, [refreshApplications]);
   const loadView = useCallback(async (spec: ViewSpec, request = ++viewRequest.current) => {
     if (request !== viewRequest.current) return;
     setSemantic(undefined);
@@ -229,7 +241,7 @@ function App() {
   );
   const snapshot = useCallback(async () => {
     setError("");
-    if (page === "home" || page === "apps") setApplications(await gateway.request("application.list").catch(() => ({ status: "unavailable", apps: [] })));
+    if (page === "home" || page === "apps") await refreshApplications();
     setConversations(await gateway.request("conversation.list"));
     setAgents(await gateway.request("agent.definition.list"));
     if (selected)
@@ -249,7 +261,7 @@ function App() {
       );
       if (saved.success) await loadView(saved.data);
     }
-  }, [selected, runId, page, show, loadView, developerMode]);
+  }, [selected, runId, page, show, loadView, developerMode, refreshApplications]);
   useEffect(() => {
     fetch("/api/v2/session", { credentials: "include" }).then(async (r) => {
       if (!r.ok) { const refreshed = await fetch("/api/v2/auth/refresh", { method: "POST", credentials: "include" }); if (!refreshed.ok) return; r = await fetch("/api/v2/session"); }
@@ -257,6 +269,19 @@ function App() {
     }).catch(fail);
     return () => gateway.close();
   }, []);
+  // Deep links used by app setup guides: /#apps and /#settings.
+  useEffect(() => {
+    const hash = location.hash.replace(/^#/, "");
+    if (hash === "apps" || hash === "settings") setPage(hash);
+  }, []);
+  // A newly installed app or a connection written by Jarvis should appear in the
+  // app page without a manual reload.
+  useEffect(() => {
+    if (!paired) return;
+    const offCatalog = gateway.subscribe("app.catalog.updated", () => void refreshApplications());
+    const offDiscovered = gateway.subscribe("app.discovered", () => void refreshApplications());
+    return () => { offCatalog(); offDiscovered(); };
+  }, [paired, refreshApplications]);
   useEffect(() => {
     const listen = (name: string, fn: (e: any) => void) => {
       gateway.addEventListener(name, fn);
@@ -462,11 +487,11 @@ function App() {
             <button onClick={() => setError("")}>关闭</button>
           </div>
         )}
-        {page === "home" ? <ProductHome openApp={openApp} onCasaosLogin={reconnectCasaos} problem={!!error} applications={applications} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
+        {page === "home" ? <ProductHome openApp={openApp} onCasaosLogin={reconnectCasaos} problem={!!error} applications={applications} catalog={catalog} gateway={gateway} onAppsChanged={() => void refreshApplications()} system={resources.get("system/status")?.data} runs={agents?.runs ?? []} conversations={conversations}
           navigate={(next, id) => { setPage(next); setRunId(next === "run" ? id : undefined); if (next === "jarvis" && id) setSelected(id); }}
           ask={(prompt) => { setText(prompt); setRunId(undefined); setPage("jarvis"); }} />
         : page === "spaces" ? <><p className="muted">你的文件、照片与想法，汇聚一处。</p><SpaceCards navigate={setPage} openApp={openApp} /><Empty title="选择你想探索的空间" text="照片与家庭使用原应用完整界面；其他空间将在接入后开放。" /></>
-        : page === "apps" ? <ApplicationList value={applications} onCasaosLogin={reconnectCasaos} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
+        : page === "apps" ? <ApplicationList value={applications} catalog={catalog} gateway={gateway} onCasaosLogin={reconnectCasaos} onChanged={() => void refreshApplications()} openApp={(id) => void openApp(id)} ask={(prompt) => { setText(prompt); setPage("jarvis"); }} />
         : page === "tasks" ? <ProductTasks runs={agents?.runs ?? []} open={(id) => void action({ type: "run.open", target: id })} gateway={gateway} onError={fail} />
         : page === "jarvis" || page === "workspace" ? (
           <div className={`conversation-layout ${workspaceTarget || page === "workspace" ? "with-workspace" : ""}`}>

@@ -66,8 +66,9 @@ function SpaceArt({ kind }: { kind: string }) {
   </svg>;
 }
 
-export function ProductHome({ system, runs, conversations, navigate, ask, applications, openApp, onCasaosLogin, problem }: {
-  applications?: any; openApp?: (id: string) => void; onCasaosLogin?: (username: string, password: string) => Promise<void>; problem?: boolean;
+export function ProductHome({ system, runs, conversations, navigate, ask, applications, catalog, gateway, openApp, onCasaosLogin, onAppsChanged, problem }: {
+  applications?: any; catalog?: AppCatalogValue; gateway?: { request: (topic: string, payload?: unknown) => Promise<any> };
+  openApp?: (id: string) => void; onCasaosLogin?: (username: string, password: string) => Promise<void>; onAppsChanged?: () => void; problem?: boolean;
   system: any; runs: any[]; conversations: any[]; navigate: (page: string, id?: string) => void; ask: (prompt: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -114,7 +115,7 @@ export function ProductHome({ system, runs, conversations, navigate, ask, applic
 
     <section className="home-section home-applications">
       <div className="section-heading"><h2>我的应用</h2><button className="quiet" onClick={() => navigate("apps")}>应用中心 <span aria-hidden="true">↗</span></button></div>
-      <ApplicationList value={applications} ask={ask} openApp={openApp} onCasaosLogin={onCasaosLogin} />
+      <ApplicationList value={applications} catalog={catalog} gateway={gateway} ask={ask} openApp={openApp} onCasaosLogin={onCasaosLogin} onChanged={onAppsChanged} />
     </section>
 
     <div className="home-bottom">
@@ -163,19 +164,130 @@ function AppIcon({ app }: { app: Application }) {
 
 const appState: Record<string, string> = { running: "运行中", stopped: "已停止" };
 
-export function ApplicationList({ value, openApp, ask, onCasaosLogin }: { value?: { status: string; apps: Application[]; launchers?: { id: string; name: string; url: string }[] }; openApp?: (appId: string) => void; ask?: (prompt: string) => void; onCasaosLogin?: (username: string, password: string) => Promise<void> }) {
+export type CatalogEntry = {
+  id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  installed?: boolean;
+  base_url?: string;
+  connected?: boolean;
+  credential_configured?: boolean;
+  ready?: boolean;
+  mode?: "http" | "mcp" | "unsupported" | "unknown";
+  transport?: string;
+  credential_required?: boolean;
+  credential_hint?: string;
+  credential_label?: string;
+  credential_format?: "api_key" | "user_password" | "token";
+  credential_where?: string;
+  operations_count?: number;
+};
+export type AppCatalogValue = {
+  casaos?: { status?: string; host?: string };
+  apps?: CatalogEntry[];
+  configured_count?: number;
+  unconfigured_count?: number;
+};
+
+export function ApplicationList({ value, catalog, gateway, openApp, ask, onCasaosLogin, onChanged }: {
+  value?: { status: string; apps: Application[]; launchers?: { id: string; name: string; url: string }[] };
+  catalog?: AppCatalogValue;
+  gateway?: { request: (topic: string, payload?: unknown) => Promise<any> };
+  openApp?: (appId: string) => void;
+  ask?: (prompt: string) => void;
+  onCasaosLogin?: (username: string, password: string) => Promise<void>;
+  onChanged?: () => void;
+}) {
   const [selected, setSelected] = useState<string>();
   const [loginOpen, setLoginOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
+  const [connectStep, setConnectStep] = useState<"idle" | "credential" | "verifying" | "connected" | "error">("idle");
+  const [saving, setSaving] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [credential, setCredential] = useState("");
+  const [connectResult, setConnectResult] = useState<any>();
+  const [connected, setConnected] = useState<Record<string, boolean>>({});
   const dialog = useRef<HTMLDialogElement>(null);
   const app = value?.apps.find((item) => item.id === selected);
+  const entry = catalog?.apps?.find((item) => item.id === selected);
+  const isConnected = selected ? connected[selected] ?? entry?.ready === true : false;
   useEffect(() => {
     if (app) dialog.current?.showModal();
     else dialog.current?.close();
   }, [app]);
+  useEffect(() => {
+    // A new selection starts a fresh connection flow.
+    setConnectStep("idle");
+    setConnectError("");
+    setCredential("");
+    setConnectResult(undefined);
+  }, [selected]);
+  useEffect(() => {
+    // The manifest already exists but the household has not entered the key.
+    if (entry?.connected && entry.credential_configured === false) setConnectStep("credential");
+  }, [entry?.id, entry?.connected, entry?.credential_configured]);
+
+  const configure = async () => {
+    if (!app || !gateway) return;
+    setConnectStep("verifying");
+    setConnectError("");
+    try {
+      const result = await gateway.request("app.configure", { mode: "auto", app_id: app.id });
+      setConnectResult(result);
+      if (result.credential_required) {
+        setConnectStep("credential");
+        return;
+      }
+      const tested = await gateway.request("app.test", { app_id: app.id });
+      if (tested.connected) {
+        setConnected((current) => ({ ...current, [app.id]: true }));
+        setConnectStep("connected");
+        onChanged?.();
+      } else {
+        setConnectStep("error");
+        setConnectError("连接已写入，但验证失败。请检查应用是否运行，或让 Jarvis 查看配置步骤。");
+      }
+    } catch (error) {
+      setConnectStep("error");
+      setConnectError(error instanceof Error ? error.message : "连接失败");
+    }
+  };
+
+  const saveCredential = async () => {
+    if (!app || !gateway || !credential.trim()) return;
+    setSaving(true);
+    setConnectError("");
+    try {
+      const saved = await gateway.request("integration.credential.put", {
+        provider: app.id,
+        label: `${app.name} 连接`,
+        secret: credential,
+        metadata: { source: "Jarvis 应用页", app_id: app.id },
+      });
+      const response = await fetch(`/api/v2/integration/credentials/${encodeURIComponent(String(saved.id))}/test`, { method: "POST", credentials: "include" });
+      const result = await response.json() as { connected?: boolean; error?: string };
+      setCredential("");
+      if (result.connected) {
+        setConnected((current) => ({ ...current, [app.id]: true }));
+        setConnectStep("connected");
+        onChanged?.();
+      } else {
+        setConnectStep("credential");
+        setConnectError(result.error === "invalid_credentials" ? "凭据已加密保存，但应用拒绝了它。请重新创建只读凭据后再试。" : "凭据已加密保存，但暂时无法验证连接。");
+        onChanged?.();
+      }
+    } catch (error) {
+      setConnectStep("credential");
+      setConnectError(error instanceof Error ? error.message : "凭据保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (value?.status !== "ready") {
     const states: Record<string, [string, string]> = {
       not_configured: ["尚未连接 CasaOS", "需要配置服务端 CasaOS 连接，才能读取已安装应用。"],
@@ -188,17 +300,46 @@ export function ApplicationList({ value, openApp, ask, onCasaosLogin }: { value?
   }
   if (!value.apps.length) return <Empty title="还没有安装应用" text="CasaOS 已连接，当前没有已安装应用。" />;
   const online = value.apps.filter((item) => item.status === "running").length;
-  return <><div className="application-summary"><span>{value.apps.length} 个应用</span><span>{online} 个运行中</span><span>CasaOS</span></div><div className="application-grid">{value.apps.map((item) => <button className="application-card" key={item.id} onClick={() => setSelected(item.id)} aria-label={`查看 ${item.name} 详情`}>
-    <AppIcon app={item} />
-    <span className="application-name"><h3>{item.name}</h3><small>CasaOS</small></span>
-    <span className={`application-status ${item.status}`}>{appState[item.status] ?? "状态未知"}</span>
-  </button>)}</div><dialog ref={dialog} className="application-detail" aria-labelledby="application-detail-title" onClose={() => setSelected(undefined)}>
+  const configuredCount = catalog?.configured_count ?? catalog?.apps?.filter((item) => item.connected)?.length ?? 0;
+  const pendingCount = catalog?.unconfigured_count ?? 0;
+  return <><div className="application-summary"><span>{value.apps.length} 个应用</span><span>{online} 个运行中</span><span>{configuredCount} 个已连接 Jarvis</span>{pendingCount > 0 && <span>{pendingCount} 个待连接</span>}<span>CasaOS</span></div><div className="application-grid">{value.apps.map((item) => {
+    const itemEntry = catalog?.apps?.find((candidate) => candidate.id === item.id);
+    const itemConnected = connected[item.id] ?? itemEntry?.ready === true;
+    const waitingForCredential = itemEntry?.connected === true && itemEntry?.credential_configured === false;
+    return <button className="application-card" key={item.id} onClick={() => setSelected(item.id)} aria-label={`查看 ${item.name} 详情`}>
+      <AppIcon app={item} />
+      <span className="application-name"><h3>{item.name}</h3><small>{itemConnected ? "已连接 Jarvis" : waitingForCredential ? "待填写凭据" : "CasaOS"}</small></span>
+      <span className={`application-status ${item.status}`}>{appState[item.status] ?? "状态未知"}</span>
+    </button>;
+  })}</div><dialog ref={dialog} className="application-detail" aria-labelledby="application-detail-title" onClose={() => setSelected(undefined)}>
       {app && <><header><div><p className="eyebrow">CASAOS APPLICATION</p><h2 id="application-detail-title">{app.name}</h2></div><button aria-label="关闭应用详情" onClick={() => dialog.current?.close()}>×</button></header>
         {app.description ? <details className="application-description"><summary>应用简介 · 来自 CasaOS</summary><p>{app.description}</p></details> : <p className="application-description">此应用未提供简介。</p>}
         <dl><div><dt>运行状态</dt><dd>{appState[app.status] ?? "状态未知"}</dd></div>
-          <div><dt>应用服务</dt><dd>CasaOS</dd></div><div><dt>服务数量</dt><dd>{app.service_count ?? "未知"}</dd></div><div><dt>应用标识</dt><dd>{app.id}</dd></div></dl>
-        <p className="muted">当前提供只读状态。启停、更新等操作尚未开放。</p></>}
-      {app && ask && <button onClick={() => ask(`请读取并总结 ${app.name} 当前状态，同时告诉我下一步可以做什么。`)}>让 Jarvis 分析此应用 <span aria-hidden="true">✦</span></button>}
+          <div><dt>应用服务</dt><dd>CasaOS</dd></div><div><dt>服务数量</dt><dd>{app.service_count ?? "未知"}</dd></div><div><dt>应用标识</dt><dd>{app.id}</dd></div>
+          {entry?.base_url && <div><dt>检测地址</dt><dd>{entry.base_url}</dd></div>}
+          {entry?.operations_count !== undefined && <div><dt>可调用操作</dt><dd>{entry.operations_count} 个</dd></div>}</dl>
+        {isConnected
+          ? <p className="muted">已连接 Jarvis。可以直接让 Jarvis 读取或操作它；Jarvis 不需要每次重新询问连接方式。</p>
+          : entry?.mode === "unsupported"
+            ? <p className="muted">{entry.credential_hint || entry.description || "该应用暂不支持自动连接。可以让 Jarvis 分析后再决定。"}</p>
+            : entry?.mode === "unknown"
+              ? <section className="credential-form"><p className="muted">Jarvis 还不会自动配置这个应用。可以让 Jarvis 读取检测到的地址，再根据它的 API/MCP 文档确定连接方式。</p><button type="button" onClick={() => ask?.(`CasaOS 里安装了 ${app.name}。请先调用 app_list，再调用 app_setup_guide 读取检测到的地址；如果它需要 MCP 端点或 API 文档才能配置，请明确告诉我需要提供什么，不要编造。`)}>让 Jarvis 分析</button></section>
+              : <section className="credential-form" aria-label={`连接 ${app.name}`}>
+                <p className="muted">Jarvis 会自动使用 CasaOS 检测到的地址，并把凭据加密保存在服务端。凭据不会显示在页面或对话里。</p>
+                {connectStep === "credential" && <>
+                  <p><strong>{connectResult?.credential?.label ?? entry?.credential_label ?? `${app.name} 凭据`}</strong></p>
+                  <p className="muted">{connectResult?.credential?.hint ?? entry?.credential_hint ?? "在应用自己的设置页创建只读凭据。"}</p>
+                  {(connectResult?.credential?.where_url ?? entry?.credential_where) && <p className="muted">创建页面：<a href={connectResult?.credential?.where_url ?? entry?.credential_where} target="_blank" rel="noopener noreferrer">{connectResult?.credential?.where_url ?? entry?.credential_where} ↗</a></p>}
+                  <input aria-label={`${app.name} 凭据`} type="password" autoComplete="new-password" placeholder={(connectResult?.credential?.format ?? entry?.credential_format) === "user_password" ? "用户名:密码" : "只读 API Key 或访问令牌"} value={credential} onChange={(event) => setCredential(event.target.value)} maxLength={16384} />
+                  <button type="button" disabled={!credential.trim() || saving} onClick={() => void saveCredential()}>{saving ? "正在验证…" : "保存并验证"}</button>
+                  {connectError && <p role="alert">{connectError}</p>}
+                </>}
+                {connectStep !== "credential" && <button type="button" disabled={connectStep === "verifying"} onClick={() => void configure()}>{connectStep === "verifying" ? "正在连接…" : isConnected ? "已连接" : "一键连接 Jarvis"}</button>}
+                {connectStep === "connected" && <p role="status">连接成功，可以回到对话让 Jarvis 调用它。</p>}
+                {connectStep === "error" && <p role="alert">{connectError}</p>}
+              </section>}
+      </>}
+      {app && ask && <button onClick={() => ask(isConnected ? `请先用 app_list 确认 ${app.name} 的连接状态，然后用 app_tools_list 查看它的可用操作，并告诉我可以做什么。` : `CasaOS 里安装了 ${app.name}。请先调用 app_list 读取真实状态，再调用 app_setup_guide 告诉我怎么连接它的 API/MCP；不要编造地址或凭据。`)}>{isConnected ? "让 Jarvis 试用此应用" : "让 Jarvis 告诉我怎么配置"} <span aria-hidden="true">✦</span></button>}
       {app && openApp && <button onClick={() => openApp(app.id)}>在应用中打开 <span aria-hidden="true">↗</span></button>}
     </dialog></>;
 }

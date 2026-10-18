@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import sys
+import threading
 from contextlib import asynccontextmanager
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
@@ -26,16 +27,17 @@ from mcp.server import MCPServer
 BASE_URL = os.environ.get("JARVIS_INTERNAL_URL", "http://jarvis-server:8080").rstrip("/")
 BRIDGE_KEY = os.environ.get("JARVIS_BRIDGE_KEY", "")
 
+# Hermes may hand the model a context token from an older turn. Exchange it for
+# a fresh one instead of making the user reopen the conversation. The mapping
+# is process-local; a restart simply refreshes from the token it is given.
+_TOKEN_CACHE: dict[str, str] = {}
+_TOKEN_LOCK = threading.Lock()
 
-def _call(tool: str, context_token: str, **arguments: object) -> str:
-    body = json.dumps({
-        "tool": tool,
-        "context_token": context_token,
-        "arguments": arguments,
-    }).encode("utf-8")
+
+def _bridge_post(path: str, body: dict[str, object]) -> tuple[int, str]:
     request = Request(
-        f"{BASE_URL}/internal/hermes/capability",
-        data=body,
+        f"{BASE_URL}{path}",
+        data=json.dumps(body).encode("utf-8"),
         method="POST",
         headers={
             "Content-Type": "application/json",
@@ -44,11 +46,58 @@ def _call(tool: str, context_token: str, **arguments: object) -> str:
     )
     try:
         with urlopen(request, timeout=30) as response:
-            return json.dumps(json.load(response), ensure_ascii=False)
+            return int(response.status), response.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
-        return exc.read(16000).decode("utf-8", errors="replace")
+        return exc.code, exc.read(16000).decode("utf-8", errors="replace")
     except Exception as exc:
-        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        return 0, json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
+def _token_for(context_token: str) -> str:
+    with _TOKEN_LOCK:
+        return _TOKEN_CACHE.get(context_token, context_token)
+
+
+def _remember_token(old: str, fresh: str) -> None:
+    with _TOKEN_LOCK:
+        if len(_TOKEN_CACHE) >= 64:
+            _TOKEN_CACHE.pop(next(iter(_TOKEN_CACHE)))
+        _TOKEN_CACHE[old] = fresh
+        _TOKEN_CACHE[fresh] = fresh
+
+
+def _refresh_context(context_token: str) -> str | None:
+    status, body = _bridge_post("/internal/hermes/context/refresh", {"context_token": context_token})
+    if status != 200:
+        return None
+    try:
+        value = json.loads(body)
+    except Exception:
+        return None
+    token = value.get("context_token") if isinstance(value, dict) else None
+    return token if isinstance(token, str) and token else None
+
+
+def _call(tool: str, context_token: str, **arguments: object) -> str:
+    token = _token_for(context_token)
+    status, body = _bridge_post("/internal/hermes/capability", {
+        "tool": tool,
+        "context_token": token,
+        "arguments": arguments,
+    })
+    if status == 401 and "hermes_context_invalid" in body:
+        fresh = _refresh_context(token)
+        if fresh:
+            _remember_token(context_token, fresh)
+            status, body = _bridge_post("/internal/hermes/capability", {
+                "tool": tool,
+                "context_token": fresh,
+                "arguments": arguments,
+            })
+    try:
+        return json.dumps(json.loads(body), ensure_ascii=False)
+    except Exception:
+        return json.dumps({"error": "jarvis_bridge_invalid_response"}, ensure_ascii=False)
 
 
 def _call_json(tool: str, context_token: str, **arguments: object) -> dict:
@@ -67,23 +116,23 @@ def _dump(value: object) -> str:
 
 
 def _publish_media(context_token: str, data: bytes, content_type: str, source: str) -> str:
-    body = json.dumps({
-        "context_token": context_token,
+    token = _token_for(context_token)
+    payload: dict[str, object] = {
+        "context_token": token,
         "content_type": content_type,
         "source": source,
         "data": base64.b64encode(data).decode("ascii"),
-    }).encode("utf-8")
-    request = Request(
-        f"{BASE_URL}/internal/hermes/media",
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Jarvis-Bridge-Key": BRIDGE_KEY,
-        },
-    )
-    with urlopen(request, timeout=30) as response:
-        value = json.load(response)
+    }
+    status, body = _bridge_post("/internal/hermes/media", payload)
+    if status == 401 and "hermes_context_invalid" in body:
+        fresh = _refresh_context(token)
+        if fresh:
+            _remember_token(context_token, fresh)
+            payload["context_token"] = fresh
+            status, body = _bridge_post("/internal/hermes/media", payload)
+    if status != 200:
+        raise RuntimeError("jarvis_media_publish_failed")
+    value = json.loads(body)
     if not isinstance(value, dict) or not isinstance(value.get("id"), str):
         raise RuntimeError("jarvis_media_publish_invalid_response")
     return value["id"]
@@ -259,8 +308,24 @@ async def _upstream(provider: str, config: dict):
         parsed = urlsplit(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("mcp_transport_invalid")
+        if bool(transport.get("insecure_tls")):
+            # Per-manifest opt-out: some self-hosted apps (Obsidian) serve a
+            # self-signed certificate that cannot verify against the address
+            # Jarvis reaches. Scope it to this one client.
+            import httpx2
+
+            async with httpx2.AsyncClient(
+                headers=_http_headers(transport),
+                verify=False,
+                follow_redirects=True,
+            ) as client:
+                async with streamable_http_client(endpoint, http_client=client) as streams:
+                    async with ClientSession(*streams) as session:
+                        await session.initialize()
+                        yield session
+            return
         async with create_mcp_http_client(headers=_http_headers(transport)) as client:
-            async with streamable_http_client(str(transport["endpoint"]), http_client=client) as streams:
+            async with streamable_http_client(endpoint, http_client=client) as streams:
                 async with ClientSession(*streams) as session:
                     await session.initialize()
                     yield session

@@ -28,19 +28,117 @@ const toolPattern = z
   .max(120)
   .regex(/^[a-zA-Z0-9_.*-]+$/, "tool patterns are tool names or a leading/trailing *");
 
+/**
+ * One declarative REST operation exposed as a tool.
+ *
+ * HTTP integrations do not need a new MCP server and do not need TypeScript: the
+ * manifest names the operation, its method and path template, and the policy
+ * level. The executor substitutes `{param}` placeholders from the declared
+ * parameters; nothing the model supplies can change the method or the path
+ * prefix, so a configured app cannot be turned into an arbitrary HTTP proxy.
+ */
+export const operationSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .regex(/^[a-z][a-z0-9_]{1,63}$/, "operation name must be snake_case"),
+    description: z.string().trim().max(400).default(""),
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
+    /** Path template relative to the app base URL, e.g. "/Items?searchTerm={q}". */
+    path: z
+      .string()
+      .trim()
+      .min(1)
+      .max(400)
+      .regex(/^\/[A-Za-z0-9._\/{}=&?:%+-]*$/),
+    /** A read operation needs only the read scope. Unknown levels fail closed. */
+    read_only: z.boolean().default(false),
+    params: z
+      .array(
+        z
+          .object({
+            name: z.string().trim().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/),
+            in: z.enum(["path", "query", "body"]).default("query"),
+            required: z.boolean().default(false),
+            type: z.enum(["string", "number", "boolean"]).default("string"),
+            description: z.string().trim().max(200).default(""),
+          })
+          .strict(),
+      )
+      .max(20)
+      .default([]),
+    /** How body parameters are encoded. `form` is what qBittorrent expects. */
+    body_format: z.enum(["json", "form"]).default("json"),
+  })
+  .strict();
+
+/** How a credential is attached to an HTTP request. */
+export const httpAuthSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("none") }).strict(),
+  /** `Authorization: Bearer <secret>`. */
+  z.object({ mode: z.literal("bearer") }).strict(),
+  /** Any header, with an optional scheme prefix (`X-Emby-Token`, `token`). */
+  z
+    .object({
+      mode: z.literal("header"),
+      header: z.string().trim().min(1).max(64).default("Authorization"),
+      scheme: z.string().trim().max(32).default(""),
+    })
+    .strict(),
+  /** Query parameter, e.g. `?api_key=<secret>`. */
+  z.object({ mode: z.literal("query"), param: z.string().trim().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/) }).strict(),
+  /** `Authorization: Basic base64(user:pass)`; the secret is `user:pass`. */
+  z.object({ mode: z.literal("basic") }).strict(),
+  /**
+   * Username/password login that yields a cookie session. The secret is stored
+   * as `user:pass`; the session cookie is held in memory only and is renewed on
+   * the statuses listed in `renew_on`.
+   */
+  z
+    .object({
+      mode: z.literal("session"),
+      login_path: z.string().trim().regex(/^\/[A-Za-z0-9._\/-]{0,200}$/),
+      login_method: z.enum(["GET", "POST"]).default("POST"),
+      login_format: z.enum(["form", "json"]).default("form"),
+      login_fields: z.record(z.string().max(60), z.string().max(200)).default({
+        username: "{username}",
+        password: "{password}",
+      }),
+      cookie_name: z.string().trim().regex(/^[A-Za-z0-9_-]{1,60}$/),
+      /** Some servers answer 200 with a failure body (qBittorrent: "Fails."). */
+      ok_body_contains: z.string().max(200).optional(),
+      renew_on: z.array(z.number().int().min(400).max(599)).max(10).default([401, 403]),
+    })
+    .strict(),
+]);
+
 export const transportSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("streamable-http"),
+      /** Literal endpoint, detected from CasaOS and saved by the catalog. */
+      endpoint: z.string().url().optional(),
       /** Environment variable holding the app base URL (or the MCP endpoint). */
-      endpoint_env: envName,
+      endpoint_env: envName.optional(),
       /** Path appended to the base URL to reach the MCP endpoint. */
       endpoint_path: z.string().trim().regex(/^(\/[A-Za-z0-9._\/-]*)?$/).default(""),
       /** Credential header injected into the upstream MCP connection. */
       credential_header: z.string().trim().min(1).max(64).default("Authorization"),
       credential_scheme: z.string().trim().max(32).default("Bearer"),
+      /**
+       * Some self-hosted apps (Obsidian, many NAS consoles) present a
+       * self-signed certificate whose SAN does not match the address Jarvis
+       * reaches them at. Verification would otherwise fail before the MCP
+       * handshake. This only relaxes the certificate check for this one
+       * upstream connection; every other integration keeps full verification.
+       */
+      allow_insecure_tls: z.boolean().default(false),
     })
-    .strict(),
+    .strict()
+    .refine((value) => Boolean(value.endpoint || value.endpoint_env), {
+      message: "streamable-http requires endpoint or endpoint_env",
+    }),
   z
     .object({
       type: z.literal("stdio"),
@@ -54,6 +152,26 @@ export const transportSchema = z.discriminatedUnion("type", [
       inherit_env: z.array(envName).max(20).default([]),
     })
     .strict(),
+  /**
+   * Plain REST. The app has no MCP server; Jarvis exposes the manifest's
+   * declared operations as tools and attaches the household credential itself.
+   */
+  z
+    .object({
+      type: z.literal("http"),
+      /** Literal base URL detected from the CasaOS port map. */
+      base_url: z.string().url().optional(),
+      /** Alternative: environment variable holding the base URL. */
+      base_env: envName.optional(),
+      auth: httpAuthSchema.default({ mode: "none" }),
+      operations: z.array(operationSchema).max(80).default([]),
+      max_response_bytes: z.number().int().min(1024).max(4 * 1024 * 1024).default(256 * 1024),
+      timeout_ms: z.number().int().min(1000).max(60000).default(15000),
+    })
+    .strict()
+    .refine((value) => Boolean(value.base_url || value.base_env), {
+      message: "http transport requires base_url or base_env",
+    }),
 ]);
 
 export const credentialSchema = z
@@ -106,6 +224,8 @@ export const appSchema = z
     icon: z.string().trim().regex(/^[a-z0-9-]{1,40}$/).optional(),
     /** Environment variable holding the user-facing base URL. */
     launch_env: envName.optional(),
+    /** Literal web base URL, detected from CasaOS when the app is configured. */
+    base_url: z.string().url().optional(),
     /** Deep link templates; `{base}` is replaced by launch URL, `{id}` by a resource id. */
     deep_links: z.record(z.string().max(80), z.string().max(400)).default({}),
     /** Capability labels surfaced in the App Detail page. */
@@ -164,8 +284,12 @@ export const integrationManifestSchema = z
     id: identifier,
     name: z.string().trim().min(1).max(80),
     description: z.string().trim().max(400).default(""),
-    /** Only MCP providers are supported today; the field exists to add others. */
-    kind: z.literal("mcp").default("mcp"),
+    /**
+     * `mcp` providers expose an upstream MCP server; `http` providers expose the
+     * operations declared on their transport. The catalog writes the value it
+     * detected, so the registry never has to guess.
+     */
+    kind: z.enum(["mcp", "http"]).default("mcp"),
     transport: transportSchema,
     credential: credentialSchema,
     tools: toolPolicySchema,
@@ -193,6 +317,9 @@ export type IntegrationManifest = z.infer<typeof integrationManifestSchema>;
 export type IntegrationTransport = z.infer<typeof transportSchema>;
 export type IntegrationMedia = z.infer<typeof mediaSchema>;
 export type ToolPolicy = z.infer<typeof toolPolicySchema>;
+export type HttpAuth = z.infer<typeof httpAuthSchema>;
+export type HttpTransport = Extract<IntegrationTransport, { type: "http" }>;
+export type HttpOperation = z.infer<typeof operationSchema>;
 
 export type CompiledManifest = IntegrationManifest & {
   readScope: string;

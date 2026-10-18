@@ -204,11 +204,19 @@ async def main() -> None:
         # configuration change rather than a new entry point.
         "homeassistant": {"mcp_tools_list", "mcp_tool_call", "camera_entities_list", "camera_snapshot_read"},
         "immich": {"mcp_tools_list", "mcp_tool_call"},
+        # The catalog provider is the one static entry that covers every app
+        # configured after the container started.
+        "apps": {
+            "app_list", "app_setup_guide", "app_configure", "app_test",
+            "app_remove", "app_tools_list", "app_tool_call",
+            "casaos_app_detail", "casaos_app_add_ports", "casaos_app_restart", "casaos_app_logs",
+        },
     }
     actual = {
         "jarvis": await tool_names("jarvis_provider.py"),
         "homeassistant": await tool_names("upstream_provider.py", MCP_PROVIDER="homeassistant", MCP_EXTRAS="camera"),
         "immich": await tool_names("upstream_provider.py", MCP_PROVIDER="immich"),
+        "apps": await tool_names("apps_provider.py"),
     }
     for provider, names in actual.items():
         if names != expected[provider]:

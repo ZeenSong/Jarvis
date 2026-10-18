@@ -30,6 +30,12 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   mcp_tool_invalid: 400,
   media_validation_error: 400,
   media_invalid_base64: 400,
+  app_api_unknown: 400,
+  app_configuration_invalid: 400,
+  app_tool_arguments_invalid: 400,
+  app_not_http: 400,
+  app_recipe_not_connectable: 400,
+  credential_required: 400,
   path_outside_allowed_root: 400,
   question_answer_invalid: 400,
   schedule_time_required: 400,
@@ -66,6 +72,8 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 
   // --- 404 ----------------------------------------------------------------
   agent_not_found: 404,
+  app_not_found: 404,
+  app_tool_unknown: 404,
   conversation_not_found: 404,
   node_not_found: 404,
   mcp_provider_unknown: 404,
@@ -75,6 +83,8 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   user_not_in_household: 404,
 
   // --- 409: conflicts with current durable state ----------------------------
+  app_builtin_immutable: 409,
+  app_credential_required: 409,
   bootstrap_already_completed: 409,
   conversation_busy: 409,
   delegation_depth_exceeded: 409,
@@ -114,6 +124,8 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   hermes_title_missing: 502,
   hermes_tool_round_limit: 502,
   invalid_response: 502,
+  mcp_invalid_response: 502,
+  mcp_upstream_unavailable: 502,
   oidc_discovery_failed: 502,
   oidc_discovery_invalid: 502,
   oidc_subject_missing: 502,
@@ -123,6 +135,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 
   // --- 503: a dependency is unavailable or unconfigured ---------------------
   agent_unavailable: 503,
+  app_not_configured: 503,
   hermes_not_configured: 503,
   hermes_profile_key_missing: 503,
   home_assistant_not_configured: 503,
@@ -162,6 +175,7 @@ const STATUS_BY_PREFIX: ReadonlyArray<readonly [string, number]> = [
   ["home_assistant_", 502],
   ["immich_", 502],
   ["integration_http_", 502],
+  ["mcp_upstream_error:", 502],
   ["node_", 502],
 ];
 

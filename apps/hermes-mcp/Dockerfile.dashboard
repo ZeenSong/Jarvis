@@ -8,6 +8,7 @@ COPY --from=immich-mcp /usr/share/dotnet /usr/share/dotnet
 COPY --from=immich-mcp /usr/bin/dotnet /usr/bin/dotnet
 COPY jarvis_provider.py /opt/jarvis-source/jarvis_provider.py
 COPY upstream_provider.py /opt/jarvis-source/upstream_provider.py
+COPY --chmod=644 apps_provider.py /opt/jarvis-source/apps_provider.py
 COPY verify_provider_registration.py /opt/jarvis/verify_provider_registration.py
 COPY patches/apply-skills-per-turn.py /opt/jarvis/apply-skills-per-turn.py
 COPY patches/apply-reasoning-stream.py /opt/jarvis/apply-reasoning-stream.py

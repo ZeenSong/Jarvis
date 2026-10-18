@@ -22,7 +22,7 @@ services:
           description: { en_US: Jarvis PostgreSQL data, zh_CN: Jarvis PostgreSQL 数据 }
 
   hermes-dashboard:
-    image: jarvis-hermes-dashboard:20261018-transport-r1
+    image: jarvis-hermes-dashboard:20261018-casaos-admin
     container_name: jarvis-hermes-dashboard
     user: "0:0"
     restart: unless-stopped
@@ -49,7 +49,7 @@ services:
           description: { en_US: "Hermes profiles, sessions, skills, and media", zh_CN: Hermes 配置、会话、技能与媒体数据 }
 
   media-janitor:
-    image: jarvis-hermes-dashboard:20261018-transport-r1
+    image: jarvis-hermes-dashboard:20261018-casaos-admin
     container_name: jarvis-media-janitor
     user: "0:0"
     restart: unless-stopped
@@ -69,7 +69,7 @@ services:
   jarvis-server:
     # Set JARVIS_SERVER_IMAGE when deploying a locally built tag; the published
     # ghcr image from the release workflow is the default.
-    image: ${JARVIS_SERVER_IMAGE:-jarvis-server:0.4.0-lease-r1}
+    image: ${JARVIS_SERVER_IMAGE:-jarvis-server:0.5.0-casaos-admin}
     container_name: jarvis-server
     restart: unless-stopped
     env_file: [/DATA/AppData/jarvis/config/server.env]

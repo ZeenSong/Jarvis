@@ -86,7 +86,16 @@ export function createHermesContextToken(
   return `${payload}.${signature}`;
 }
 
-export function verifyHermesContextToken(key: string, token: string): HermesContext | undefined {
+/**
+ * Verify a context token. The capability bridge requires an unexpired token;
+ * the refresh endpoint passes `ignoreExpiry` so an expired token can be traded
+ * for a new one, but only after its signature and conversation were checked.
+ */
+export function verifyHermesContextToken(
+  key: string,
+  token: string,
+  options: { ignoreExpiry?: boolean } = {},
+): HermesContext | undefined {
   try {
     const [payload, signature] = token.split(".");
     if (!payload || !signature || !key) return undefined;
@@ -94,7 +103,8 @@ export function verifyHermesContextToken(key: string, token: string): HermesCont
     const a = Buffer.from(signature), b = Buffer.from(expected);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined;
     const context = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Partial<HermesContext>;
-    if (!context.owner || !context.actor || !context.household || !context.session || Number(context.exp) < Math.floor(Date.now() / 1000)) return undefined;
+    if (!context.owner || !context.actor || !context.household || !context.session || !Number.isFinite(Number(context.exp))) return undefined;
+    if (!options.ignoreExpiry && Number(context.exp) < Math.floor(Date.now() / 1000)) return undefined;
     if (context.scopes !== undefined && (!Array.isArray(context.scopes) || context.scopes.some((scope) => typeof scope !== "string"))) return undefined;
     return context as HermesContext;
   } catch {
@@ -264,7 +274,7 @@ export class HermesClient {
     let content = "";
     const calls = new Map<number, HermesToolCall>();
     const contextualMessages = options.contextToken
-      ? [messages[0], { role: "system" as const, content: `Jarvis capability context token: ${options.contextToken}. When calling any mcp__jarvis__*, mcp__homeassistant__*, or mcp__immich__* tool, pass this exact token as context_token.` }, ...messages.slice(1)]
+      ? [messages[0], { role: "system" as const, content: `Jarvis capability context token: ${options.contextToken}. When calling any mcp__jarvis__*, mcp__apps__*, mcp__homeassistant__*, or mcp__immich__* tool, pass this exact token as context_token.` }, ...messages.slice(1)]
       : messages;
     for await (const event of this.stream(contextualMessages, { ...options, tools })) {
       if (event.type === "delta" && event.text) { content += event.text; await options.delta?.(event.text); }
