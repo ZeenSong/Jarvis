@@ -1,0 +1,50 @@
+name: jarvis-whisper
+
+# Self-hosted Whisper (faster-whisper via Speaches) for Jarvis.
+#
+# The service is intentionally not published on a host port. Jarvis and the
+# Whisper container share the Jarvis Docker network, so audio never leaves the
+# private deployment and cannot be reached from the LAN directly.
+#
+# Usage:
+#   SPEECH_API_KEY=$(openssl rand -hex 32) \
+#   WHISPER_CACHE=/DATA/AppData/jarvis-whisper/cache \
+#   docker compose -f deploy/whisper/compose.yaml up -d
+#
+# Then point Jarvis at http://jarvis-whisper:8000/v1 (see README.md).
+
+services:
+  whisper:
+    image: ghcr.io/speaches-ai/speaches:${WHISPER_IMAGE_TAG:-latest-cuda}
+    container_name: jarvis-whisper
+    restart: unless-stopped
+    environment:
+      API_KEY: ${SPEECH_API_KEY:?Set SPEECH_API_KEY (shared with Jarvis)}
+      WHISPER__INFERENCE_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER__COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      # Keep the large-v3 model resident; a cold load costs ~20 seconds.
+      WHISPER__TTL: "-1"
+      ENABLE_UI: "false"
+      LOG_LEVEL: ${WHISPER_LOG_LEVEL:-info}
+      # The model download needs Hugging Face access. Point this at the host's
+      # HTTP proxy when the host uses one; Docker's bridge gateway is normally
+      # 172.17.0.1 / 172.23.0.1.
+      HTTPS_PROXY: ${WHISPER_HTTPS_PROXY:-}
+      HTTP_PROXY: ${WHISPER_HTTP_PROXY:-}
+      NO_PROXY: ${WHISPER_NO_PROXY:-localhost,127.0.0.1,jarvis-server,postgres,jarvis-whisper}
+    volumes:
+      - ${WHISPER_CACHE:-./cache}:/home/ubuntu/.cache/huggingface/hub
+    networks:
+      - jarvis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+networks:
+  jarvis:
+    name: ${JARVIS_NETWORK:-jarvis_default}
+    external: true

@@ -39,6 +39,7 @@ import { IntegrationRegistry } from "../../../packages/integrations/src/index.js
 import { loadConfiguredManifests, resolveProviderSecret as resolveProviderSecretFor } from "./provider-secrets.js";
 import { LeaseStore } from "../../../packages/leases/src/index.js";
 import { LoginGuard, clientAddress, loginIdentity } from "./security/login-guard.js";
+import { speechConfig, transcribeSpeech, SpeechError } from "./speech.js";
 const SERVER_VERSION = readPackageVersion(import.meta.url);
 export async function buildApp(options: {
   databaseUrl: string;
@@ -76,6 +77,7 @@ export async function buildApp(options: {
     app.log.warn({ version }, "schema_migration_checksum_drift");
   const media = new MediaStore();
   const mediaResources = new MediaResources(db);
+  const speech = speechConfig();
   const mediaFileRoot = resolve(process.env.HERMES_MEDIA_ROOT?.trim() || process.env.HERMES_DATA_ROOT?.trim() || resolve(options.hostRoot || "/", "opt/data"));
   const readPublishedMediaFile = async (requestPath: unknown) => {
     if (typeof requestPath !== "string") return undefined;
@@ -1077,6 +1079,43 @@ export async function buildApp(options: {
       )
         return reply.code(403).send({ error: "device_required" });
       (req as any).identity = identity;
+    });
+    api.get("/api/v2/speech/status", async (req, reply) => {
+      if ((req as any).identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      return {
+        configured: Boolean(speech),
+        provider: speech ? "whisper" : null,
+        model: speech?.model ?? null,
+        language: speech?.language ?? null,
+        max_audio_bytes: speech?.maxAudioBytes ?? 0,
+      };
+    });
+    /**
+     * Android uploads a short WAV clip as base64 JSON. Base64 avoids a second
+     * content parser while keeping the audio behind the same bearer session as
+     * the rest of the client. The body limit is deliberately larger than the
+     * audio limit because base64 adds ~33%.
+     */
+    api.post<{ Body: unknown }>("/api/v2/speech/transcribe", { bodyLimit: 12 * 1024 * 1024 }, async (req, reply) => {
+      if ((req as any).identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      if (!speech) return reply.code(503).send({ error: "speech_not_configured" });
+      const body = z.object({
+        audio_base64: z.string().min(1).max(12 * 1024 * 1024),
+        mime_type: z.string().max(100).optional(),
+        language: z.string().max(20).optional(),
+      }).strict().parse(req.body);
+      let audio: Buffer;
+      try {
+        audio = Buffer.from(body.audio_base64, "base64");
+      } catch {
+        return reply.code(400).send({ error: "invalid_audio" });
+      }
+      try {
+        return { text: await transcribeSpeech(speech, audio, body.mime_type ?? "audio/wav", body.language) };
+      } catch (error) {
+        if (error instanceof SpeechError) return reply.code(error.status).send({ error: error.code });
+        throw error;
+      }
     });
     api.post<{ Params: { id: string } }>("/api/v2/integration/credentials/:id/test", async (req, reply) => {
       const identity = (req as any).identity;

@@ -202,7 +202,9 @@ internal fun friendlyError(error: Throwable?): String {
     val raw = error?.message?.trim().orEmpty()
     if (raw.isEmpty()) return "操作失败，请重试"
     val code = runCatching { Json.parseToJsonElement(raw).jsonObject["error"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+        ?: raw.takeIf { it.matches(Regex("^[a-z][a-z0-9_.:-]{0,80}$")) }
     if (code == null) return if (raw.startsWith("{")) "操作失败，请重试" else raw.take(160)
+    if (code.startsWith("speech_upstream_")) return "语音识别服务返回错误（${code.removePrefix("speech_upstream_")}）"
     return when (code) {
         "not_found", "conversation_not_found", "agent_not_found", "run_not_found" -> "内容不存在或无权访问"
         "unauthorized", "invalid_session", "session_replayed", "user_login_required" -> "登录已过期，请重新登录"
@@ -225,6 +227,14 @@ internal fun friendlyError(error: Throwable?): String {
         "credential_required" -> "需要先在应用里创建只读凭据"
         "integration_http_401", "integration_http_403" -> "凭据被应用拒绝，请重新创建只读凭据"
         "service_unavailable" -> "服务暂时不可用，请稍后重试"
+        "speech_not_configured" -> "服务端尚未配置云端语音识别"
+        "speech_timeout" -> "语音识别超时，请再说一次"
+        "speech_unreachable" -> "语音识别服务暂时不可用，请检查 Whisper 服务"
+        "speech_upstream_401", "speech_upstream_403" -> "语音识别服务拒绝了请求，请检查 API Key"
+        "audio_too_short" -> "录音太短，请按住多说一会儿"
+        "audio_too_large" -> "录音过长，请控制在 30 秒内"
+        "invalid_audio_type" -> "录音格式不支持"
+        "invalid_audio" -> "录音数据无效，请重试"
         "request_failed" -> "服务暂时不可用，请稍后重试"
         else -> "操作失败（$code）"
     }

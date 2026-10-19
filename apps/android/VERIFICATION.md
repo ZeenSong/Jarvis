@@ -121,6 +121,31 @@ services. On an emulator, start it with a real audio backend (`-audio default`);
    type a turn, and **结束** to close the call. Ending with a real conversation
    opens that conversation in the chat screen.
 
-If the device has no recognition service, the keyboard panel opens
-automatically. If TTS is unavailable, the footer says so and replies stay as
-subtitles.
+If the device has no recognition service, Jarvis checks the server for a
+self-hosted Whisper endpoint. When configured, the voice screen shows a
+**云端识别 / 自建 Whisper** card instead of only the keyboard; see the next
+section. If TTS is unavailable, the footer says so and replies stay as subtitles.
+
+## 6. Self-hosted Whisper on a Huawei / no-GMS device
+
+1. Deploy Whisper on the Jarvis host and add the `SPEECH_*` variables to the
+   server (see `deploy/whisper/README.md`).
+2. Confirm the server can reach it:
+   `docker exec jarvis-server node -e "fetch('http://jarvis-whisper:8000/health',{headers:{Authorization:'Bearer '+process.env.SPEECH_API_KEY}}).then(r=>r.text().then(console.log))"`
+3. On the phone, open **语音通话**. With no system `RecognitionService`, the
+   screen should show **云端识别 · 自建 Whisper** rather than opening the keyboard.
+4. Tap **开始云端录音**, speak for 2–10 seconds, then tap **停止并识别**.
+   The card shows a spinner while the server transcribes; the transcript is sent
+   as the next turn and Jarvis answers with TTS.
+5. Tap **键盘** to verify the keyboard fallback still works; close it to return to
+   the cloud card.
+6. If the server has no Whisper configured, the app must fall back to the
+   keyboard and explain that the service is not configured; it must not retry
+   the system recognizer in a loop.
+
+Server-only smoke test (no Android device needed):
+
+```bash
+curl -s http://<server>:8080/api/v2/speech/status -H "Authorization: Bearer $TOKEN"
+# {"configured":true,"provider":"whisper","model":"Systran/faster-whisper-large-v3",...}
+```

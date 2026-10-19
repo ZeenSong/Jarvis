@@ -264,19 +264,48 @@ class GatewayClient(
     }
 
     /** HTTP JSON request with bearer auth and one transparent session refresh. */
-    suspend fun http(method: String, path: String, body: JsonObject? = null): JsonElement = withContext(Dispatchers.IO) {
+    suspend fun http(
+        method: String,
+        path: String,
+        body: JsonObject? = null,
+        readTimeoutSeconds: Long = 30,
+    ): JsonElement = withContext(Dispatchers.IO) {
         val auth = credentials ?: throw IllegalStateException("尚未登录")
         val requestBody = body?.toString()
-        var (code, response) = executeHttp(method, auth.server + path, requestBody, auth)
+        val client = if (readTimeoutSeconds <= 30) http else http.newBuilder()
+            .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+            .build()
+        var (code, response) = executeHttp(method, auth.server + path, requestBody, auth, client)
         if (code == 401 && auth.refreshToken != null) {
             refreshAccess(auth.refreshToken)
             val renewed = credentials ?: throw IllegalStateException("登录已过期，请重新登录")
-            val retried = executeHttp(method, renewed.server + path, requestBody, renewed)
+            val retried = executeHttp(method, renewed.server + path, requestBody, renewed, client)
             code = retried.first
             response = retried.second
         }
         if (code !in 200..299) throw IllegalStateException(apiError(response, "请求失败 (HTTP $code)"))
         if (response.isBlank()) JsonNull else runCatching { Json.parseToJsonElement(response) }.getOrDefault(JsonNull)
+    }
+
+    /** Whether the server has a self-hosted Whisper endpoint configured. */
+    suspend fun speechStatus(): JsonObject? = runCatching {
+        http("GET", "/api/v2/speech/status").jsonObject
+    }.getOrNull()
+
+    /** Upload a short WAV clip and return its transcript. */
+    suspend fun transcribe(audio: ByteArray): String {
+        require(audio.size in 1..8 * 1024 * 1024) { "audio_too_large" }
+        val encoded = android.util.Base64.encodeToString(audio, android.util.Base64.NO_WRAP)
+        val payload = buildJsonObject {
+            put("audio_base64", encoded)
+            put("mime_type", "audio/wav")
+            put("language", "zh")
+        }
+        val result = http(
+            "POST", "/api/v2/speech/transcribe", payload,
+            readTimeoutSeconds = 120,
+        ).jsonObject
+        return (result["text"] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
     }
 
     fun webSessionCookie(): Pair<String, String>? {
@@ -326,7 +355,13 @@ class GatewayClient(
         }
     }
 
-    private fun executeHttp(method: String, url: String, body: String?, auth: Credentials?): Pair<Int, String> {
+    private fun executeHttp(
+        method: String,
+        url: String,
+        body: String?,
+        auth: Credentials?,
+        client: OkHttpClient = http,
+    ): Pair<Int, String> {
         val builder = Request.Builder().url(url).header("Accept", "application/json")
         if (auth != null) builder.header("Authorization", "Bearer ${auth.token}")
         val payload = body?.toRequestBody("application/json".toMediaType())
@@ -338,7 +373,7 @@ class GatewayClient(
             else -> builder.get()
         }
         return try {
-            http.newCall(builder.build()).execute().use { response ->
+            client.newCall(builder.build()).execute().use { response ->
                 response.code to (response.body?.string() ?: "")
             }
         } catch (error: Exception) {

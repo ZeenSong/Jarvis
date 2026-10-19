@@ -47,7 +47,11 @@ import cloud.jarvis.app.AppPreferences
 import cloud.jarvis.app.M2Repository
 import cloud.jarvis.app.designsystem.*
 import cloud.jarvis.app.formatClock
+import cloud.jarvis.app.friendlyError
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -83,6 +87,52 @@ fun VoiceCallScreen(
     var rate by remember { mutableFloatStateOf(prefs.voiceRate) }
     val scope = rememberCoroutineScope()
     val transcript = rememberScrollState()
+    val recorder = remember { SpeechRecorder(context) }
+    var cloudConfigured by remember { mutableStateOf<Boolean?>(null) }
+    var cloudRecording by remember { mutableStateOf(false) }
+    var cloudBusy by remember { mutableStateOf(false) }
+    var cloudSeconds by remember { mutableIntStateOf(0) }
+    var cloudError by remember { mutableStateOf<String?>(null) }
+
+    fun startCloudRecording() {
+        if (cloudRecording || cloudBusy) return
+        if (state.muted) {
+            cloudError = "麦克风已静音，请先取消静音。"
+            return
+        }
+        cloudError = null
+        if (recorder.start()) {
+            cloudRecording = true
+            cloudSeconds = 0
+        } else {
+            cloudError = "无法启动麦克风，请检查权限或稍后重试。"
+        }
+    }
+
+    fun stopCloudRecording() {
+        if (!cloudRecording) return
+        cloudRecording = false
+        val audio = recorder.stop()
+        if (audio == null) {
+            cloudError = "录音太短，请按住多说一会儿。"
+            return
+        }
+        cloudBusy = true
+        cloudError = null
+        scope.launch {
+            runCatching { repo.transcribe(audio) }
+                .onSuccess { text ->
+                    if (text.isBlank()) {
+                        cloudError = "没有听清，请再说一次。"
+                    } else {
+                        keyboardOpen = false
+                        controller.sendTyped(text)
+                    }
+                }
+                .onFailure { cloudError = friendlyError(it) }
+            cloudBusy = false
+        }
+    }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         granted = allowed
         if (allowed && !started) {
@@ -107,13 +157,39 @@ fun VoiceCallScreen(
         }
     }
     LaunchedEffect(state.speechAvailable) {
-        if (!state.speechAvailable) keyboardOpen = true
+        if (!state.speechAvailable) {
+            val configured = runCatching { repo.speechStatus()?.get("configured")?.jsonPrimitive?.booleanOrNull == true }.getOrDefault(false)
+            cloudConfigured = configured
+            if (!configured) keyboardOpen = true
+        }
     }
     LaunchedEffect(keyboardOpen) { controller.setKeyboardMode(keyboardOpen) }
+    LaunchedEffect(cloudRecording) {
+        if (cloudRecording) {
+            cloudSeconds = 0
+            while (cloudRecording) {
+                delay(1000)
+                if (!cloudRecording) break
+                cloudSeconds++
+                if (cloudSeconds >= 30) {
+                    stopCloudRecording()
+                    break
+                }
+            }
+        }
+    }
+    LaunchedEffect(state.muted) {
+        if (state.muted && cloudRecording) stopCloudRecording()
+    }
     LaunchedEffect(state.turns.size, state.partial, state.replyDraft) {
         if (transcript.maxValue > 0) runCatching { transcript.animateScrollTo(transcript.maxValue) }
     }
-    DisposableEffect(Unit) { onDispose { controller.end() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            recorder.release()
+            controller.end()
+        }
+    }
     BackHandler {
         controller.end()
         onClose(controller.conversationId ?: repo.selectedId())
@@ -135,6 +211,7 @@ fun VoiceCallScreen(
     val level = when (state.phase) {
         VoicePhase.listening -> state.level
         VoicePhase.speaking -> wave
+        VoicePhase.cloud -> if (cloudRecording) wave else 0f
         else -> 0f
     }
     val orbMode = when (state.phase) {
@@ -154,6 +231,7 @@ fun VoiceCallScreen(
             VoicePhase.preparing -> "正在接通"
             VoicePhase.listening -> if (state.partial.isBlank()) "正在聆听" else "我在听"
             VoicePhase.typing -> "键盘输入"
+            VoicePhase.cloud -> if (cloudRecording) "正在录音" else "云端识别"
             VoicePhase.thinking -> "正在思考"
             VoicePhase.speaking -> "Jarvis 正在回答"
             VoicePhase.muted -> "麦克风已静音"
@@ -217,7 +295,7 @@ fun VoiceCallScreen(
                         color = palette.muted,
                     )
                 }
-                VoiceLevelBars(level = level, active = state.phase in listOf(VoicePhase.listening, VoicePhase.speaking), modifier = Modifier.padding(end = 10.dp))
+                VoiceLevelBars(level = level, active = state.phase in listOf(VoicePhase.listening, VoicePhase.speaking) || cloudRecording, modifier = Modifier.padding(end = 10.dp))
                 Surface(onClick = { close() }, shape = CircleShape, color = palette.surface2.copy(alpha = 0.7f), modifier = Modifier.size(36.dp)) {
                     Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Close, "结束通话", Modifier.size(16.dp), tint = palette.muted) }
                 }
@@ -235,6 +313,7 @@ fun VoiceCallScreen(
                             VoicePhase.speaking -> "轻触光球可以打断"
                             VoicePhase.thinking -> "正在调用 Jarvis 的能力…"
                             VoicePhase.typing -> "输入后发送，或关闭键盘继续说话"
+                            VoicePhase.cloud -> if (cloudBusy) "正在用自建 Whisper 识别…" else "点击下方按钮录音；说完再点一次"
                             VoicePhase.muted -> "轻触麦克风恢复收音"
                             VoicePhase.error -> state.error ?: state.status
                             VoicePhase.preparing -> "正在准备语音引擎…"
@@ -255,6 +334,26 @@ fun VoiceCallScreen(
                             modifier = Modifier.padding(horizontal = 16.dp),
                         )
                     }
+                }
+                if (!state.speechAvailable) {
+                    Spacer(Modifier.height(12.dp))
+                    CloudSpeechPanel(
+                        configured = cloudConfigured,
+                        recording = cloudRecording,
+                        busy = cloudBusy,
+                        seconds = cloudSeconds,
+                        error = cloudError,
+                        muted = state.muted,
+                        onStart = { startCloudRecording() },
+                        onStop = { stopCloudRecording() },
+                        onRetry = {
+                            scope.launch {
+                                cloudConfigured = runCatching {
+                                    repo.speechStatus()?.get("configured")?.jsonPrimitive?.booleanOrNull == true
+                                }.getOrDefault(false)
+                            }
+                        },
+                    )
                 }
                 Spacer(Modifier.weight(0.18f))
                 Column(
@@ -419,6 +518,73 @@ fun VoiceCallScreen(
                         TextButton(onClick = { close() }) { Text("以后再说", color = palette.muted) }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudSpeechPanel(
+    configured: Boolean?,
+    recording: Boolean,
+    busy: Boolean,
+    seconds: Int,
+    error: String?,
+    muted: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val palette = jarvisColors()
+    Box(
+        Modifier.fillMaxWidth()
+            .background(palette.surface.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
+            .border(1.dp, palette.accent.copy(alpha = 0.28f), RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Box(
+                    Modifier.size(30.dp).background(if (recording) palette.danger.copy(alpha = 0.18f) else palette.accentSoft, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(JarvisIcons.Mic, null, Modifier.size(15.dp), tint = if (recording) palette.danger else palette.accent)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Eyebrow("CLOUD WHISPER")
+                    Text(
+                        when {
+                            busy -> "正在识别…"
+                            recording -> "正在录音 ${formatClock(seconds.toLong())}"
+                            else -> "自建 Whisper 语音识别"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = palette.textStrong,
+                    )
+                }
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = palette.accent)
+            }
+            when (configured) {
+                true -> {
+                    Text(
+                        if (muted) "麦克风已静音，请先取消静音。" else "点击开始录音，说完再点停止；最长 30 秒。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.muted,
+                    )
+                    if (recording) {
+                        PrimaryButton("停止并识别", Modifier.fillMaxWidth(), icon = JarvisIcons.Stop) { onStop() }
+                    } else {
+                        PrimaryButton("开始云端录音", Modifier.fillMaxWidth(), enabled = !busy && !muted, icon = JarvisIcons.Mic) { onStart() }
+                    }
+                }
+                false -> {
+                    Text("服务端还没有配置 Whisper。可以先用键盘输入，或让管理员检查语音识别服务。", style = MaterialTheme.typography.labelSmall, color = palette.muted)
+                    OutlineButton("重新检查", icon = JarvisIcons.Refresh) { onRetry() }
+                }
+                null -> Text("正在检查云端识别…", style = MaterialTheme.typography.labelSmall, color = palette.muted)
+            }
+            error?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = palette.danger)
             }
         }
     }

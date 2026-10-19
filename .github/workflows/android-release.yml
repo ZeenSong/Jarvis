@@ -46,6 +46,16 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Verify tag matches Android version
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          APP_VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
+          echo "tag=$VERSION app=$APP_VERSION"
+          test -n "$APP_VERSION"
+          test "$VERSION" = "$APP_VERSION"
+
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools platforms;android-35 build-tools;35.0.0

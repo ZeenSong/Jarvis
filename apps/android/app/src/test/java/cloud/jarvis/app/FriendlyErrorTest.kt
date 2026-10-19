@@ -12,6 +12,10 @@ class FriendlyErrorTest {
         assertEquals("无权访问该内容", friendlyError(IllegalStateException("""{"error":"forbidden"}""")))
         assertEquals("这个视图需要先选择具体对象", friendlyError(IllegalStateException("""{"error":"view_resource_required"}""")))
         assertEquals("操作失败（integration_credentials_key_missing）", friendlyError(IllegalStateException("""{"error":"integration_credentials_key_missing"}""")))
+        assertEquals("内容不存在或无权访问", friendlyError(IllegalStateException("not_found")))
+        assertEquals("服务端尚未配置云端语音识别", friendlyError(IllegalStateException("speech_not_configured")))
+        assertEquals("语音识别超时，请再说一次", friendlyError(IllegalStateException("speech_timeout")))
+        assertEquals("语音识别服务返回错误（503）", friendlyError(IllegalStateException("speech_upstream_503")))
     }
 
     @Test fun unknownBodiesAreNotRenderedAsJson() {

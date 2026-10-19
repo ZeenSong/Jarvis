@@ -60,6 +60,8 @@ class M2Repository(
     fun selectedId(): String? = selected
     suspend fun thumbnail(path: String) = gateway.thumbnail(path)
     suspend fun media(path: String) = gateway.media(path)
+    suspend fun speechStatus(): JsonObject? = gateway.speechStatus()
+    suspend fun transcribe(audio: ByteArray): String = gateway.transcribe(audio)
 
     private fun task(block: suspend () -> Unit) {
         scope.launch { runCatching { block() }.onFailure { error.value = friendlyError(it) } }

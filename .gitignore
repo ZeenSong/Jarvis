@@ -43,3 +43,6 @@ artifacts/*/
 *.dump
 test-results/
 playwright-report/
+
+deploy/whisper/cache/
+deploy/whisper/api-key

@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
-enum class VoicePhase { preparing, listening, typing, thinking, speaking, muted, error, ended }
+enum class VoicePhase { preparing, listening, typing, cloud, thinking, speaking, muted, error, ended }
 
 data class VoiceTurn(val id: Long, val role: String, val text: String, val interrupted: Boolean = false)
 
@@ -71,6 +71,7 @@ class VoiceCallController(
     private var synthesizer: SpeechSynthesizer? = null
     private var timerJob: Job? = null
     private var turnJob: Job? = null
+    private var resultTimeoutJob: Job? = null
     private var greetingPending = true
     private var greetingStarted = false
     private var greetingSpeaking = false
@@ -80,12 +81,14 @@ class VoiceCallController(
     private var lastSanitized = ""
     private var turnCount = 0L
     private var consecutiveErrors = 0
+    private var languageIndex = 0
     private var starting = false
     private var focusRequest: AudioFocusRequest? = null
     private var previousSpeaker = false
     private var ended = false
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { }
+    private val languages = listOf("zh-CN", "cmn-Hans-CN", "zh", "zh_CN")
 
     val conversationId: String? get() = mutableState.value.conversationId
 
@@ -102,7 +105,7 @@ class VoiceCallController(
             mutableState.update {
                 it.copy(
                     speechAvailable = false,
-                    status = "此设备没有可用的语音识别服务，可以使用键盘输入。",
+                    status = "此设备没有可用的系统语音识别服务；可使用云端识别或键盘输入。",
                 )
             }
         }
@@ -178,13 +181,26 @@ class VoiceCallController(
             if (mutableState.value.muted) mutableState.update { it.copy(phase = VoicePhase.muted, status = "麦克风已静音") }
             return
         }
+        if (!mutableState.value.speechAvailable) {
+            mutableState.update {
+                it.copy(
+                    phase = VoicePhase.cloud,
+                    partial = "",
+                    level = 0f,
+                    status = "点击录音，使用云端识别",
+                )
+            }
+            return
+        }
         val speech = recognizer
         if (speech == null || !speech.available) {
             mutableState.update {
                 it.copy(
-                    phase = VoicePhase.error,
+                    phase = VoicePhase.cloud,
                     speechAvailable = false,
-                    status = "语音识别不可用，请使用键盘输入。",
+                    partial = "",
+                    level = 0f,
+                    status = "点击录音，使用云端识别",
                 )
             }
             return
@@ -199,7 +215,7 @@ class VoiceCallController(
                 speechAvailable = true,
             )
         }
-        speech.start("zh-CN")
+        speech.start(languages[languageIndex.coerceIn(0, languages.lastIndex)])
     }
 
     // ------------------------------------------------------------------
@@ -216,11 +232,13 @@ class VoiceCallController(
     }
 
     override fun onPartial(text: String) {
+        resultTimeoutJob?.cancel()
         mutableState.update { it.copy(partial = text, phase = VoicePhase.listening, status = "我在听") }
     }
 
     override fun onFinal(text: String) {
         if (ended) return
+        resultTimeoutJob?.cancel()
         val value = text.trim()
         if (value.isEmpty()) { restartListeningSoon(); return }
         consecutiveErrors = 0
@@ -236,6 +254,7 @@ class VoiceCallController(
 
     override fun onError(code: Int) {
         if (ended) return
+        resultTimeoutJob?.cancel()
         when (code) {
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                 mutableState.update {
@@ -248,11 +267,30 @@ class VoiceCallController(
                 }
             }
             SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> restartListeningSoon()
+            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> {
+                if (languageIndex < languages.lastIndex) {
+                    languageIndex++
+                    mutableState.update { it.copy(status = "正在尝试兼容的语言包…") }
+                    restartListeningSoon(250)
+                } else {
+                    mutableState.update {
+                        it.copy(
+                            phase = VoicePhase.cloud,
+                            speechAvailable = false,
+                            status = "系统语音服务不支持中文；已切换到云端识别。",
+                        )
+                    }
+                }
+            }
             SpeechRecognizer.ERROR_RECOGNIZER_BUSY, SpeechRecognizer.ERROR_CLIENT -> {
                 consecutiveErrors++
                 if (consecutiveErrors >= 3) {
                     mutableState.update {
-                        it.copy(phase = VoicePhase.error, speechAvailable = false, status = "语音识别暂时不可用，请使用键盘输入。")
+                        it.copy(
+                            phase = VoicePhase.cloud,
+                            speechAvailable = false,
+                            status = "系统语音识别不可用；已切换到云端识别。",
+                        )
                     }
                 } else restartListeningSoon(600)
             }
@@ -260,22 +298,59 @@ class VoiceCallController(
                 consecutiveErrors++
                 mutableState.update { it.copy(status = "识别服务连接不稳定，正在重试…") }
                 if (consecutiveErrors >= 4) {
-                    mutableState.update { it.copy(phase = VoicePhase.error, speechAvailable = false, status = "语音识别服务暂时不可用，请使用键盘输入。") }
+                    mutableState.update {
+                        it.copy(
+                            phase = VoicePhase.cloud,
+                            speechAvailable = false,
+                            status = "系统语音识别服务不可用；已切换到云端识别。",
+                        )
+                    }
                 } else restartListeningSoon(900)
             }
-            else -> restartListeningSoon(700)
+            else -> {
+                consecutiveErrors++
+                if (consecutiveErrors >= 4) {
+                    mutableState.update {
+                        it.copy(
+                            phase = VoicePhase.cloud,
+                            speechAvailable = false,
+                            status = "系统语音识别不可用；已切换到云端识别。",
+                        )
+                    }
+                } else restartListeningSoon(700)
+            }
         }
     }
 
     override fun onEndOfSpeech() {
-        if (mutableState.value.phase == VoicePhase.listening) {
-            mutableState.update { it.copy(status = "正在整理你的话…") }
+        if (mutableState.value.phase != VoicePhase.listening) return
+        mutableState.update { it.copy(status = "正在整理你的话…") }
+        resultTimeoutJob?.cancel()
+        resultTimeoutJob = mainScope.launch {
+            delay(6_000)
+            if (ended || mutableState.value.muted || !mutableState.value.speechAvailable) return@launch
+            if (mutableState.value.phase != VoicePhase.listening) return@launch
+            consecutiveErrors++
+            if (consecutiveErrors >= 3) {
+                mutableState.update {
+                    it.copy(
+                        phase = VoicePhase.cloud,
+                        speechAvailable = false,
+                        status = "系统语音识别没有返回结果；已切换到云端识别。",
+                    )
+                }
+            } else {
+                mutableState.update { it.copy(status = "没有收到结果，正在重试…") }
+                restartListeningSoon(250)
+            }
         }
     }
 
     private fun restartListeningSoon(delayMs: Long = 350) {
+        resultTimeoutJob?.cancel()
         if (ended || mutableState.value.muted) return
         if (mutableState.value.phase == VoicePhase.speaking || mutableState.value.phase == VoicePhase.thinking) return
+        if (!mutableState.value.speechAvailable) return
         mainScope.launch {
             delay(delayMs)
             if (!ended && mutableState.value.phase != VoicePhase.speaking && mutableState.value.phase != VoicePhase.thinking) startListening()
@@ -490,6 +565,7 @@ class VoiceCallController(
             VoicePhase.speaking, VoicePhase.thinking -> interrupt()
             VoicePhase.listening -> recognizer?.stop()
             VoicePhase.typing -> startListening()
+            VoicePhase.cloud -> Unit
             VoicePhase.muted -> toggleMute()
             else -> startListening()
         }
@@ -522,6 +598,7 @@ class VoiceCallController(
 
     fun end() {
         ended = true
+        resultTimeoutJob?.cancel()
         turnJob?.cancel()
         timerJob?.cancel()
         recognizer?.cancel()
