@@ -123,6 +123,8 @@ export class JarvisAssistantAdapter {
     private readonly getReasoningEffort?: () => string | undefined,
     private readonly getSkills?: () => string[],
     private readonly onSkillsConsumed?: () => void,
+    private readonly getAttachments?: () => File[],
+    private readonly onAttachmentsConsumed?: () => void,
   ) {
     const g = this.gateway;
     const initialId = this.initialConversationId;
@@ -131,6 +133,8 @@ export class JarvisAssistantAdapter {
     const readReasoningEffort = this.getReasoningEffort;
     const readSkills = this.getSkills;
     const skillsConsumed = this.onSkillsConsumed;
+    const readAttachments = this.getAttachments;
+    const attachmentsConsumed = this.onAttachmentsConsumed;
     this.model = { run: async function* (options: Parameters<ChatModelAdapter["run"]>[0]) {
       const input = textOf(options.messages.at(-1));
       if (!input.trim()) return;
@@ -158,12 +162,21 @@ export class JarvisAssistantAdapter {
         if (controller.signal.aborted) return;
         const reasoningEffort = readReasoningEffort?.();
         const skills = readSkills?.() ?? [];
+        const files = readAttachments?.() ?? [];
+        const markers: string[] = [];
+        for (const file of files.slice(0, 4)) {
+          const media = await g.uploadMedia(conversationId, file);
+          markers.push(`MEDIA_RESOURCE:${media.id}`);
+        }
         const accepted = await g.request("conversation.message", {
-          conversation_id: conversationId, content: input, idempotency_key: randomUUID(),
+          conversation_id: conversationId,
+          content: markers.length ? `${markers.join("\n")}\n${input}` : input,
+          idempotency_key: randomUUID(),
           ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           ...(skills.length ? { skills } : {}),
         });
         if (skills.length) skillsConsumed?.();
+        if (markers.length) attachmentsConsumed?.();
         let content = "";
         let revision = 0;
         const activities = new Map<string, Activity>();

@@ -94,21 +94,6 @@ fun VoiceCallScreen(
     var cloudSeconds by remember { mutableIntStateOf(0) }
     var cloudError by remember { mutableStateOf<String?>(null) }
 
-    fun startCloudRecording() {
-        if (cloudRecording || cloudBusy) return
-        if (state.muted) {
-            cloudError = "麦克风已静音，请先取消静音。"
-            return
-        }
-        cloudError = null
-        if (recorder.start()) {
-            cloudRecording = true
-            cloudSeconds = 0
-        } else {
-            cloudError = "无法启动麦克风，请检查权限或稍后重试。"
-        }
-    }
-
     fun stopCloudRecording() {
         if (!cloudRecording) return
         cloudRecording = false
@@ -131,6 +116,25 @@ fun VoiceCallScreen(
                 }
                 .onFailure { cloudError = friendlyError(it) }
             cloudBusy = false
+        }
+    }
+
+    fun startCloudRecording() {
+        if (cloudRecording || cloudBusy) return
+        if (state.muted) {
+            cloudError = "麦克风已静音，请先取消静音。"
+            return
+        }
+        // Barge-in: do not record the tail of Jarvis's own TTS.
+        if (state.phase == VoicePhase.speaking || state.phase == VoicePhase.thinking) {
+            controller.interrupt()
+        }
+        cloudError = null
+        if (recorder.start { stopCloudRecording() }) {
+            cloudRecording = true
+            cloudSeconds = 0
+        } else {
+            cloudError = "无法启动麦克风，请检查权限或稍后重试。"
         }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
@@ -567,7 +571,7 @@ private fun CloudSpeechPanel(
             when (configured) {
                 true -> {
                     Text(
-                        if (muted) "麦克风已静音，请先取消静音。" else "点击开始录音，说完再点停止；最长 30 秒。",
+                        if (muted) "麦克风已静音，请先取消静音。" else "点击说话；停顿约 1 秒会自动发送，也可以手动停止。",
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.muted,
                     )

@@ -114,6 +114,9 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
   const [reasoningEfforts, setReasoningEfforts] = useState<ReasoningEffort[]>([]);
   const [skills, setSkills] = useState<SkillOption[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const attachmentRef = useRef<File[]>([]);
+  const updateAttachments = useCallback((files: File[]) => { attachmentRef.current = files; setAttachments(files); }, []);
   const reasoningPreference = useRef<ReasoningEffort | undefined>(undefined);
   const selectedSkillsPreference = useRef<string[]>([]);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
@@ -213,10 +216,11 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
   const adapter = useMemo(() => new JarvisAssistantAdapter(
     gateway, conversationId, developer, onConversationCreated,
     () => reasoningPreference.current, () => selectedSkillsPreference.current, consumeSkillSelection,
-  ), [conversationId, developer, gateway, onConversationCreated, consumeSkillSelection]);
+    () => attachmentRef.current, () => updateAttachments([]),
+  ), [conversationId, developer, gateway, onConversationCreated, consumeSkillSelection, updateAttachments]);
   const initialMessages = useMemo<ThreadMessageLike[]>(() => messages.filter((message) => ["user", "jarvis"].includes(message.role)).map((message) => ({
     id: message.id, role: message.role === "user" ? "user" : "assistant",
-    content: message.role === "user" ? [{ type: "text", text: message.content }] : assistantContentParts(message.content),
+    content: message.role === "user" ? assistantContentParts(message.content) : assistantContentParts(message.content),
     metadata: { custom: { turn_id: message.turn_id, workspace_id: message.workspace_id } },
   })), [messages]);
   const runtime = useLocalRuntime(adapter.model, { initialMessages });
@@ -238,7 +242,7 @@ export function JarvisConversation({ gateway, conversationId, snapshot: initial 
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage: JarvisTurn }} />
           <ThreadPrimitive.ScrollToBottom className="conversation-scroll-bottom" aria-label="回到最新消息">↓</ThreadPrimitive.ScrollToBottom>
         </ThreadPrimitive.Viewport>
-        <Composer prompt={prompt} onPromptApplied={onPromptApplied} registerPrefill={registerComposerPrefill} reasoningEfforts={reasoningEfforts} reasoningEffort={reasoningEffort} skills={skills} selectedSkills={selectedSkills} onSkillsChange={setSkillSelection} onReasoningEffortChange={(value) => {
+        <Composer prompt={prompt} onPromptApplied={onPromptApplied} registerPrefill={registerComposerPrefill} reasoningEfforts={reasoningEfforts} reasoningEffort={reasoningEffort} skills={skills} selectedSkills={selectedSkills} onSkillsChange={setSkillSelection} attachments={attachments} onAttachmentsChange={updateAttachments} onReasoningEffortChange={(value) => {
           reasoningPreference.current = value;
           setReasoningEffort(value);
         }} />
@@ -259,10 +263,11 @@ function ConversationWelcome() {
   </div>;
 }
 
-function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, onReasoningEffortChange, skills, selectedSkills, onSkillsChange, registerPrefill }: {
+function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, onReasoningEffortChange, skills, selectedSkills, onSkillsChange, registerPrefill, attachments, onAttachmentsChange }: {
   prompt?: string; onPromptApplied?: () => void; reasoningEfforts: ReasoningEffort[]; reasoningEffort: ReasoningEffort;
   onReasoningEffortChange: (value: ReasoningEffort) => void; skills: SkillOption[]; selectedSkills: string[];
   onSkillsChange: (value: string[]) => void; registerPrefill: (apply: ((text: string) => void) | undefined) => void;
+  attachments: File[]; onAttachmentsChange: (files: File[]) => void;
 }) {
   const { setText } = unstable_useComposerInput();
   const localRunning = useAuiState((state) => state.thread.isRunning);
@@ -273,6 +278,12 @@ function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, 
   const queued = !localRunning && context.messages.some((message) => message.role === "jarvis" && message.status === "queued");
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const addFiles = (files: FileList | null) => {
+    if (!files) return;
+    const images = [...files].filter((file) => ["image/png", "image/jpeg", "image/webp"].includes(file.type) && file.size <= 2 * 1024 * 1024);
+    onAttachmentsChange([...attachments, ...images].slice(0, 4));
+  };
   useEffect(() => { registerPrefill(setText); return () => registerPrefill(undefined); }, [registerPrefill, setText]);
   useEffect(() => { if (!running) setStopping(false); }, [running]);
   const stop = async () => {
@@ -287,8 +298,10 @@ function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, 
     applied.current = prompt; setText(prompt); onPromptApplied?.();
   }, [onPromptApplied, prompt, setText]);
   return <ComposerPrimitive.Root className="assistant-ui-composer">
-    <ComposerPrimitive.Input placeholder="问 Jarvis 任何事情……" aria-label="消息内容" />
-    <div className="composer-footer"><div className="composer-meta">{skills.length > 0 && <details className="skills-picker">
+    <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
+    {attachments.length > 0 && <div className="composer-attachments">{attachments.map((file, index) => <span key={`${file.name}:${index}`} className="composer-attachment"><img src={URL.createObjectURL(file)} alt={file.name} /><button type="button" aria-label={`移除 ${file.name}`} onClick={() => onAttachmentsChange(attachments.filter((_, i) => i !== index))}>×</button></span>)}</div>}
+    <ComposerPrimitive.Input placeholder="问 Jarvis 任何事情……" aria-label="消息内容" onPaste={(event) => { const files = event.clipboardData?.files; if (files?.length) { event.preventDefault(); addFiles(files); } }} />
+    <div className="composer-footer"><div className="composer-meta"><button type="button" className="composer-attach" aria-label="添加图片" disabled={running} onClick={() => fileInput.current?.click()}>＋</button>{skills.length > 0 && <details className="skills-picker">
       <summary aria-label="选择本次可用 Skills">Skills · {selectedSkills.length ? `${selectedSkills.length} 项已选` : "Auto"}<span aria-hidden="true">⌄</span></summary>
       <div className="skills-menu" role="group" aria-label="本次可用 Skills">
         <button type="button" className={!selectedSkills.length ? "selected" : ""} aria-pressed={!selectedSkills.length} onClick={() => onSkillsChange([])}>Auto <small>由 Hermes 自动选择</small></button>
@@ -302,7 +315,8 @@ function Composer({ prompt, onPromptApplied, reasoningEfforts, reasoningEffort, 
   </ComposerPrimitive.Root>;
 }
 
-function UserMessage() { return <MessagePrimitive.Root className="message user"><MessagePrimitive.Content components={{ Text: UserText }} /></MessagePrimitive.Root>; }
+function UserMessage() { return <MessagePrimitive.Root className="message user"><MessagePrimitive.Content components={{ Text: UserText, File: UserFile }} /></MessagePrimitive.Root>; }
+function UserFile({ data, filename }: { data: string; filename?: string }) { return <figure className="assistant-media user-media"><a href={data} target="_blank" rel="noreferrer" title="打开原图"><img src={data} alt={filename ?? "上传的图片"} loading="lazy" decoding="async" /></a></figure>; }
 function UserText({ text }: { text: string }) {
   const answer = /^用户已回答问题：([\s\S]*?)\n回答：([\s\S]*?)\n请根据此回答继续原任务。$/.exec(text);
   if (!answer) return <span>{text}</span>;

@@ -7,6 +7,7 @@ import { sql as closeStaleEvents } from "./0004-close-stale-events.js";
 import { sql as leases } from "./0005-leases.js";
 import { sql as scheduleBackoff } from "./0006-schedule-backoff.js";
 import { sql as appCatalog } from "./0007-app-catalog.js";
+import { sql as dshCodingAgent } from "./0008-dsh-coding-agent.js";
 
 /**
  * Versioned schema migrations.
@@ -38,6 +39,7 @@ export const migrations: readonly Migration[] = [
   { version: "0005", name: "leases", sql: leases },
   { version: "0006", name: "schedule-backoff", sql: scheduleBackoff },
   { version: "0007", name: "app-catalog", sql: appCatalog },
+  { version: "0008", name: "dsh-coding-agent", sql: dshCodingAgent },
 ];
 
 export type MigrationLogger = {

@@ -157,7 +157,9 @@ class VoiceCallController(
         if (!greetingPending || ended || greetingStarted) return
         greetingStarted = true
         greetingPending = false
-        val greeting = if (mutableState.value.conversationId == null) {
+        val greeting = if (!mutableState.value.speechAvailable) {
+            "我在，点下方按钮说话。"
+        } else if (mutableState.value.conversationId == null) {
             "你好，我是 Jarvis。今天想让我帮你做什么？"
         } else {
             "我在。继续说就好。"

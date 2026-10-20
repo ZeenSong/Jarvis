@@ -1,6 +1,7 @@
 package cloud.jarvis.app
 
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
@@ -9,6 +10,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,11 +30,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -180,7 +185,7 @@ private sealed interface ImageState {
 }
 
 @Composable
-private fun AssistantImage(path: String, load: suspend (String) -> ByteArray) {
+private fun AssistantImage(path: String, load: suspend (String) -> ByteArray, description: String = "Jarvis 返回的图片") {
     val palette = jarvisColors()
     var retry by remember(path) { mutableIntStateOf(0) }
     var expanded by remember(path) { mutableStateOf(false) }
@@ -221,7 +226,7 @@ private fun AssistantImage(path: String, load: suspend (String) -> ByteArray) {
             }
             is ImageState.Ready -> Image(
                 image.bitmap,
-                "Jarvis 返回的图片",
+                description,
                 Modifier.fillMaxWidth().heightIn(max = 440.dp).clickable { expanded = true },
                 contentScale = ContentScale.Fit,
             )
@@ -231,7 +236,7 @@ private fun AssistantImage(path: String, load: suspend (String) -> ByteArray) {
         Dialog(onDismissRequest = { expanded = false }) {
             Surface(shape = RoundedCornerShape(20.dp), color = palette.surface) {
                 Column(Modifier.padding(10.dp)) {
-                    Image((state as ImageState.Ready).bitmap, "Jarvis 返回的图片", Modifier.fillMaxWidth().heightIn(max = 680.dp), contentScale = ContentScale.Fit)
+                    Image((state as ImageState.Ready).bitmap, description, Modifier.fillMaxWidth().heightIn(max = 680.dp), contentScale = ContentScale.Fit)
                     TextButton(onClick = { expanded = false }, modifier = Modifier.align(Alignment.End)) { Text("关闭") }
                 }
             }
@@ -333,15 +338,24 @@ private fun AssistantMessage(value: String, load: suspend (String) -> ByteArray)
 }
 
 @Composable
-private fun UserMessage(value: String) {
+private fun UserMessage(value: String, load: suspend (String) -> ByteArray) {
     val palette = jarvisColors()
     val answer = remember(value) { Regex("^用户已回答问题：([\\s\\S]*?)\\n回答：([\\s\\S]*?)\\n请根据此回答继续原任务。$").matchEntire(value) }
-    if (answer == null) {
-        MarkdownMessage(value)
-    } else {
+    if (answer != null) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("对「${answer.groupValues[1]}」的回答", style = MaterialTheme.typography.labelSmall, color = palette.accentInk.copy(alpha = 0.8f))
             Text(answer.groupValues[2], fontWeight = FontWeight.SemiBold, color = palette.accentInk)
+        }
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        assistantContentParts(value).forEachIndexed { index, part ->
+            key("user-$index:$part") {
+                when (part) {
+                    is AssistantContentPart.Text -> if (part.value.isNotBlank()) MarkdownMessage(part.value.trim('\n'))
+                    is AssistantContentPart.Image -> AssistantImage(part.path, load, "上传的图片")
+                }
+            }
         }
     }
 }
@@ -371,6 +385,7 @@ fun ConversationScreen(
     val selectedId by repo.selectedConversationId.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var text by remember { mutableStateOf("") }
     var reasoning by remember { mutableStateOf<String?>(null) }
     var selectedSkills by remember { mutableStateOf(setOf<String>()) }
@@ -475,7 +490,7 @@ fun ConversationScreen(
                     items(messages.size, key = { messages[it].str("id").ifBlank { "message-$it" } }) { index ->
                         val message = messages[index]
                         if (message.str("role") == "user") {
-                            UserBubble(message.str("content"))
+                            UserBubble(message.str("content"), repo::media)
                         } else {
                             JarvisTurn(
                                 message = message,
@@ -539,6 +554,25 @@ fun ConversationScreen(
                     text = ""
                     followLatest = true
                     repo.send(submitted, reasoning, selectedSkills)
+                    selectedSkills = emptySet()
+                }
+            },
+            onSendImage = { uri, submitted ->
+                scope.launch {
+                    val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+                    val bytes = withContext(Dispatchers.IO) {
+                        runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+                    }
+                    if (bytes == null || bytes.isEmpty()) {
+                        repo.reportError("无法读取这张图片。")
+                    } else if (bytes.size > 2 * 1024 * 1024) {
+                        repo.reportError("图片不能超过 2 MB。")
+                    } else if (mime !in listOf("image/png", "image/jpeg", "image/webp")) {
+                        repo.reportError("仅支持 PNG、JPEG 或 WebP 图片。")
+                    } else {
+                        followLatest = true
+                        repo.sendImage(bytes, mime, uri.lastPathSegment?.substringAfterLast('/') ?: "image", submitted, reasoning, selectedSkills)
+                    }
                     selectedSkills = emptySet()
                 }
             },
@@ -613,7 +647,7 @@ fun ConversationScreen(
 }
 
 @Composable
-private fun UserBubble(value: String) {
+private fun UserBubble(value: String, load: suspend (String) -> ByteArray) {
     val palette = jarvisColors()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Column(
@@ -621,7 +655,7 @@ private fun UserBubble(value: String) {
                 .background(palette.surface2, RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
                 .border(1.dp, palette.line, RoundedCornerShape(18.dp, 18.dp, 5.dp, 18.dp))
                 .padding(horizontal = 14.dp, vertical = 11.dp),
-        ) { UserMessage(value) }
+        ) { UserMessage(value, load) }
     }
 }
 
@@ -987,9 +1021,24 @@ private fun Composer(
     onReasoning: () -> Unit,
     onVoice: () -> Unit,
     onSend: () -> Unit,
+    onSendImage: (Uri, String) -> Unit,
     onStop: () -> Unit,
 ) {
     val palette = jarvisColors()
+    val context = LocalContext.current
+    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { picked ->
+        if (picked != null) imageUri = picked
+    }
+    val preview by produceState<ImageBitmap?>(null, imageUri) {
+        value = withContext(Dispatchers.IO) {
+            imageUri?.let { uri ->
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
+                }.getOrNull()
+            }
+        }
+    }
     Column(
         Modifier.fillMaxWidth().background(palette.background).padding(horizontal = 14.dp).padding(top = 8.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
@@ -1001,6 +1050,33 @@ private fun Composer(
                 .padding(horizontal = 12.dp, vertical = 9.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
+            imageUri?.let { uri ->
+                Row(
+                    Modifier.fillMaxWidth().background(palette.surface2, RoundedCornerShape(12.dp)).padding(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    preview?.let {
+                        Image(
+                            bitmap = it,
+                            contentDescription = "待发送图片",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)),
+                        )
+                    }
+                    Text(
+                        uri.lastPathSegment?.substringAfterLast('/')?.take(28) ?: "已选择图片",
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Surface(onClick = { imageUri = null }, shape = CircleShape, color = palette.surface3, modifier = Modifier.size(26.dp)) {
+                        Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Close, "移除图片", Modifier.size(13.dp), tint = palette.muted) }
+                    }
+                }
+            }
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChange,
@@ -1037,6 +1113,12 @@ private fun Composer(
                     }
                 }
                 Spacer(Modifier.weight(1f))
+                Surface(
+                    onClick = { if (!running) imagePicker.launch("image/*") },
+                    shape = CircleShape,
+                    color = palette.surface2,
+                    modifier = Modifier.size(38.dp),
+                ) { Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Plus, "添加图片", Modifier.size(18.dp), tint = palette.muted) } }
                 Surface(onClick = onVoice, shape = CircleShape, color = palette.accentSoft, modifier = Modifier.size(38.dp)) {
                     Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Mic, "语音通话", Modifier.size(17.dp), tint = palette.accent) }
                 }
@@ -1045,8 +1127,21 @@ private fun Composer(
                         Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Stop, "停止任务", Modifier.size(15.dp), tint = palette.danger) }
                     }
                 } else {
-                    Surface(onClick = onSend, shape = CircleShape, color = if (text.isBlank() || sending) palette.surface3 else palette.accent, modifier = Modifier.size(38.dp)) {
-                        Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Send, "发送消息", Modifier.size(18.dp), tint = if (text.isBlank() || sending) palette.muted2 else palette.accentInk) }
+                    val canSend = (text.isNotBlank() || imageUri != null) && !sending
+                    Surface(
+                        onClick = {
+                            if (!canSend) return@Surface
+                            val submitted = text
+                            val attached = imageUri
+                            onTextChange("")
+                            imageUri = null
+                            if (attached != null) onSendImage(attached, submitted) else onSend()
+                        },
+                        shape = CircleShape,
+                        color = if (!canSend) palette.surface3 else palette.accent,
+                        modifier = Modifier.size(38.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) { Icon(JarvisIcons.Send, "发送消息", Modifier.size(18.dp), tint = if (!canSend) palette.muted2 else palette.accentInk) }
                     }
                 }
             }

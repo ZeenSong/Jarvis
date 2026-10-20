@@ -1080,6 +1080,34 @@ export async function buildApp(options: {
         return reply.code(403).send({ error: "device_required" });
       (req as any).identity = identity;
     });
+    /**
+     * Conversation-scoped image upload. The image is stored as a media
+     * resource and the message carries a MEDIA_RESOURCE:<id> marker, so the
+     * existing durable transcript and the assistant renderer keep working.
+     */
+    api.post<{ Body: unknown }>("/api/v2/media", { bodyLimit: 4 * 1024 * 1024 }, async (req, reply) => {
+      const identity = (req as any).identity;
+      if (identity.role !== "device") return reply.code(403).send({ error: "device_required" });
+      const body = z.object({
+        conversation_id: z.uuid(),
+        data_base64: z.string().min(1).max(3 * 1024 * 1024),
+        content_type: z.enum(["image/png", "image/jpeg", "image/webp"]),
+        filename: z.string().trim().max(120).optional(),
+      }).strict().parse(req.body);
+      const data = Buffer.from(body.data_base64, "base64");
+      if (!data.length || data.length > 2 * 1024 * 1024) return reply.code(413).send({ error: "media_too_large" });
+      try {
+        return await mediaResources.publish(identity.id, body.conversation_id, {
+          data,
+          contentType: body.content_type,
+          source: "user",
+          filename: body.filename,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "conversation_not_found") return reply.code(404).send({ error: "conversation_not_found" });
+        return reply.code(400).send({ error: "invalid_media" });
+      }
+    });
     api.get("/api/v2/speech/status", async (req, reply) => {
       if ((req as any).identity.role !== "device") return reply.code(403).send({ error: "device_required" });
       return {

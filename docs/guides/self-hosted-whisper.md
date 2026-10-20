@@ -10,7 +10,7 @@ Jarvis 从 v0.4.2 起提供自建 Whisper 兜底：
 4. Jarvis 服务端通过私有 Docker 网络转发给 Speaches（faster-whisper）；
 5. 转写文字作为当前语音会话的一轮发送，回复仍由手机 TTS 播报。
 
-音频不会发送给第三方 ASR，Whisper 端口也不暴露到公网。完整部署步骤、GPU/CPU 选型、模型下载和排障见：
+音频不会发送给第三方 ASR，Whisper 端口也不暴露到公网。默认使用 `large-v3-turbo`，热态转写约 0.6 秒；完整部署步骤、GPU/CPU 选型、模型下载和排障见：
 
 - [deploy/whisper/README.md](../../deploy/whisper/README.md)
 
@@ -26,7 +26,7 @@ GET /api/v2/speech/status
 {
   "configured": true,
   "provider": "whisper",
-  "model": "Systran/faster-whisper-large-v3",
+  "model": "deepdml/faster-whisper-large-v3-turbo-ct2",
   "language": "zh",
   "max_audio_bytes": 8388608
 }
@@ -54,7 +54,7 @@ Content-Type: application/json
 ```env
 SPEECH_BASE_URL=http://jarvis-whisper:8000/v1
 SPEECH_API_KEY=<shared secret>
-SPEECH_STT_MODEL=Systran/faster-whisper-large-v3
+SPEECH_STT_MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
 SPEECH_STT_LANGUAGE=zh
 SPEECH_TIMEOUT_MS=120000
 SPEECH_MAX_AUDIO_BYTES=8388608

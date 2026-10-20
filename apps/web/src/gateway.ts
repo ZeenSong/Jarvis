@@ -159,6 +159,29 @@ export class Gateway extends EventTarget {
       );
     });
   }
+  async uploadMedia(conversationId: string, file: File): Promise<{ id: string; content_url: string }> {
+    if (file.size > 2 * 1024 * 1024) throw Error("图片不能超过 2 MB");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const response = await fetch("/api/v2/media", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        data_base64: btoa(binary),
+        content_type: file.type || "image/jpeg",
+        filename: file.name.slice(0, 120),
+      }),
+    });
+    if (!response.ok) {
+      const value = await response.json().catch(() => ({}));
+      throw Error(String(value?.error ?? `图片上传失败（HTTP ${response.status}）`));
+    }
+    return await response.json();
+  }
+
   async resource(name: string) {
     return this.accept(await this.request("resource.get", { resource: name }));
   }

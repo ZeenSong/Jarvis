@@ -19,7 +19,7 @@ test("speech config applies safe defaults and clamps limits", () => {
   assert.ok(config);
   assert.equal(config!.baseUrl, "http://whisper:8000/v1");
   assert.equal(config!.apiKey, "local-key");
-  assert.equal(config!.model, "Systran/faster-whisper-large-v3");
+  assert.equal(config!.model, "deepdml/faster-whisper-large-v3-turbo-ct2");
   assert.equal(config!.language, "zh");
   assert.equal(config!.timeoutMs, 180_000);
   assert.equal(config!.maxAudioBytes, 512);

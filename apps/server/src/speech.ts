@@ -47,7 +47,7 @@ export function speechConfig(env: NodeJS.ProcessEnv = process.env): SpeechConfig
   return {
     baseUrl,
     apiKey: env.SPEECH_API_KEY?.trim() || undefined,
-    model: env.SPEECH_STT_MODEL?.trim() || "Systran/faster-whisper-large-v3",
+    model: env.SPEECH_STT_MODEL?.trim() || "deepdml/faster-whisper-large-v3-turbo-ct2",
     language: env.SPEECH_STT_LANGUAGE?.trim() || "zh",
     timeoutMs: Number.isFinite(timeout) ? clamp(timeout, 5_000, 180_000) : 60_000,
     maxAudioBytes: Number.isFinite(maxAudio) ? clamp(maxAudio, MIN_AUDIO_BYTES, 12 * 1024 * 1024) : DEFAULT_MAX_AUDIO_BYTES,

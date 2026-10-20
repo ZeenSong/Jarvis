@@ -5,6 +5,7 @@ import { buildApp } from "./app.js";
 import { configSchema, priceSchema } from "./config.js";
 import { hermesAgentConfig, HermesClient } from "../../../packages/hermes-bridge/src/index.js";
 import { HermesRuntime } from "../../../packages/hermes-runtime/src/index.js";
+import { DshRuntime, dshConfig } from "../../../packages/agent-runtime-dsh/src/index.js";
 const config = configSchema.parse(process.env);
 const prices = priceSchema.parse(
   process.env.PRICES_FILE
@@ -17,6 +18,8 @@ const runtimes = new RuntimeRegistry();
 const hermesConfig = hermesAgentConfig();
 if (process.env.HERMES_ENABLED === "1" && hermesConfig)
   runtimes.register("hermes", new HermesRuntime(new HermesClient(hermesConfig.url, hermesConfig.apiKey)));
+const dsh = dshConfig();
+if (dsh) runtimes.register("dsh", new DshRuntime(dsh));
 /**
  * Single-writer guard.
  *

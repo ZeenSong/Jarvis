@@ -156,6 +156,41 @@ export class HermesClient {
       } satisfies HermesSkill];
     });
   }
+  /**
+   * Ask the multimodal Hermes model about one image. The conversation path
+   * uses this to turn a user attachment into text before the main run, so the
+   * existing tool/stream pipeline stays unchanged.
+   */
+  async describeImage(
+    base64: string,
+    mimeType: string,
+    prompt: string,
+    options: { model?: string; signal?: AbortSignal },
+  ) {
+    const response = await this.fetcher(endpoint(this.baseUrl, "v1/chat/completions"), {
+      method: "POST",
+      signal: options.signal,
+      headers: { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: options.model ?? "hermes-agent",
+        stream: false,
+        max_tokens: 900,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ],
+        }],
+      }),
+    });
+    if (!response.ok) throw Error(`hermes_vision_http_${response.status}`);
+    const value = await response.json() as any;
+    const content = value?.choices?.[0]?.message?.content;
+    if (typeof content !== "string" || !content.trim()) throw Error("hermes_vision_empty");
+    return content.trim();
+  }
+
   /** Generate a concise conversation label without giving the model tools. */
   async suggestTitle(input: string, answer: string, options: { model?: string; signal?: AbortSignal }) {
     const response = await this.fetcher(endpoint(this.baseUrl, "v1/chat/completions"), {

@@ -46,3 +46,6 @@ playwright-report/
 
 deploy/whisper/cache/
 deploy/whisper/api-key
+
+# Kotlin compiler session data
+apps/android/.kotlin/

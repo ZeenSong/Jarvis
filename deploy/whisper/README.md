@@ -19,11 +19,11 @@ Speaches（faster-whisper large-v3，GPU）
 
 | 硬件 | 推荐配置 | 体验 |
 | --- | --- | --- |
-| NVIDIA GPU（≥6 GB 显存） | `latest-cuda` + `large-v3` + `float16` | 实测 RTX 5070：8 秒中文音频约 2.3 秒 |
+| NVIDIA GPU（≥6 GB 显存） | `latest-cuda` + `large-v3-turbo` + `float16` | 实测 RTX 5070：8 秒中文音频约 0.6 秒 |
 | 仅 CPU，8 核以上 | `latest-cpu` + `small` 或 `medium` + `int8` | 可用，但响应更慢；不建议 `large-v3` |
 | 低配/ARM | `latest-cpu` + `small` + `int8` | 适合短句 |
 
-默认模型是 `Systran/faster-whisper-large-v3`（约 2.9 GB）。它常驻 GPU（约 4 GB 显存），冷启动约 20 秒，预热后每次转写约 2 秒。配置 `WHISPER__TTL=-1` 可禁止空闲卸载。
+默认模型是 `deepdml/faster-whisper-large-v3-turbo-ct2`（约 1.6 GB）。它常驻 GPU（约 3 GB 显存），冷启动约 10–20 秒，预热后 8 秒中文音频约 0.6 秒。配置 `WHISPER__TTL=-1` 可禁止空闲卸载。
 
 ## 一键部署
 
@@ -65,7 +65,7 @@ WHISPER_HTTPS_PROXY=http://172.23.0.1:7890 ./deploy/whisper/install.sh
 ```env
 SPEECH_BASE_URL=http://jarvis-whisper:8000/v1
 SPEECH_API_KEY=<与 Whisper 相同的 key>
-SPEECH_STT_MODEL=Systran/faster-whisper-large-v3
+SPEECH_STT_MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
 SPEECH_STT_LANGUAGE=zh
 SPEECH_TIMEOUT_MS=120000
 ```
@@ -97,7 +97,7 @@ docker exec jarvis-server node -e "fetch('http://jarvis-whisper:8000/health',{he
 - **模型下载失败**：设置 `WHISPER_HTTPS_PROXY`，或手动执行：
   ```bash
   docker exec jarvis-whisper curl -X POST -H "Authorization: Bearer $SPEECH_API_KEY" \
-    http://127.0.0.1:8000/v1/models/Systran/faster-whisper-large-v3
+    http://127.0.0.1:8000/v1/models/deepdml/faster-whisper-large-v3-turbo-ct2
   ```
 - **端口安全**：不要给 Whisper 添加 `ports:`。如果必须跨主机调用，用 Tailscale/内网反向代理并加认证。
 

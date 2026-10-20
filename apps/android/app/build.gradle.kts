@@ -15,7 +15,7 @@ val stableDebugKeystore = System.getenv("JARVIS_DEBUG_KEYSTORE")
 android {
     namespace = "cloud.jarvis.app"
     compileSdk = 35
-    defaultConfig { applicationId = "cloud.jarvis.app"; minSdk = 26; targetSdk = 35; versionCode = 7; versionName = "0.4.2"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "cloud.jarvis.app"; minSdk = 26; targetSdk = 35; versionCode = 8; versionName = "0.4.3"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     sourceSets.getByName("androidTest").assets.srcDir("../../../packages/ui-protocol/examples")
     buildFeatures { compose = true }
     signingConfigs {

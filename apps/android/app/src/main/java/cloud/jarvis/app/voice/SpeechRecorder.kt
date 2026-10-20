@@ -8,6 +8,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,8 @@ class SpeechRecorder(private val context: Context) {
     private val output = ByteArrayOutputStream()
     private var recorder: AudioRecord? = null
     private var job: Job? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var onAutoStop: (() -> Unit)? = null
 
     @Volatile
     var isRecording: Boolean = false
@@ -38,9 +42,10 @@ class SpeechRecorder(private val context: Context) {
         get() = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission") // `available` checks RECORD_AUDIO before every start.
-    fun start(): Boolean {
+    fun start(onAutoStop: (() -> Unit)? = null): Boolean {
         if (isRecording) return true
         if (!available) return false
+        this.onAutoStop = onAutoStop
         val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minimum <= 0) return false
         val bufferSize = maxOf(minimum, SAMPLE_RATE / 10 * 2)
@@ -81,11 +86,33 @@ class SpeechRecorder(private val context: Context) {
         isRecording = true
         job = scope.launch {
             val buffer = ByteArray(bufferSize)
+            var speechFrames = 0
+            var speechStarted = false
+            var silentBytes = 0L
             while (isActive && isRecording) {
                 val read = runCatching { created.read(buffer, 0, buffer.size) }.getOrDefault(-1)
                 if (read > 0) {
                     synchronized(output) {
                         if (output.size() + read <= MAX_PCM_BYTES) output.write(buffer, 0, read)
+                    }
+                    val rms = rms(buffer, read)
+                    if (!speechStarted) {
+                        if (rms >= SPEECH_RMS) {
+                            speechFrames++
+                            if (speechFrames >= 2) speechStarted = true
+                        } else {
+                            speechFrames = 0
+                        }
+                    } else {
+                        if (rms < SILENCE_RMS) silentBytes += read else silentBytes = 0
+                        // ~800 ms of trailing silence after speech: submit without
+                        // making the user hunt for the stop button.
+                        if (silentBytes >= SAMPLE_RATE * 2L * 8 / 10) {
+                            mainHandler.post {
+                                if (isRecording) onAutoStop?.invoke()
+                            }
+                            break
+                        }
                     }
                     if (output.size() >= MAX_PCM_BYTES) break
                 } else if (read < 0) break
@@ -97,6 +124,7 @@ class SpeechRecorder(private val context: Context) {
     /** Stop and return a WAV file, or null when nothing useful was captured. */
     fun stop(): ByteArray? {
         if (!isRecording && recorder == null) return null
+        onAutoStop = null
         isRecording = false
         val current = recorder
         recorder = null
@@ -111,6 +139,7 @@ class SpeechRecorder(private val context: Context) {
     }
 
     fun cancel() {
+        onAutoStop = null
         isRecording = false
         val current = recorder
         recorder = null
@@ -122,6 +151,19 @@ class SpeechRecorder(private val context: Context) {
     }
 
     fun release() = cancel()
+
+    private fun rms(buffer: ByteArray, length: Int): Double {
+        if (length < 2) return 0.0
+        var sum = 0.0
+        var index = 0
+        while (index + 1 < length) {
+            val sample = (buffer[index].toInt() and 0xff) or (buffer[index + 1].toInt() shl 8)
+            val signed = if (sample > 32767) sample - 65536 else sample
+            sum += (signed / 32768.0) * (signed / 32768.0)
+            index += 2
+        }
+        return kotlin.math.sqrt(sum / (length / 2))
+    }
 
     private fun wav(pcm: ByteArray): ByteArray {
         val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
@@ -150,5 +192,8 @@ class SpeechRecorder(private val context: Context) {
         const val SAMPLE_RATE = 16_000
         private const val MAX_SECONDS = 30
         private const val MAX_PCM_BYTES = SAMPLE_RATE * 2 * MAX_SECONDS
+        // ~0.02 RMS opens the utterance; ~0.008 for 800 ms closes it.
+        private const val SPEECH_RMS = 0.020
+        private const val SILENCE_RMS = 0.008
     }
 }

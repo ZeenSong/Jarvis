@@ -1507,3 +1507,54 @@
   .assistant-ui-composer { padding: 11px 12px 9px; }
   .composer-footer button { width: 34px; height: 34px; font-size: 20px; }
 }
+
+/* Composer image attachments */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 2px 2px;
+}
+.composer-attachment {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.composer-attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.composer-attachment button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .62);
+  color: #fff;
+  line-height: 1;
+  font-size: 13px;
+  cursor: pointer;
+}
+.composer-attach {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+}
+.composer-attach:disabled { opacity: .45; cursor: not-allowed; }
+.user-media { margin: 6px 0 2px; max-width: 280px; }
+.user-media img { width: 100%; border-radius: 12px; display: block; }

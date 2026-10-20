@@ -292,6 +292,19 @@ class GatewayClient(
         http("GET", "/api/v2/speech/status").jsonObject
     }.getOrNull()
 
+    /** Upload one conversation-scoped image and return its media resource. */
+    suspend fun uploadMedia(conversationId: String, data: ByteArray, mimeType: String, filename: String): JsonObject {
+        require(data.size in 1..2 * 1024 * 1024) { "media_too_large" }
+        val encoded = android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)
+        val payload = buildJsonObject {
+            put("conversation_id", conversationId)
+            put("data_base64", encoded)
+            put("content_type", mimeType)
+            put("filename", filename.take(120))
+        }
+        return http("POST", "/api/v2/media", payload, readTimeoutSeconds = 60).jsonObject
+    }
+
     /** Upload a short WAV clip and return its transcript. */
     suspend fun transcribe(audio: ByteArray): String {
         require(audio.size in 1..8 * 1024 * 1024) { "audio_too_large" }

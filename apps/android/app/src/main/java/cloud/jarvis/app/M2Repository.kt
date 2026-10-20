@@ -67,6 +67,8 @@ class M2Repository(
         scope.launch { runCatching { block() }.onFailure { error.value = friendlyError(it) } }
     }
 
+    fun reportError(message: String) { error.value = message }
+
     fun askAboutApp(name: String) { draft.value = "请读取并总结 $name 当前状态，同时告诉我下一步可以做什么。" }
     fun prefill(text: String) { draft.value = text }
     fun clearDraft() { draft.value = "" }
@@ -250,6 +252,39 @@ class M2Repository(
         }
     }
 
+    /**
+     * Upload an image, attach it to the conversation as a MEDIA_RESOURCE marker,
+     * then submit the normal text turn. The marker is rendered by both clients
+     * and resolved by the server into a multimodal description before Hermes.
+     */
+    fun sendImage(
+        bytes: ByteArray,
+        mimeType: String,
+        filename: String,
+        text: String,
+        reasoningEffort: String? = null,
+        skills: Set<String> = emptySet(),
+    ) {
+        if (sending.value) return
+        sending.value = true
+        task {
+            try {
+                var id = selected
+                if (id == null) {
+                    val conversation = gateway.request("conversation.create", buildJsonObject { put("title", "新会话") }).jsonObject
+                    id = conversation.getValue("id").jsonPrimitive.content
+                    selected = id
+                    selectedConversationId.value = id
+                }
+                val media = gateway.uploadMedia(id, bytes, mimeType, filename)
+                val marker = "MEDIA_RESOURCE:${media.getValue("id").jsonPrimitive.content}"
+                val content = if (text.isBlank()) marker else "$marker\n$text"
+                submit(content, reasoningEffort, skills, conversationId = id)
+            } finally {
+                sending.value = false
+            }
+        }
+    }
     /**
      * Reconcile a streaming reply from the durable conversation. This is the
      * safety net for a missed event (and the recovery path for voice calls).

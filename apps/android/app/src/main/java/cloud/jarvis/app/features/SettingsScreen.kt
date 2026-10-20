@@ -332,7 +332,7 @@ fun SettingsScreen(
         JarvisCard(padding = 16.dp, color = palette.surface2) {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Eyebrow("ABOUT JARVIS")
-                Text("Jarvis 0.4.2 · Your Personal AI Cloud", style = MaterialTheme.typography.bodySmall, color = palette.text)
+                Text("Jarvis 0.4.3 · Your Personal AI Cloud", style = MaterialTheme.typography.bodySmall, color = palette.text)
                 Text("数据、身份与会话留在你的私人云。Android 端与 Web 共享协议与状态。", style = MaterialTheme.typography.labelSmall, color = palette.muted)
                 Text("GPL-3.0-or-later · More Life. Less Work.", style = MaterialTheme.typography.labelSmall, color = palette.muted2)
             }
