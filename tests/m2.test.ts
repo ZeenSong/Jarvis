@@ -106,6 +106,7 @@ test(
     registry.register("codex", runtime);
     registry.register("pydantic", runtime);
     registry.register("hermes", runtime);
+    registry.register("dsh", runtime);
     const hermesRuns = new Map<string, { answer: string; status: string }>();
     const hermesStub = createServer((req, res) => {
       if (req.url === "/health") {
@@ -379,9 +380,10 @@ test(
         payload: { summary: "original result", diff: "+original" },
       });
       const instance = randomUUID();
+      const codingRuntime = (await ctx.db.query("SELECT runtime_type FROM agent_definitions WHERE id='coding-agent'")).rows[0].runtime_type;
       await ctx.db.query(
-        "INSERT INTO agent_instances(id,agent_definition_id,runtime_type,status) VALUES($1,'coding-agent','codex','running')",
-        [instance],
+        "INSERT INTO agent_instances(id,agent_definition_id,runtime_type,status) VALUES($1,'coding-agent',$2,'running')",
+        [instance, codingRuntime],
       );
       await ctx.db.query(
         "UPDATE agent_runs SET agent_instance_id=$2,runtime_run_id=$1 WHERE id=$1",

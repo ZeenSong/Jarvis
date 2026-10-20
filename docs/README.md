@@ -54,6 +54,7 @@
 - [M3.2 实施记录](milestones/m3/m3.2-progress.md)
 - [M3.3 实施与验收记录](milestones/m3/m3.3-progress.md)
 - [M4 交付记录](milestones/m4/m4-delivery.md) · [v0.4.0 发布记录](milestones/m4/m4-release.md)
+- [v0.4.4 语音/图片/DSH 与 CI 修正](milestones/m5/v0.4.4-release.md)
 - [v0.4.3 更快的语音、图片理解与 DSH](milestones/m5/v0.4.3-release.md)
 - [v0.4.2 自建 Whisper 与云端语音识别](milestones/m5/v0.4.2-release.md)
 - [v0.4.1 Android 全功能对齐与语音通话](milestones/m5/v0.4.1-release.md)
